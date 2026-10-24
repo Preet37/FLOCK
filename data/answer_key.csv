@@ -1,0 +1,7 @@
+order_id,trap_type,expected_outcome,amount
+ORD-1001,commission_wrong_tier,recoverable,2.50
+ORD-1002,error_charge_after_72h,recoverable,8.40
+ORD-1003,unauthorized_rep_promise,conflict,6.00
+ORD-1004,unauthorized_rep_promise,conflict,4.50
+ORD-1005,legit_error_charge,correct,0.00
+ORD-1006,bogo_wrong_split,recoverable,7.00

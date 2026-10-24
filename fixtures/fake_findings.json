@@ -1,0 +1,88 @@
+[
+  {
+    "finding_id": "F-0001",
+    "order_ids": ["ORD-1001"],
+    "channel": "doordash",
+    "check_type": "commission",
+    "expected": 4.0,
+    "actual": 6.5,
+    "gap": 2.5,
+    "evidence": [
+      {"source_file": "data/raw/doordash/payouts_wk1.csv", "row": 14, "what": "commission charged 6.50 on gross 20.00"},
+      {"source_file": "data/raw/contracts/doordash_msa.pdf", "quote": "Marketplace commission: 20% of subtotal", "authority": "contract"}
+    ],
+    "reason": "Charged 6.50 commission; deal says 20% of 20.00 = 4.00."
+  },
+  {
+    "finding_id": "F-0002",
+    "order_ids": ["ORD-1002"],
+    "channel": "doordash",
+    "check_type": "error_charge",
+    "expected": 0.0,
+    "actual": 8.4,
+    "gap": 8.4,
+    "evidence": [
+      {"source_file": "data/raw/doordash/error_charges_wk1.csv", "row": 3, "what": "missing item charge 8.40, reported 81h after delivery"},
+      {"source_file": "data/raw/contracts/doordash_msa.pdf", "quote": "Errors reported 72 hours or more after delivery are not charged to the merchant", "authority": "contract"}
+    ],
+    "reason": "Error charge for a complaint made 81h after delivery; platform rule says merchant isn't charged after 72h."
+  },
+  {
+    "finding_id": "F-0003",
+    "order_ids": ["ORD-1003"],
+    "channel": "ubereats",
+    "check_type": "promo",
+    "expected": 0.0,
+    "actual": 6.0,
+    "gap": 6.0,
+    "evidence": [
+      {"source_file": "data/raw/ubereats/statement_wk1.csv", "row": 22, "what": "promo cost 6.00 charged to store"},
+      {"source_file": "data/raw/contracts/ubereats_agreement.pdf", "quote": "Merchant funds 100% of merchant-created promotions", "authority": "contract"},
+      {"source_file": "data/raw/emails/rep_jordan_0912.txt", "quote": "No worries, Uber will cover the BOGO this month", "authority": "unauth_email"}
+    ],
+    "reason": "Contract says the store funds its promos, but a rep email says Uber covers this one."
+  },
+  {
+    "finding_id": "F-0004",
+    "order_ids": ["ORD-1004"],
+    "channel": "ubereats",
+    "check_type": "promo",
+    "expected": 0.0,
+    "actual": 4.5,
+    "gap": 4.5,
+    "evidence": [
+      {"source_file": "data/raw/ubereats/statement_wk1.csv", "row": 41, "what": "promo cost 4.50 charged to store"},
+      {"source_file": "data/raw/contracts/ubereats_agreement.pdf", "quote": "Merchant funds 100% of merchant-created promotions", "authority": "contract"},
+      {"source_file": "data/raw/emails/rep_jordan_0912.txt", "quote": "No worries, Uber will cover the BOGO this month", "authority": "unauth_email"}
+    ],
+    "reason": "Same rep email as F-0003 claims Uber covers this promo."
+  },
+  {
+    "finding_id": "F-0005",
+    "order_ids": ["ORD-1005"],
+    "channel": "doordash",
+    "check_type": "error_charge",
+    "expected": 11.2,
+    "actual": 11.2,
+    "gap": 0.0,
+    "evidence": [
+      {"source_file": "data/raw/doordash/error_charges_wk1.csv", "row": 7, "what": "wrong order handed to Dasher, charged 11.20 (100% of subtotal + tax), reported 2h after delivery"},
+      {"source_file": "data/raw/contracts/doordash_msa.pdf", "quote": "Incorrect order handed to Dasher: merchant charged 100% of subtotal plus tax", "authority": "contract"}
+    ],
+    "reason": "Charge matches the rule for a wrong order handed to the driver."
+  },
+  {
+    "finding_id": "F-0006",
+    "order_ids": ["ORD-1006"],
+    "channel": "grubhub",
+    "check_type": "promo",
+    "expected": 7.0,
+    "actual": 14.0,
+    "gap": 7.0,
+    "evidence": [
+      {"source_file": "data/raw/grubhub/statement_wk1.xlsx", "row": 9, "what": "BOGO cost 14.00 charged 100% to store"},
+      {"source_file": "data/raw/contracts/grubhub_amendment_2.pdf", "quote": "BOGO promotions funded 50/50 by Grubhub and Merchant", "authority": "amendment"}
+    ],
+    "reason": "BOGO charged 100% to the store; amendment says 50/50."
+  }
+]
