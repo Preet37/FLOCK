@@ -13,3 +13,4 @@ generator/out/
 rules.json
 .claude/
 data/exports/
+data/benchmarks/
