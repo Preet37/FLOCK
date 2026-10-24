@@ -36,6 +36,23 @@ pytest                                                      # gatekeeper rules
 That week 1 vs week 2 drop is the "self-improving" demo moment.
 Drop `FLOCK_OFFLINE=1` and set `ANTHROPIC_API_KEY` (see `.env.example`) to use Claude for the judges and dispute drafts.
 
+## Data (generator -> collector -> formatter)
+
+```bash
+export FLOCK_OFFLINE=1
+python generator/generate.py --mini                   # first milestone: 1 store x 1 day, traps 3, 7, 16
+python generator/generate.py --seed 42 --stores 12 --weeks 2     # full run, all 17 traps -> generator/out/
+python -m flock.agents.collector                      # copy generator/out/* untouched into data/raw/<source>/ + manifest.csv
+python -m flock.agents.formatter                      # data/raw -> data/std/*.csv; asks y/N for the unseen layout (trap 2)
+python -m flock.agents.formatter --confirm            # same, accepting proposed mappings without asking
+```
+
+- Same `--seed` and args = byte-identical files. `--traps 3,7,16` picks traps, `--days N` overrides `--weeks`. Traps 2 and 5 need `--weeks 2`.
+- The answer key goes to `generator/out/answer_key.csv`. `data/answer_key.csv` (the demo scoreboard) is only overwritten with `--write-answer-key`; restore it with `git checkout data/answer_key.csv`. The collector never copies the answer key.
+- `data/std/` gets `orders.csv`, `payout_lines.csv`, `bank_deposits.csv` (CONTRACT.md columns; payout lines add `promo_total, promo_code, placed_at`), plus `error_charges.csv`, `refunds.csv`, `payout_summaries.csv`, `duplicates_removed.csv`.
+- Column maps live in `mappings.json`. Unknown layouts get a proposed mapping (Claude, or a header-name heuristic offline) that a human confirms once; then it's saved and automatic. Run with `--mappings /tmp/m.json` if you want to rehearse the demo moment without touching the committed file.
+- `data/raw/` and `data/std/` are gitignored. To get back to a fixtures-only Quickstart: `rm -rf data/raw/*/ data/raw/manifest.csv data/std/*.csv`.
+
 ## Getting started (teammates)
 
 ```bash
@@ -86,7 +103,8 @@ flock/llm.py           Claude wrapper with offline fallback
 flock/pipeline.py      runs everything end to end
 flock/agents/          one file per agent, owner named at the top
 fixtures/              fake findings so everyone can work in parallel
-generator/             Maja's data generator
+generator/             Maja's data generator (output in generator/out/, gitignored)
+mappings.json          Formatter column maps per source layout (human-confirmed)
 scripts/score.py       scoreboard vs answer key
 tests/                 gatekeeper tests
 dashboard/             Ira's UI
