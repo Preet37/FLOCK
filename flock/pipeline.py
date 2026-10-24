@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from flock.agents import checkers, clicky, deal_keeper, dispute_writer, formatter, learner, matcher, panel, ranker
 from flock.gatekeeper import transition
@@ -22,36 +23,43 @@ CHECKER = Actor(id="checkers", role="agent")
 DEMO_HUMAN = Actor(id="demo-controller", role="human")
 
 
-def detect() -> tuple[list[dict], str]:
+def detect(fixtures: Path | None = None) -> tuple[list[dict], str]:
     tables = formatter.format_all()
     stories, match_findings = matcher.match(tables)
     terms = deal_keeper.extract_terms()
     found = [f.to_dict() for f in match_findings]
     found += [f.to_dict() for f in checkers.run_all(stories, lambda s: {})] if stories and terms else []
-    if found:
+    if found and fixtures is None:
         return found, "real data (data/std)"
-    fixtures = json.loads(FIXTURES.read_text())
-    return [Finding(**f).to_dict() for f in fixtures], "fixtures/fake_findings.json"
+    path = Path(fixtures or FIXTURES)
+    rows = json.loads(path.read_text())
+    name = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path.name
+    return [Finding(**f).to_dict() for f in rows], str(name)
 
 
-def run(reset: bool = False, demo_approve: bool = False, forget: bool = False) -> JsonStore:
-    store = JsonStore()
+def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, store: JsonStore | None = None,
+        rules_path: Path | None = None, portal: Path | None = None, fixtures: Path | None = None) -> JsonStore:
+    """store / rules_path / portal / fixtures default to the repo paths; tests point them at a temp dir."""
+    store = store or JsonStore()
+    rules_path = Path(rules_path or learner.RULES)
+    portal = Path(portal or clicky.PORTAL)
     if reset:
         store.reset()
-        (ROOT / "data" / "sandbox_portal" / "disputes.jsonl").unlink(missing_ok=True)
+        portal.unlink(missing_ok=True)
     if forget:
-        learner.RULES.unlink(missing_ok=True)
+        rules_path.unlink(missing_ok=True)
 
-    findings, source = detect()
+    findings, source = detect(fixtures)
     print(f"\n== Flock run on {source}: {len(findings)} findings ==")
 
     for f in findings:
         store.put_new(f)
         transition(store, f["finding_id"], "check", CHECKER, reason="Checker computed expected vs actual in code")
 
+    rules = learner.approved_rules(rules_path)
     for f in store.all():
         if f["state"] == "CHECKED":
-            transition(store, f["finding_id"], "judge", panel.ACTOR, patch=panel.decide(f), reason="Panel vote")
+            transition(store, f["finding_id"], "judge", panel.ACTOR, patch=panel.decide(f, rules), reason="Panel vote")
 
     for f in store.all():
         if f["state"] == "JUDGED" and f["outcome"] == "recoverable":
@@ -71,10 +79,10 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False) -
             elif f["outcome"] == "conflict":
                 transition(store, f["finding_id"], "reject", DEMO_HUMAN,
                            reason="Rep had no authority to change the deal; accept the charge")
-        filed = clicky.file_approved(store)
+        filed = clicky.file_approved(store, portal)
         print(f"Clicky filed {len(filed)} disputes in the sandbox portal")
 
-    proposed = learner.propose(store)
+    proposed = learner.propose(store, rules_path)
     summary(store, proposed)
     return store
 
