@@ -1,0 +1,86 @@
+[
+  {
+    "finding_id": "A-0001",
+    "order_ids": ["ORD-2001"],
+    "channel": "ubereats",
+    "check_type": "error_charge",
+    "expected": 18.35,
+    "actual": 18.35,
+    "gap": 0.0,
+    "evidence": [
+      {"source_file": "data/raw/ubereats/statement_wk2.csv", "row": 12, "what": "order never picked up, refunded 18.35 to customer, charged to store, reported 40 min after pickup window"},
+      {"source_file": "data/raw/contracts/ubereats_agreement.pdf", "quote": "Orders not ready within 30 minutes of the pickup window are refunded at the Merchant's expense", "authority": "contract"}
+    ],
+    "reason": "Legit error charge: the order was never ready, contract puts the refund on the store."
+  },
+  {
+    "finding_id": "A-0002",
+    "order_ids": ["ORD-2002"],
+    "channel": "doordash",
+    "check_type": "commission",
+    "expected": 10.1,
+    "actual": 10.15,
+    "gap": 0.05000000000000071,
+    "evidence": [
+      {"source_file": "data/raw/doordash/payouts_wk2.csv", "row": 31, "what": "commission charged 10.15 on gross 50.52"},
+      {"source_file": "data/raw/contracts/doordash_msa.pdf", "quote": "Marketplace commission: 20% of subtotal", "authority": "contract"}
+    ],
+    "reason": "Penny rounding: 20% of 50.52 is 10.104, platform rounded to 10.15 on its side. Gap computed as 10.15 - 10.10 in float."
+  },
+  {
+    "finding_id": "A-0003",
+    "order_ids": ["ORD-2003"],
+    "channel": "doordash",
+    "check_type": "commission",
+    "expected": 3.0,
+    "actual": 4.0,
+    "gap": 1.0,
+    "evidence": [
+      {"source_file": "data/raw/doordash/payouts_wk2.csv", "row": 8, "what": "commission charged 4.00 (20%) on gross 20.00"},
+      {"source_file": "data/raw/contracts/doordash_msa.pdf", "quote": "Marketplace commission: 20% of subtotal", "authority": "contract"},
+      {"source_file": "data/raw/emails/rep_sam_1003.txt", "quote": "I can get you down to 15% starting this week, consider it done", "authority": "unauth_email"}
+    ],
+    "reason": "Charged 20% per contract; a DoorDash rep with no signing authority promised 15% by email."
+  },
+  {
+    "finding_id": "A-0004",
+    "order_ids": ["ORD-2004"],
+    "channel": "grubhub",
+    "check_type": "promo",
+    "expected": 9.0,
+    "actual": 18.0,
+    "gap": 9.0,
+    "evidence": [
+      {"source_file": "data/raw/grubhub/statement_wk2.xlsx", "row": 4, "what": "BOGO cost 18.00 charged 100% to store"},
+      {"source_file": "data/raw/contracts/grubhub_amendment_2.pdf", "quote": "BOGO promotions funded 50/50 by Grubhub and Merchant", "authority": "amendment"},
+      {"source_file": "data/raw/emails/grubhub_am_priya_1001.txt", "quote": "For the October featured-placement BOGO, the restaurant funds 100% of the discount", "authority": "auth_email"}
+    ],
+    "reason": "Amendment says BOGO is 50/50; an authorized Grubhub account manager email says the store funds 100% of the October BOGO."
+  },
+  {
+    "finding_id": "A-0005",
+    "order_ids": ["ORD-2005"],
+    "channel": "ubereats",
+    "check_type": "commission",
+    "expected": 0.0,
+    "actual": 412.5,
+    "gap": 412.5,
+    "evidence": [
+      {"source_file": "data/raw/ubereats/statement_wk2.csv", "row": 77, "what": "line labelled 'adjustment' 412.50, no order detail"}
+    ],
+    "reason": "A 412.50 commission-type deduction with no matching order detail and no contract term cited."
+  },
+  {
+    "finding_id": "A-0006",
+    "order_ids": ["ORD-2006"],
+    "channel": "doordash",
+    "check_type": "deposit",
+    "expected": 1850.0,
+    "actual": 0.0,
+    "gap": 1850.0,
+    "evidence": [
+      {"source_file": "data/raw/doordash/payouts_wk2.csv", "row": 1, "what": "payout PO-88 total 1850.00"}
+    ],
+    "reason": "Payout says 1850.00 but no bank deposit was matched; only one source looked at."
+  }
+]
