@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flock import market, scan
+from flock import llm, market, scan
 from flock.agents import clicky, deal_keeper, dispute_writer, formatter, journal, learner, panel, ranker
 from flock.gatekeeper import transition
 from flock.models import Actor, Finding
@@ -41,6 +41,7 @@ RUNS = STATE_DIR / "runs.jsonl"
 CHECKER = Actor(id="checkers", role="agent")
 DEMO_HUMAN = Actor(id="demo-controller", role="human")
 SHOW_FINDINGS = 40
+AIRGAP_NAME = "airgap.json"  # where this run's model calls went (llm.airgap_report), for GET /api/airgap
 LIVE_KEY = "answer_key.csv"  # flock.demo --keep leaves its generated key here (scripts/score.py reads it)  # summary lines printed; a year of data has thousands of findings
 
 
@@ -125,6 +126,7 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     data = {k: v for k, v in (("raw", raw), ("std", std), ("mappings", mappings)) if v is not None}
     if data or confirm or interactive:
         data.update(confirm=confirm, interactive=interactive)
+    llm.reset_calls()  # the air-gap report counts this run's model calls only
     try:
         with batched(store):
             _run(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path,
@@ -206,6 +208,16 @@ def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, da
     record_run(store, source, runs_path)
     summary(store, proposed)
     market_summary(store)
+    airgap_summary(store)
+
+
+def airgap_summary(store: Store) -> dict:
+    """Where this run's model calls went, saved for the dashboard. Printed when air-gapped or any model was called,
+    so the offline Quickstart output doesn't change."""
+    rep = llm.write_airgap_report(Path(getattr(store, "dir", None) or STATE_DIR) / AIRGAP_NAME)
+    if rep["airgap"] or rep["calls"]:
+        print(rep["line"])
+    return rep
 
 
 def market_summary(store: Store) -> None:

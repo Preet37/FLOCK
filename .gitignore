@@ -15,3 +15,5 @@ rules.json
 data/exports/
 data/benchmarks/
 data/training/
+results/*
+!results/README.md

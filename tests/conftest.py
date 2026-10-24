@@ -24,9 +24,10 @@ def offline_and_isolated(tmp_path, monkeypatch):
                 "FLOCK_WRITER_PROVIDER", "FLOCK_MAPPER_PROVIDER", "FLOCK_REVIEWER_MODEL", "FLOCK_WRITER_MODEL",
                 "FLOCK_MAPPER_MODEL", "FLOCK_AUDIT_RATE", "GROQ_API_KEY", "NVIDIA_API_KEY", "FLOCK_LOCAL_URL",
                 "FLOCK_LOCAL_MODEL", "FLOCK_LOCAL_API_KEY", "FLOCK_GROQ_MODEL", "FLOCK_NVIDIA_MODEL", "FLOCK_NVIDIA_URL",
-                "FLOCK_GROQ_URL"):
+                "FLOCK_GROQ_URL", "FLOCK_AIRGAP", "ANTHROPIC_BASE_URL"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(llm, "_client_obj", None)
+    llm.reset_calls()
     monkeypatch.setattr(learner, "RULES", tmp_path / "iso_rules.json")
     monkeypatch.setattr(learner, "PROPOSED", tmp_path / "iso_proposed.json")
     monkeypatch.setattr(clicky, "PORTAL", tmp_path / "iso_portal.jsonl")

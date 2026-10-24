@@ -20,12 +20,13 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, request, send_from_directory
 
-from flock import market
-from flock.agents import clicky, journal, learner
+from flock import llm, market
+from flock.agents import clicky, journal, learner, panel
 from flock.gatekeeper import Denied, transition
 from flock.models import JE_TRANSITIONS, JOURNAL, TRANSITIONS, Actor
 from flock.progress import progress_path, read_progress
-from flock.store import ROOT, JournalStore, Store, get_journal_store, get_store
+from flock.pipeline import AIRGAP_NAME
+from flock.store import ROOT, STATE_DIR, JournalStore, Store, get_journal_store, get_store
 
 STATIC = Path(__file__).resolve().parent / "static"
 STATES = ["NEW", "CHECKED", "JUDGED", "APPROVED", "REJECTED", "FILED", "RECOVERED"]
@@ -115,6 +116,21 @@ def source_row(file: str, row: int) -> dict[str, Any] | None:
     if not rows or not (2 <= row <= len(rows)):
         return None
     return {"file": file, "row": row, "header": rows[0], "values": rows[row - 1]}
+
+
+def airgap_status(store: Store) -> dict[str, Any]:
+    """Air-gap evidence: the last pipeline run's model calls by host (data/state/airgap.json) and, for the
+    dashboard's own environment, where each role would send its calls right now."""
+    last = llm.read_airgap_report(Path(getattr(store, "dir", None) or STATE_DIR) / AIRGAP_NAME)
+    roles = [(j, llm.route("judge", i)) for i, j in enumerate(panel.JUDGES)]
+    roles += [(role, llm.route(role)) for role in ("reviewer", "writer", "mapper")]
+    routes = []
+    for role, r in roles:
+        h = llm.host(r[0])
+        routes.append({"role": role, "route": llm.label(r), "host": h,
+                       "on_this_network": bool(h) and llm.on_this_network(h), "offline_reason": llm.offline_reason(r)})
+    line = last["line"] if last else "no pipeline run recorded yet"
+    return {"enforced": llm.airgap(), "last_run": last, "line": line, "routes": routes}
 
 
 def create_app(store: Store | None = None, runs_path: Path | None = None, journal_store: JournalStore | None = None,
@@ -222,9 +238,16 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
         """What the pipeline / formatter / live demo is doing right now (flock.progress state file)."""
         return jsonify(read_progress(progress_path(st())))
 
+    @app.get("/api/airgap")
+    def api_airgap():
+        """'air-gapped: N model calls, 0 left this network' for the last run, plus each role's route now."""
+        return jsonify(airgap_status(st()))
+
     @app.get("/api/meta")
     def api_meta():
+        gap = airgap_status(st())
         return jsonify(states=STATES, store=type(st()).__name__,
+                       airgap={"enforced": gap["enforced"], "line": gap["line"]},
                        transitions=[{"from": s, "action": a, "to": t, "roles": sorted(r)}
                                     for (s, a), (t, r) in TRANSITIONS.items()],
                        journal_transitions=[{"from": s, "action": a, "to": t, "roles": sorted(r)}
