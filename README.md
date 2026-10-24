@@ -2,7 +2,22 @@
 
 Flock does the boring job a restaurant pays an accountant to do by hand: it takes the messy money reports from DoorDash, Uber Eats, Grubhub and the restaurant's own app, sorts them into one place, and checks them, faster and cheaper than a person can.
 
-Full context: `FLOCK_CONTEXT.md`. Shared rules and data shapes: `CONTRACT.md`. Read both first.
+**The problem (Dave's Hot Chicken, dozens of franchise stores):**
+- **What:** Dave's gets paid by four food apps (DoorDash, Uber Eats, Grubhub, its own app), and each one sends money and reports in a different, messy way.
+- **Why:** Each app has its own deal with Dave's (commission tiers, promos, refund rules), and none of them talk to each other or to Dave's register, bank or contracts.
+- **When:** Every week, when the payouts land as lump sums that never match what the stores actually sold.
+- **Where:** On a staff accountant's desk, stuck in four app portals, the register, the bank and a pile of spreadsheets.
+- **Why it matters:** Dave's pays someone to sort it all by hand. It's slow, and mistakes mean Dave's loses money it already earned.
+
+## Read first
+
+| File | What's in it |
+| --- | --- |
+| `FLOCK_CONTEXT.md` | Everything: problem, money flow, research, numbers, pitch, agents, 17 edge cases, team prompts, demo plan, timeline. Paste it into Claude at the start of a session. |
+| `CONTRACT.md` | Shared data shapes (order row, payout line, bank deposit, deal term, finding) and the state machine. Build to this. |
+| `docs/hyphenate-track.md` | What the Hyphenate judges want: criteria, workshop notes, the speaker's advice. |
+| `docs/sponsor-tracks.md` | Sponsor track rules, submission checklist, schedule. **Submit by Sun Oct 25, 9:00 AM.** |
+| `docs/pipeline-sketch.png` | The team's original hand-drawn pipeline. |
 
 ## Quickstart (works right now, no API key needed)
 
@@ -20,6 +35,17 @@ pytest                                                      # gatekeeper rules
 
 That week 1 vs week 2 drop is the "self-improving" demo moment.
 Drop `FLOCK_OFFLINE=1` and set `ANTHROPIC_API_KEY` (see `.env.example`) to use Claude for the judges and dispute drafts.
+
+## Getting started (teammates)
+
+```bash
+git clone https://github.com/Preet37/FLOCK.git && cd FLOCK
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Then run the Quickstart below, open your files from the "Who owns what" table, and start on the next step written at the top of each file.
+Work on a branch (`git checkout -b maja/generator`), push it, and open a PR into `main`. Keep `main` runnable: the Quickstart and `pytest` should pass before you merge.
 
 ## Pipeline
 
@@ -64,4 +90,5 @@ generator/             Maja's data generator
 scripts/score.py       scoreboard vs answer key
 tests/                 gatekeeper tests
 dashboard/             Ira's UI
+docs/                  Hyphenate track notes, sponsor rules, pipeline sketch
 ```
