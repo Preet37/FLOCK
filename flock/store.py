@@ -136,6 +136,68 @@ class SpacetimeStore:
         )
 
 
+class JournalStore:
+    """Journal entries (flock/agents/journal.py), with the same six methods as Store so the gatekeeper can move them.
+
+    Entries live in their own file (journal_entries.json next to the findings), keyed by je_id, so nothing that
+    reads store.all() ever sees one. Their log entries go to the base store's audit log: one append-only trail for
+    findings and journal entries (each entry's subject_type says which). The entry is saved first, then its log
+    line is appended through base.commit(None, entry), which only appends.
+    """
+
+    def __init__(self, base: Store, path: Path | None = None):
+        self.base = base
+        self.path = Path(path) if path else Path(getattr(base, "dir", STATE_DIR)) / "journal_entries.json"
+        self._lock = threading.Lock()
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        if not self.path.exists():
+            return {}
+        return json.loads(self.path.read_text() or "{}")
+
+    def _save(self, data: dict[str, dict[str, Any]]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(self.path)
+
+    def get(self, je_id: str) -> dict[str, Any]:
+        return self._load()[je_id]
+
+    def all(self) -> list[dict[str, Any]]:
+        return list(self._load().values())
+
+    def put_new(self, je: dict[str, Any]) -> None:
+        """Only for brand-new entries in state NEW. The draft and everything after go through the gatekeeper."""
+        assert je["state"] == "NEW", "put_new only accepts NEW journal entries"
+        with self._lock:
+            data = self._load()
+            data[je["je_id"]] = je
+            self._save(data)
+
+    def commit(self, je: dict[str, Any] | None, log_entry: dict[str, Any]) -> None:
+        with self._lock:
+            if je is not None:
+                data = self._load()
+                data[je["je_id"]] = je
+                self._save(data)
+            self.base.commit(None, log_entry)
+
+    def log(self, subject_id: str | None = None) -> list[dict[str, Any]]:
+        if subject_id is not None:
+            return self.base.log(subject_id)
+        return [e for e in self.base.log() if e.get("subject_type") == "journal_entry"]
+
+    def reset(self) -> None:
+        """Wipe journal entries only; the shared audit log is reset by the base store."""
+        self.path.unlink(missing_ok=True)
+
+
+def get_journal_store(base: Store | None = None) -> JournalStore:
+    """Journal entries next to the findings of `base` (default: get_store()), logging into the same audit log."""
+    return JournalStore(base if base is not None else get_store())
+
+
 BACKENDS: dict[str, type] = {"json": JsonStore, "spacetime": SpacetimeStore}
 
 

@@ -249,3 +249,14 @@ td.mono, td .mono { white-space: nowrap; }
 .spark polyline, .spark line { fill: none; stroke: var(--muted); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
 .spark.up polyline { stroke: var(--ok); }
 .spark.down polyline { stroke: var(--bad); }
+/* journal entries */
+.b-DRAFT { background: var(--info-soft); color: var(--info); }
+.b-POSTED { background: var(--done-soft); color: var(--done); }
+.je-group { margin-top: 18px; }
+.je-group h3 { margin: 0 0 8px; }
+.je-lines td.memo { max-width: 360px; }
+.je-lines tfoot td { font-weight: 650; border-top: 2px solid var(--border); }
+.src { display: inline-block; margin: 2px 6px 0 0; font-size: 12px; }
+.src-row { margin-top: 6px; font-size: 12px; overflow-x: auto; }
+.src-row table td, .src-row table th { padding: 2px 8px; white-space: nowrap; }
+.notes { margin: 0; padding: 12px 16px 12px 32px; }
