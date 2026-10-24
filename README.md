@@ -50,13 +50,37 @@ python generator/generate.py --seed 42 --stores 12 --weeks 2     # full run, all
 python -m flock.agents.collector                      # copy generator/out/* untouched into data/raw/<source>/ + manifest.csv
 python -m flock.agents.formatter                      # data/raw -> data/std/*.csv; asks y/N for the unseen layout (trap 2)
 python -m flock.agents.formatter --confirm            # same, accepting proposed mappings without asking
+python generator/generate.py --profile ca_bagel_chain --weeks 52   # another (simulated) company, a full year
 ```
 
 - Same `--seed` and args = byte-identical files. `--traps 3,7,16` picks traps, `--days N` overrides `--weeks`. Traps 2 and 5 need `--weeks 2`.
+- **Company profiles** (`profiles/*.json`, `--profile NAME`): name, stores and cities, channels, orders per store per day by channel, menu / average ticket, weekday + monthly seasonality, dayparts, catering, and the contract terms per channel. `default` is the original 12-store company (same bytes as before profiles existed). `ca_bagel_chain` is a **fictional, simulated** 56-store California bagel chain (morning-heavy, weekend peaks, catering orders; ~1.2M orders a year); no real company, people or contract terms. `--stores` defaults to the profile's store count.
+- **Traps across a year:** each trap is planted `max(1, round(trap_rate x weight x store_weeks / 100))` times, spread across the period (`--trap-rate`, default 2 per 100 store-weeks; a 2-week demo still gets exactly one of each, 12 stores x 52 weeks gets 12 of most, 56 x 52 gets 58). Waiver traps 14/15 are weighted lower, the unseen layout (2) happens once. The answer key scales with it.
+- **Year scale** (offline, 10-core laptop, full chain `generate -> collect -> format -> pipeline -> score`, all traps caught, 0 false alarms): 12 stores x 2 weeks (3.2k orders) **2s**; 12 x 52 weeks (83k orders) **9s**; bagel chain 56 x 52 weeks (1.24M orders, 2.5M std rows, 1,126 answer-key rows) **84s** (generate 31s, format 33s, pipeline 19s). The formatter streams and converts column-wise, the pipeline splits the std tables by store and runs Matcher + Checkers in parallel processes (`flock/scan.py`, `FLOCK_WORKERS`), deal terms are cached per store/day, and the JSON store batches writes. The pipeline reuses `data/std/` when the raw files and mappings haven't changed.
+- **Progress:** the formatter and pipeline draw a terminal progress bar (stage, done/total, rows/sec) and write `data/state/progress.json`; the dashboard's live board shows it (`GET /api/progress`).
+- A statement whose layout nobody has confirmed yet is skipped, and "sold, never paid" for that channel is held back (not disputed) until a human says yes, because its orders were never read.
 - The answer key goes to `generator/out/answer_key.csv`. `data/answer_key.csv` (the demo scoreboard) is only overwritten with `--write-answer-key`; restore it with `git checkout data/answer_key.csv`. The collector never copies the answer key.
 - `data/std/` gets `orders.csv`, `payout_lines.csv`, `bank_deposits.csv` (CONTRACT.md columns; payout lines add `promo_total, promo_code, placed_at`), plus `error_charges.csv`, `refunds.csv`, `payout_summaries.csv`, `duplicates_removed.csv`.
 - Column maps live in `mappings.json`. Unknown layouts get a proposed mapping (Claude, or a header-name heuristic offline) that a human confirms once; then it's saved and automatic. Run with `--mappings /tmp/m.json` if you want to rehearse the demo moment without touching the committed file.
 - `data/raw/` and `data/std/` are gitignored. To get back to a fixtures-only Quickstart: `rm -rf data/raw/*/ data/raw/manifest.csv data/std/*.csv`.
+
+## Live seed demo (a judge picks the number)
+
+```bash
+export FLOCK_OFFLINE=1
+python -m flock.demo --seed 4821                                    # fresh data from that seed, full run, scoreboard
+python -m flock.demo --seed 4821 --profile ca_bagel_chain --weeks 2  # the (simulated) bagel chain
+python -m flock.demo --seed 4821 --confirm                          # accept the unseen layout without asking
+python -m flock.demo --seed 4821 --keep                             # leave the run on the dashboard afterwards
+```
+
+Generates into a temp folder, collects, runs the whole pipeline with the progress bar (also on the dashboard's live
+board, so run `python -m dashboard.app` next to it), and prints the scoreboard against the **freshly generated**
+answer key. It never writes `data/answer_key.csv` or `mappings.json` (it uses temp copies); the unseen-layout trap
+still asks y/N unless `--confirm`. Afterwards `data/state` and the sandbox portal are restored to the fixtures demo,
+unless `--keep` (then the generated key sits at `data/state/answer_key.csv` for the scoreboard until the next
+`pipeline --reset`). Other knobs: `--stores`, `--days`, `--trap-rate`, `--forget` (no learned rules), `--no-approve`
+(leave decisions to a human on the dashboard), `--pace`, `--workdir` (keep the generated files).
 
 ## Clicky demo (agent files disputes in a sandbox portal)
 
@@ -126,6 +150,10 @@ flock/store.py         Store protocol + get_store(): JsonStore now, SpacetimeSto
 flock/gatekeeper.py    transition(): the one door, logs every move incl. denied ones
 flock/llm.py           Claude wrapper with offline fallback
 flock/pipeline.py      runs everything end to end
+flock/scan.py          year-scale detection: split std tables by store, match + check in parallel
+flock/progress.py      progress reporter: terminal bar + data/state/progress.json (dashboard progress bar)
+flock/demo.py          live seed demo: generate -> collect -> pipeline -> score, then restore
+profiles/              company profiles for the generator (default, ca_bagel_chain: simulated)
 flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
 flock/agents/          one file per agent, owner named at the top
 fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)

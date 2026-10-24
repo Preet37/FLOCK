@@ -20,6 +20,7 @@ from flask import Flask, abort, jsonify, request, send_from_directory
 from flock.agents import clicky, learner
 from flock.gatekeeper import Denied, transition
 from flock.models import TRANSITIONS, Actor
+from flock.progress import progress_path, read_progress
 from flock.store import ROOT, Store, get_store
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -175,6 +176,11 @@ def create_app(store: Store | None = None, runs_path: Path | None = None) -> Fla
     @app.get("/api/score")
     def api_score():
         return jsonify(scoreboard.score(st(), verbose=False, runs_path=app.config["RUNS_PATH"]))
+
+    @app.get("/api/progress")
+    def api_progress():
+        """What the pipeline / formatter / live demo is doing right now (flock.progress state file)."""
+        return jsonify(read_progress(progress_path(st())))
 
     @app.get("/api/meta")
     def api_meta():

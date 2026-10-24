@@ -13,7 +13,8 @@ Run the pipeline in one terminal and the dashboard in another; the page polls on
 Without `--demo-approve`, conflicts and drafted disputes wait in the Human queue for you.
 
 Screens, in demo order:
-1. **Live board** (`#/`): findings, dollars found, sent to a human, awaiting a decision, audit entries + denied attempts;
+1. **Live board** (`#/`): a progress bar while a run is going (stage, done/total, rows per second, from
+   `GET /api/progress`; `python -m flock.demo` and big `--weeks 52` runs show it best), findings, dollars found, sent to a human, awaiting a decision, audit entries + denied attempts;
    a count per state; the findings table; the latest agent activity.
 2. **Human queue** (`#/queue`): conflicts and drafted disputes with Approve / Reject and a reason box. "Acting as" in
    the top bar is your name. Then "File N approved via Clicky", and the Learner's proposed rules with "Approve rule".
@@ -43,6 +44,7 @@ findings as the gatekeeper.
 | POST | `/api/rules/<rule_id>/approve` | body `{"actor": "ira"}` |
 | GET | `/api/score` | scoreboard, per-trap results, run history |
 | GET | `/api/meta` | store backend, states, state machine |
+| GET | `/api/progress` | current run: `status` (idle/running/done/failed), `stage`, `done`/`total`, `rate` (rows/s), finished `stages` |
 
 ## SpacetimeDB
 

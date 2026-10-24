@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -50,17 +52,61 @@ class JsonStore:
         self.findings_path = self.dir / "findings.json"
         self.log_path = self.dir / "audit_log.jsonl"
         self._lock = threading.Lock()
+        self._cache: dict[str, dict[str, Any]] | None = None   # set inside batch()
+        self._pending: list[str] = []
+        self._flushed = 0.0
+        self._every = 0.5
+
+    # batching (not part of the Store protocol: a speed-up for big runs) -----------------------------
+    @contextmanager
+    def batch(self, flush_every: float = 0.5):
+        """Keep findings in memory and write findings.json + the log at most every flush_every seconds
+        (and at the end), instead of rewriting the whole file on every transition. Same results; a run with
+        thousands of findings goes from minutes to seconds. Readers (the dashboard) see it at most that stale."""
+        if self._cache is not None:  # already batching
+            yield self
+            return
+        with self._lock:
+            self._cache, self._pending, self._every, self._flushed = self._read(), [], flush_every, time.monotonic()
+        try:
+            yield self
+        finally:
+            with self._lock:
+                self._flush()
+                self._cache = None
+
+    def _flush(self) -> None:
+        if self._cache is not None:
+            self._write(self._cache)
+        if self._pending:
+            with self.log_path.open("a") as f:
+                f.write("".join(self._pending))
+            self._pending = []
+        self._flushed = time.monotonic()
+
+    def _maybe_flush(self) -> None:
+        if time.monotonic() - self._flushed >= self._every:
+            self._flush()
 
     # findings ---------------------------------------------------------
-    def _load(self) -> dict[str, dict[str, Any]]:
+    def _read(self) -> dict[str, dict[str, Any]]:
         if not self.findings_path.exists():
             return {}
         return json.loads(self.findings_path.read_text() or "{}")
 
-    def _save(self, data: dict[str, dict[str, Any]]) -> None:
+    def _write(self, data: dict[str, dict[str, Any]]) -> None:
         tmp = self.findings_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2))
         tmp.replace(self.findings_path)
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        return self._cache if self._cache is not None else self._read()
+
+    def _save(self, data: dict[str, dict[str, Any]]) -> None:
+        if self._cache is not None:
+            self._maybe_flush()
+        else:
+            self._write(data)
 
     def get(self, finding_id: str) -> dict[str, Any]:
         return self._load()[finding_id]
@@ -83,11 +129,18 @@ class JsonStore:
                 data = self._load()
                 data[finding["finding_id"]] = finding
                 self._save(data)
-            with self.log_path.open("a") as f:
-                f.write(json.dumps(log_entry) + "\n")
+            if self._cache is not None:
+                self._pending.append(json.dumps(log_entry) + "\n")
+                self._maybe_flush()
+            else:
+                with self.log_path.open("a") as f:
+                    f.write(json.dumps(log_entry) + "\n")
 
     # audit log --------------------------------------------------------
     def log(self, subject_id: str | None = None) -> list[dict[str, Any]]:
+        if self._cache is not None and self._pending:
+            with self._lock:
+                self._flush()
         if not self.log_path.exists():
             return []
         lines = self.log_path.read_text().split("\n")
@@ -97,6 +150,8 @@ class JsonStore:
         return [r for r in rows if subject_id is None or r["subject_id"] == subject_id]
 
     def reset(self) -> None:
+        if self._cache is not None:
+            self._cache, self._pending = {}, []
         for p in (self.findings_path, self.log_path):
             if p.exists():
                 p.unlink()
@@ -137,6 +192,11 @@ class SpacetimeStore:
 
 
 BACKENDS: dict[str, type] = {"json": JsonStore, "spacetime": SpacetimeStore}
+
+
+def batched(store: Store):
+    """store.batch() when the backend has one, else a no-op context (every write lands immediately)."""
+    return store.batch() if hasattr(store, "batch") else nullcontext(store)
 
 
 def get_store(state_dir: Path | None = None) -> Store:
