@@ -29,9 +29,13 @@ python -m flock.pipeline --reset --forget --demo-approve    # WEEK 1: day one, n
 python scripts/score.py                                     # caught 6/6, 2 sent to a human
 python -m flock.agents.learner --approve R-001              # human approves the rule the Learner proposed
 python -m flock.pipeline --reset --demo-approve             # WEEK 2: same traps, 0 sent to a human
-python scripts/score.py
-pytest                                                      # gatekeeper + brain tests (offline, mocked Claude)
+python scripts/score.py                                     # also prints Week 1: 2 | Week 2: 0
+pytest                                                      # all tests (offline, Claude mocked)
+python -m dashboard.app                                     # dashboard at http://127.0.0.1:5050
 ```
+
+Dashboard details (screens, API, the live `--pace` demo) are in `dashboard/README.md`.
+Storage is picked by `FLOCK_STORE=json|spacetime` (json default) through `flock.store.get_store()`.
 
 That week 1 vs week 2 drop is the "self-improving" demo moment.
 Drop `FLOCK_OFFLINE=1` and set `ANTHROPIC_API_KEY` (see `.env.example`) to use Claude for the judges and dispute drafts.
@@ -98,7 +102,7 @@ As soon as `data/std/` has real tables and the matcher/checkers return findings,
 CONTRACT.md            shared data shapes + state machine
 FLOCK_CONTEXT.md       everything about the project (problem, research, pitch, plan)
 flock/models.py        constants, Finding, Actor, the state machine table
-flock/store.py         findings + append-only audit log (JSON now, SpacetimeDB later)
+flock/store.py         Store protocol + get_store(): JsonStore now, SpacetimeStore stub
 flock/gatekeeper.py    transition(): the one door, logs every move incl. denied ones
 flock/llm.py           Claude wrapper with offline fallback
 flock/pipeline.py      runs everything end to end
@@ -107,7 +111,7 @@ fixtures/              fake findings so everyone can work in parallel (+ adversa
 generator/             Maja's data generator (output in generator/out/, gitignored)
 mappings.json          Formatter column maps per source layout (human-confirmed)
 scripts/score.py       scoreboard vs answer key
-tests/                 gatekeeper, panel, ranker, learner, dispute writer, llm, end-to-end
-dashboard/             Ira's UI
+tests/                 gatekeeper, store, dashboard, detection, data, panel/ranker/learner/writer, llm, end-to-end
+dashboard/             Ira's UI: Flask + one page (python -m dashboard.app)
 docs/                  Hyphenate track notes, sponsor rules, pipeline sketch
 ```

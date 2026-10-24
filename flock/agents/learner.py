@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from flock.models import Actor
-from flock.store import ROOT, JsonStore
+from flock.store import ROOT, Store, get_store
 
 RULES = ROOT / "rules.json"
 PROPOSED_NAME = "proposed_rules.json"
@@ -31,7 +31,7 @@ def _read(path) -> list[dict[str, Any]]:
     return json.loads(path.read_text() or "[]") if path.exists() else []
 
 
-def _proposed_path(store: JsonStore | None) -> Path:
+def _proposed_path(store: Store | None) -> Path:
     return store.dir / PROPOSED_NAME if store is not None else PROPOSED
 
 
@@ -57,7 +57,7 @@ def matching_rule(f: dict[str, Any], rules: list[dict[str, Any]] | None = None) 
     return None
 
 
-def propose(store: JsonStore, rules_path: Path | None = None) -> list[dict[str, Any]]:
+def propose(store: Store, rules_path: Path | None = None) -> list[dict[str, Any]]:
     """Look at human approve/reject decisions on conflicts and propose a rule when the same call repeats.
 
     Only items the panel sent to a human count (outcome 'conflict'). One finding counts once (its latest
@@ -97,7 +97,7 @@ def propose(store: JsonStore, rules_path: Path | None = None) -> list[dict[str, 
     return proposed
 
 
-def approve(rule_id: str, approver: Actor = CLI_HUMAN, store: JsonStore | None = None,
+def approve(rule_id: str, approver: Actor = CLI_HUMAN, store: Store | None = None,
             rules_path: Path | None = None) -> dict[str, Any]:
     """Human-only. Copies a proposed rule into rules.json and logs who approved it."""
     if not isinstance(approver, Actor) or approver.role != "human":
@@ -128,6 +128,6 @@ if __name__ == "__main__":
     ap.add_argument("--approve")
     a = ap.parse_args()
     if a.approve:
-        print("approved:", json.dumps(approve(a.approve, CLI_HUMAN, store=JsonStore()), indent=2))
+        print("approved:", json.dumps(approve(a.approve, CLI_HUMAN, store=get_store()), indent=2))
     else:
         print(json.dumps(_read(PROPOSED), indent=2) if _read(PROPOSED) else "no proposed rules")

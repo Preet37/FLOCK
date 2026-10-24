@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flock Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <a class="brand" href="#/"><span class="mark" aria-hidden="true"></span>Flock</a>
+      <nav class="tabs" aria-label="Views">
+        <a href="#/" data-view="live">Live board</a>
+        <a href="#/queue" data-view="queue">Human queue <span class="count" id="queue-count">0</span></a>
+        <a href="#/score" data-view="score">Scoreboard</a>
+      </nav>
+      <div class="who">
+        <label for="actor">Acting as</label>
+        <input id="actor" autocomplete="off" spellcheck="false" value="controller">
+        <span class="role-pill">human</span>
+        <button class="icon-btn" id="theme" title="Toggle light / dark" aria-label="Toggle light or dark theme">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm0 1.5v11a5.5 5.5 0 0 1 0-11Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="view" class="wrap" aria-live="polite"></main>
+
+  <div id="toast" role="status" hidden></div>
+  <footer class="wrap foot">
+    <span id="store-name">store</span> · agents propose, humans approve, only the gatekeeper files ·
+    <span id="last-update">connecting…</span>
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from flock.gatekeeper import GATEKEEPER, transition
-from flock.store import ROOT, JsonStore
+from flock.store import ROOT, Store
 
 PORTAL = ROOT / "data" / "sandbox_portal" / "disputes.jsonl"
 
@@ -34,7 +34,7 @@ def submit_to_sandbox(f: dict[str, Any], portal: Path | None = None) -> str:
     return ref
 
 
-def file_approved(store: JsonStore, portal: Path | None = None) -> list[str]:
+def file_approved(store: Store, portal: Path | None = None) -> list[str]:
     """Files only APPROVED findings (a human approved them). Never files an empty message."""
     filed = []
     for f in store.all():

@@ -1,12 +1,52 @@
 # Dashboard (owner: Ira)
 
-Reads from the store (`flock/store.py`, today JSON files in `data/state/`, later SpacetimeDB).
+A small Flask server (`dashboard/app.py`) serving one plain HTML/JS page (`dashboard/static/`). No Node, no build step.
+Reads through the `Store` protocol (`flock.store.get_store()`, picked by env `FLOCK_STORE`, JSON by default).
+
+```bash
+export FLOCK_OFFLINE=1
+python -m flock.pipeline --reset --forget --pace 0.4   # agents run slowly enough to watch the counters tick
+python -m dashboard.app                                # open http://127.0.0.1:5050  (--port to change)
+```
+
+Run the pipeline in one terminal and the dashboard in another; the page polls once a second.
+Without `--demo-approve`, conflicts and drafted disputes wait in the Human queue for you.
 
 Screens, in demo order:
-1. **Live board:** counters ticking as agents run (checked, judged, recoverable, sent to human), dollars found.
-2. **Human queue:** conflicts with approve / reject buttons. Clicking calls `transition(..., "approve" | "reject", Actor(name, "human"))`.
-3. **Finding detail (the PR view):** sources, claims, rule applied, the 3 judges' votes, who approved, what was filed. Data: `store.get(id)` + `store.log(id)`.
-4. **Scoreboard:** output of `scripts/score.py`, plus week 1 vs week 2 human workload.
+1. **Live board** (`#/`): findings, dollars found, sent to a human, awaiting a decision, audit entries + denied attempts;
+   a count per state; the findings table; the latest agent activity.
+2. **Human queue** (`#/queue`): conflicts and drafted disputes with Approve / Reject and a reason box. "Acting as" in
+   the top bar is your name. Then "File N approved via Clicky", and the Learner's proposed rules with "Approve rule".
+3. **Finding detail, the PR view** (`#/finding/F-0003`): numbers (computed in code), sources and claims with their
+   authority, rule applied or the 3 judges' votes and confidences, dispute draft, what was filed, who decided, and the
+   full audit trail with diffs. Denied attempts show in red. "Try as an agent" shows the gatekeeper refusing an agent.
+4. **Scoreboard** (`#/score`): `scripts/score.py` (caught, missed, false alarms, dollars, each trap vs the answer key)
+   plus human hand-offs by week from `data/state/runs.jsonl`.
 
-Swap to SpacetimeDB: replace `JsonStore` with a class that has the same methods
-(`get`, `all`, `put_new`, `commit`, `log`, `reset`). Nothing else changes.
+## The rule it keeps
+
+The dashboard never writes a finding. Approve / reject call `gatekeeper.transition(store, id, action, Actor(name, role))`
+(role defaults to `human`; anything else is denied and logged). Filing calls `clicky.file_approved()`, which moves
+findings as the gatekeeper.
+
+## API
+
+| Method | Path | What |
+| --- | --- | --- |
+| GET | `/api/summary` | counters, count per state, latest 15 log entries |
+| GET | `/api/findings` | all findings (+ `needs_human`) |
+| GET | `/api/queue` | JUDGED findings waiting on a person (conflicts first) |
+| GET | `/api/findings/<id>` | finding, its log, the human decision, denied attempts, rule applied, portal entry |
+| POST | `/api/findings/<id>/approve` or `/reject` | body `{"actor": "ira", "reason": "...", "role": "human"}`. 403 + logged if denied |
+| POST | `/api/file-approved` | Clicky files APPROVED disputes (gatekeeper transition) |
+| GET | `/api/rules` | proposed + approved learned rules |
+| POST | `/api/rules/<rule_id>/approve` | body `{"actor": "ira"}` |
+| GET | `/api/score` | scoreboard, per-trap results, run history |
+| GET | `/api/meta` | store backend, states, state machine |
+
+## SpacetimeDB
+
+`FLOCK_STORE=spacetime` selects `SpacetimeStore` in `flock/store.py`, a stub that raises `NotImplementedError`.
+Its docstring has the plan: tables `findings`, `audit_log` (insert-only), `agent_status`; reducers `put_new`,
+`commit` (finding + log entry in one transaction), `reset`; the page subscribes to those tables instead of polling.
+Implement the six `Store` methods and nothing else changes.
