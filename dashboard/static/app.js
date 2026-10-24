@@ -1,4 +1,4 @@
-// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/finding/<id>  #/score
+// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/finding/<id>  #/score  #/market
 // Polls /api/summary every second; re-renders the current view when the audit log grows.
 "use strict";
 
@@ -45,7 +45,8 @@ async function decide(id, action, reason, role = "human") {
     await api(`/api/findings/${encodeURIComponent(id)}/${action}`, {
       method: "POST", body: JSON.stringify({ actor: role === "human" ? actorName() : "panel", role, reason }),
     });
-    toast(`${id} ${action === "approve" ? "approved" : "rejected"} by ${actorName()}. Logged.`);
+    const did = { approve: "approved", reject: "rejected", recover: "marked recovered (platform paid)" }[action] || action;
+    toast(`${id} ${did} by ${actorName()}. Logged; judges' bets on it settled.`);
   } catch (e) {
     toast(e.status === 403 ? `Gatekeeper denied it: ${e.message}. The attempt is in the audit log.` : e.message, true);
   } finally { busy = false; await refresh(true); }
@@ -74,6 +75,7 @@ document.addEventListener("click", (ev) => {
     const box = document.querySelector(`textarea[data-reason="${CSS.escape(id || "")}"]`);
     const reason = box ? box.value.trim() : "";
     if (b.dataset.act === "approve" || b.dataset.act === "reject") decide(id, b.dataset.act, reason);
+    if (b.dataset.act === "recover") decide(id, "recover", "Platform paid the dispute");
     if (b.dataset.act === "agent-try") decide(id, "approve", "Agent tried to approve its own call", "agent");
     if (b.dataset.act === "file") fileApproved();
     if (b.dataset.act === "rule") approveRule(id);
@@ -177,20 +179,26 @@ async function renderQueue() {
         <div><div class="q-title"><a href="#/finding/${esc(f.finding_id)}" class="mono">${esc(f.finding_id)}</a>
           · ${chan(f.channel)} ${label(f.check_type)} · ${esc(f.order_ids.join(", "))}</div>
           <div class="reason">${esc(f.reason)}</div></div>
-        <div style="text-align:right"><div class="gap">${usd(f.gap)}</div>${badge(f.outcome, f.outcome === "conflict" ? "conflict: judges split" : "dispute drafted")}</div>
+        <div style="text-align:right"><div class="gap">${usd(f.gap)}</div>${badge(f.outcome, f.outcome === "conflict" ? "conflict: judges split" : "dispute drafted")}
+          ${attentionTag(f)}</div>
       </div>
       ${evidenceInline(f)}
       <div style="margin-top:8px">${voteChips(f)}</div>
       ${decideBox(f)}
     </article>`;
-  const conflicts = rows.filter((f) => f.outcome === "conflict");
+  const isDeferred = (f) => (f.attention || {}).status === "deferred";
+  const conflicts = rows.filter((f) => f.outcome === "conflict" && !isDeferred(f));
+  const deferred = rows.filter((f) => f.outcome === "conflict" && isDeferred(f));
   const drafts = rows.filter((f) => f.outcome !== "conflict");
   view.innerHTML = `
     <div class="page-head"><div><h1>Human queue</h1>
       <div class="sub">Agents propose. You decide. Approve or reject goes through <code>gatekeeper.transition()</code> as <b>${esc(actorName())}</b> (human).</div></div>
       ${approved.length ? `<button class="btn-ok" data-act="file">File ${approved.length} approved via Clicky</button>` : ""}</div>
-    <h3>Conflicts (${conflicts.length})</h3>
+    <h3>Conflicts (${conflicts.length}) <span class="muted h-note">ordered by value of your attention: |gap| × panel uncertainty</span></h3>
     <div class="queue">${conflicts.map(item).join("") || `<div class="card empty">No conflicts waiting. The panel and the learned rules handled everything.</div>`}</div>
+    ${deferred.length ? `<h3 class="section-gap">Deferred: over this week's attention budget (${deferred.length})</h3>
+    <div class="sub" style="margin:-4px 0 8px">Still conflicts. Nothing here is decided automatically; they wait for you.</div>
+    <div class="queue deferred">${deferred.map(item).join("")}</div>` : ""}
     <h3 class="section-gap">Disputes ready to approve (${drafts.length})</h3>
     <div class="queue">${drafts.map(item).join("") || `<div class="card empty">No drafted disputes waiting.</div>`}</div>
     ${rulesCard(rules)}`;
@@ -265,7 +273,7 @@ async function renderFinding(id) {
           <div class="card-pad" style="padding-bottom:${f.votes && f.votes.length ? 0 : 16}px">${esc(f.reason)}
             ${d.rule ? `<div class="muted" style="margin-top:6px">${esc(d.rule.rule_id)}, approved by <b>${esc(d.rule.approved_by)}</b>, learned from ${esc(d.rule.evidence_count)} human decisions (${esc((d.rule.precedents || []).join(", "))})</div>` : ""}</div>
           ${f.review_memo ? `<div class="card-pad"><b>Reviewer memo for the human</b> <span class="muted">(the reviewer explains the split; it does not decide)</span><div>${esc(f.review_memo)}</div></div>` : ""}
-          ${(f.votes || []).map((v) => `<div class="vote"><b>${esc(v.judge)}${v.round ? ` <span class="muted">${esc(v.round === "audit" ? "audit" : v.round === 2 ? "after debate" : "round 1")}</span>` : ""}</b>
+          ${(f.votes || []).map((v) => `<div class="vote"><b>${esc(v.judge)}${v.round ? ` <span class="muted">${esc(v.round === "audit" ? "audit" : v.round === 2 ? "after debate" : "round 1")}</span>` : ""}${v.weight != null ? `<div class="muted" style="font-weight:400">weight ${pct(v.weight)}</div>` : ""}</b>
               <span>${badge(v.outcome, v.outcome)} <span class="num">${pct(v.confidence)}</span><div class="bar"><i style="width:${Math.round(v.confidence * 100)}%"></i></div></span>
               <span class="why muted">${esc(v.reason)}</span></div>`).join("")}
         </section>
@@ -278,6 +286,9 @@ async function renderFinding(id) {
           ${d.needs_human ? `<div class="card card-pad decide"><b>Your call, ${esc(actorName())}.</b>
             <span class="muted">${f.outcome === "conflict" ? "Approve = dispute it. Reject = accept the charge." : "Approve sends the draft to Clicky for filing."}</span>
             ${decideBox(f, true)}</div>` : ""}
+          ${f.state === "FILED" ? `<div class="card card-pad decide"><b>Did ${chan(f.channel)} pay it?</b>
+            <span class="muted">Marking it recovered is ground truth: the judges' open bets on this finding settle.</span>
+            <div class="q-actions"><button class="btn-ok" data-act="recover" data-id="${esc(f.finding_id)}">Mark recovered (platform paid)</button></div></div>` : ""}
         </section>
       </div>
       <aside class="side">
@@ -321,15 +332,90 @@ async function renderScore() {
     ${rulesCard(rules)}`;
 }
 
+// ---------- judge market ----------
+function attentionTag(f) {
+  const a = f.attention;
+  if (!a) return "";
+  const cls = a.status === "deferred" ? "deferred" : "queued";
+  return `<div class="att ${cls}" title="value of a human looking = |gap| × (1 − weighted confidence)">
+    ${a.status === "deferred" ? "deferred" : `attention #${esc(a.rank)} of ${esc(a.budget)}`} · value ${usd(a.value)}</div>`;
+}
+
+function sparkline(values, w = 120, h = 28) {
+  if (!values || values.length < 2) return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"><line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}"/></svg>`;
+  const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
+  const pts = values.map((v, i) => `${((i / (values.length - 1)) * (w - 4) + 2).toFixed(1)},${(h - 3 - ((v - lo) / span) * (h - 6)).toFixed(1)}`);
+  const up = values[values.length - 1] >= values[0];
+  return `<svg class="spark ${up ? "up" : "down"}" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img"
+    aria-label="balance from ${values[0]} to ${values[values.length - 1]}"><polyline points="${pts.join(" ")}"/></svg>`;
+}
+
+function ledgerFeed(rows) {
+  if (!rows.length) return `<div class="empty">No bets yet. Run the pipeline: every judge vote is a bet.</div>`;
+  const signed = (n) => (n > 0 ? "+" : "") + Number(n).toFixed(2);
+  return `<ul class="feed">${rows.map((e) => {
+    const who = esc(e.judge.replace("judge.", ""));
+    const link = `<a href="#/finding/${esc(e.finding_id)}" class="mono">${esc(e.finding_id)}</a>`;
+    if (e.kind === "stake") return `<li><span class="dot agent"></span>
+      <span><b>${who}</b> bets <b>${esc(e.outcome)}</b> ${pct(e.confidence)} on ${link}</span>
+      <span class="meta">stake ${esc(e.stake)} · to win ${esc(e.to_win)}, at risk ${esc(e.at_risk)} · ${when(e.at)}</span></li>`;
+    if (e.kind === "settle") return `<li><span class="dot ${e.payout > 0 ? "human" : e.payout < 0 ? "denied" : ""}"></span>
+      <span><b>${who}</b> ${esc(e.result)} <b class="${e.payout > 0 ? "ok-t" : e.payout < 0 ? "bad-t" : "muted"}">${signed(e.payout)}</b> on ${link}</span>
+      <span class="meta">called ${esc(e.called)}, truth ${esc(e.truth)} (${esc(e.source)} by ${esc(e.decided_by)}) · balance ${Number(e.balance).toFixed(2)} · ${when(e.at)}</span></li>`;
+    return `<li><span class="dot"></span><span><b>${who}</b> bet on ${link} voided</span><span class="meta">${esc(e.reason)} · ${when(e.at)}</span></li>`;
+  }).join("")}</ul>`;
+}
+
+async function renderMarket() {
+  const m = await api("/api/market");
+  const a = m.attention;
+  const leader = m.leaderboard[0];
+  view.innerHTML = `
+    <div class="page-head"><div><h1>Judge market</h1>
+      <div class="sub">Every vote is a bet. Bets settle when a human approves or rejects, or the platform pays. Balances weight the panel next week.</div></div></div>
+    <div class="stats">
+      <div class="card stat accent"><div class="label">Attention budget used</div><div class="value">${a.used}/${a.budget}</div><div class="hint">${a.remaining} token${a.remaining === 1 ? "" : "s"} left this week</div></div>
+      <div class="card stat"><div class="label">Deferred</div><div class="value">${a.deferred.length}</div><div class="hint">over budget, still waiting for a human</div></div>
+      <div class="card stat"><div class="label">Bets settled</div><div class="value">${m.settled}</div><div class="hint">${m.open_bets} still open</div></div>
+      <div class="card stat"><div class="label">Most trusted judge</div><div class="value" style="font-size:22px">${esc(leader.judge.replace("judge.", ""))}</div><div class="hint">${pct(leader.weight)} of the panel's weight</div></div>
+    </div>
+    <div class="grid-2">
+      <section class="card"><div class="card-head"><h2>Balances</h2><span class="muted">start ${m.start}, Brier-scored</span></div>
+        <div class="table-scroll"><table><thead><tr><th>Judge</th><th class="r">Balance</th><th class="r">Weight</th><th>History</th><th>Record</th></tr></thead><tbody>
+        ${m.leaderboard.map((r) => `<tr><td><b>${esc(r.judge.replace("judge.", ""))}</b></td>
+          <td class="r num"><b>${Number(r.balance).toFixed(2)}</b><div class="${r.pnl >= 0 ? "ok-t" : "bad-t"}" style="font-size:12px">${r.pnl >= 0 ? "+" : ""}${Number(r.pnl).toFixed(2)}</div></td>
+          <td class="r num">${pct(r.weight)}</td><td>${sparkline(r.history)}</td>
+          <td class="muted">${r.won} won · ${r.lost} lost · ${r.abstained} abstained · ${r.open} open</td></tr>`).join("")}
+        </tbody></table></div>
+        <div class="card-pad muted" style="font-size:12.5px;border-top:1px solid var(--border)">
+          Payout = 10 × (1 − 4 × (p − y)²), p = the judge's probability it's recoverable, y = what really happened.
+          Confident and right: up to +10. "Conflict" (no lean): 0. Confident and wrong: down to −30. Honest confidence pays best.</div>
+      </section>
+      <section class="card"><div class="card-head"><h2>Recent bets and settlements</h2><span class="muted">append-only ledger</span></div>${ledgerFeed(m.recent)}</section>
+    </div>
+    <section class="card section-gap"><div class="card-head"><h2>Human attention this week</h2>
+        <span class="muted">value = |gap| × (1 − weighted confidence)</span></div>
+      ${a.escalations ? `<div class="table-scroll"><table><thead><tr><th>#</th><th>Finding</th><th>Check</th><th class="r">Gap</th><th class="r">Value</th><th>Status</th></tr></thead><tbody>
+        ${[...a.queued, ...a.deferred].map((d) => `<tr class="link" data-href="#/finding/${esc(d.finding_id)}">
+          <td class="num">${esc(d.rank)}</td><td><a href="#/finding/${esc(d.finding_id)}" class="mono">${esc(d.finding_id)}</a></td>
+          <td>${chan(d.channel)} ${label(d.check_type)}</td><td class="r num">${usd(d.gap)}</td><td class="r num">${usd(d.value)}</td>
+          <td>${d.status === "deferred" ? '<span class="badge b-conflict">deferred</span>' : '<span class="badge b-JUDGED">queued</span>'}
+            ${d.decided ? badge("human", "decided") : ""}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty">Nothing escalated this week. Budget untouched.</div>`}
+    </section>`;
+}
+
 // ---------- router + polling ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
   const m = h.match(/^\/finding\/(.+)$/);
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on",
-    (a.dataset.view === "live" && (h === "/" || m)) || (a.dataset.view === "queue" && h === "/queue") || (a.dataset.view === "score" && h === "/score")));
+    (a.dataset.view === "live" && (h === "/" || m)) || (a.dataset.view === "queue" && h === "/queue") ||
+    (a.dataset.view === "score" && h === "/score") || (a.dataset.view === "market" && h === "/market")));
   if (m) return renderFinding(decodeURIComponent(m[1]));
   if (h === "/queue") return renderQueue();
   if (h === "/score") return renderScore();
+  if (h === "/market") return renderMarket();
   return renderLive();
 }
 

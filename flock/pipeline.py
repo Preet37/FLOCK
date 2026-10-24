@@ -9,15 +9,22 @@ Collect -> Read -> Connect -> Deal terms -> Check -> Judge -> Rank -> Draft -> [
 Uses real data from data/std/ once Maja and Thabhelo's agents produce it; until then, fixtures/fake_findings.json.
 Each run appends a one-line summary to data/state/runs.jsonl (week 1, week 2, ...) for the scoreboard;
 --forget starts that history over, because it's a true day one.
+
+Judge market (flock/market.py): the panel's votes are weighted by each judge's balance, every vote is recorded as a
+stake, and bets settle through the gatekeeper when a human approves / rejects (or the platform pays). Balances carry
+over between runs; --forget resets them. Conflicts are ordered by the value of a human looking; past the attention
+budget (FLOCK_ATTENTION_BUDGET, default 10) they're marked 'deferred' and wait. The demo human skips deferred items.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from flock import market
 from flock.agents import checkers, clicky, deal_keeper, dispute_writer, formatter, learner, matcher, panel, ranker
 from flock.gatekeeper import transition
 from flock.models import Actor, Finding
@@ -58,17 +65,21 @@ def detect(fixtures: Path | None = None) -> tuple[list[dict], str]:
 
 def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, pace: float = 0.0,
         store: Store | None = None, rules_path: Path | None = None, portal: Path | None = None,
-        fixtures: Path | None = None) -> Store:
-    """store / rules_path / portal / fixtures default to the repo paths; tests point them at a temp dir."""
+        fixtures: Path | None = None, attention_budget: int | None = None) -> Store:
+    """store / rules_path / portal / fixtures default to the repo paths; tests point them at a temp dir.
+    attention_budget defaults to env FLOCK_ATTENTION_BUDGET (10)."""
     store = store or get_store()
     rules_path = Path(rules_path or learner.RULES)
     portal = Path(portal or clicky.PORTAL)
+    run_id = "RUN-" + uuid.uuid4().hex[:8]
     if reset:
         store.reset()
         portal.unlink(missing_ok=True)
+        market.void_open(store, "findings wiped by pipeline --reset")
     if forget:
         rules_path.unlink(missing_ok=True)
         RUNS.unlink(missing_ok=True)
+        market.reset(store)
 
     def move(finding_id: str, action: str, actor: Actor, **kw) -> None:
         transition(store, finding_id, action, actor, **kw)
@@ -83,9 +94,14 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
         move(f["finding_id"], "check", CHECKER, reason="Checker computed expected vs actual in code")
 
     rules = learner.approved_rules(rules_path)
-    for f in store.all():
-        if f["state"] == "CHECKED":
-            move(f["finding_id"], "judge", panel.ACTOR, patch=panel.decide(f, rules), reason="Panel vote")
+    weights = market.weights(store)  # balances carried over from earlier weeks' settled bets
+    decisions = {f["finding_id"]: panel.decide(f, rules, weights) for f in store.all() if f["state"] == "CHECKED"}
+    escalations = [{**store.get(fid), **d} for fid, d in decisions.items() if d["outcome"] == "conflict"]
+    attention = market.allocate_attention(escalations, attention_budget, weights)
+    for fid, d in decisions.items():
+        patch = {**d, "attention": attention[fid]} if fid in attention else d  # labels only; still a conflict
+        move(fid, "judge", panel.ACTOR, patch=patch, reason="Panel vote")
+        market.record_stakes(store, fid, d["votes"], run_id)
 
     for f in store.all():
         if f["state"] == "JUDGED" and f["outcome"] == "recoverable":
@@ -102,7 +118,7 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
                 continue
             if f["outcome"] == "recoverable" and f.get("dispute_draft"):
                 move(f["finding_id"], "approve", DEMO_HUMAN, reason="Evidence checks out")
-            elif f["outcome"] == "conflict":
+            elif f["outcome"] == "conflict" and f.get("attention", {}).get("status") != "deferred":
                 move(f["finding_id"], "reject", DEMO_HUMAN,
                      reason="Rep had no authority to change the deal; accept the charge")
         filed = clicky.file_approved(store, portal)
@@ -111,7 +127,18 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     proposed = learner.propose(store, rules_path)
     record_run(store, source)
     summary(store, proposed)
+    market_summary(store)
     return store
+
+
+def market_summary(store: Store) -> None:
+    s = market.snapshot(store)
+    print("judge market: " + " | ".join(f"{r['judge'].replace('judge.', '')} {r['balance']:.2f}" for r in s["leaderboard"])
+          + f" ({s['settled']} bets settled, {s['open_bets']} open)")
+    a = s["attention"]
+    if a["escalations"]:
+        print(f"attention: {a['used']}/{a['budget']} tokens used"
+              + (f", {len(a['deferred'])} deferred: {', '.join(d['finding_id'] for d in a['deferred'])}" if a["deferred"] else ""))
 
 
 def record_run(store: Store, source: str) -> dict:

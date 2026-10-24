@@ -17,6 +17,7 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, request, send_from_directory
 
+from flock import market
 from flock.agents import clicky, learner
 from flock.gatekeeper import Denied, transition
 from flock.models import TRANSITIONS, Actor
@@ -25,6 +26,7 @@ from flock.store import ROOT, Store, get_store
 STATIC = Path(__file__).resolve().parent / "static"
 STATES = ["NEW", "CHECKED", "JUDGED", "APPROVED", "REJECTED", "FILED", "RECOVERED"]
 HUMAN_ACTIONS = ("approve", "reject")
+DASHBOARD_ACTIONS = HUMAN_ACTIONS + ("recover",)  # recover = a person marks a filed dispute as paid
 
 
 def _load_scoreboard():
@@ -120,9 +122,16 @@ def create_app(store: Store | None = None, runs_path: Path | None = None) -> Fla
 
     @app.get("/api/queue")
     def api_queue():
-        rows = sorted((f for f in st().all() if needs_human(f)),
-                      key=lambda f: (f.get("outcome") != "conflict", -abs(f["gap"])))
-        return jsonify(rows)
+        # conflicts first, ordered by the attention budget (value of a human looking); deferred ones last
+        def order(f):
+            att = f.get("attention") or {}
+            return f.get("outcome") != "conflict", att.get("status") == "deferred", att.get("rank", 0), -abs(f["gap"])
+        return jsonify(sorted((f for f in st().all() if needs_human(f)), key=order))
+
+    @app.get("/api/market")
+    def api_market():
+        """Judge balances (derived from the append-only ledger), recent bets / settlements, attention budget."""
+        return jsonify(market.snapshot(st()))
 
     @app.get("/api/findings/<finding_id>")
     def api_detail(finding_id: str):
@@ -133,9 +142,10 @@ def create_app(store: Store | None = None, runs_path: Path | None = None) -> Fla
 
     @app.post("/api/findings/<finding_id>/<action>")
     def api_decide(finding_id: str, action: str):
-        """Approve or reject. The gatekeeper decides whether this actor may; denials are logged and return 403."""
-        if action not in HUMAN_ACTIONS:
-            return jsonify(error=f"the dashboard only does {' / '.join(HUMAN_ACTIONS)}"), 400
+        """Approve, reject, or recover (the platform paid). The gatekeeper decides whether this actor may;
+        denials are logged and return 403. Allowed moves settle the judge market's bets (in the gatekeeper)."""
+        if action not in DASHBOARD_ACTIONS:
+            return jsonify(error=f"the dashboard only does {' / '.join(DASHBOARD_ACTIONS)}"), 400
         b = body()
         name = str(b.get("actor") or "").strip()
         if not name:

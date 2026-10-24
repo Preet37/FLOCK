@@ -22,6 +22,9 @@ Screens, in demo order:
    full audit trail with diffs. Denied attempts show in red. "Try as an agent" shows the gatekeeper refusing an agent.
 4. **Scoreboard** (`#/score`): `scripts/score.py` (caught, missed, false alarms, dollars, each trap vs the answer key)
    plus human hand-offs by week from `data/state/runs.jsonl`.
+5. **Judge market** (`#/market`): judge balances with sparkline history and weight share, recent bets and settlements
+   from `data/state/market_ledger.jsonl`, attention budget used / remaining, and deferred escalations. Deferred
+   conflicts also show (dashed) at the bottom of the Human queue; a FILED finding's page has "Mark recovered".
 
 ## The rule it keeps
 
@@ -35,9 +38,10 @@ findings as the gatekeeper.
 | --- | --- | --- |
 | GET | `/api/summary` | counters, count per state, latest 15 log entries |
 | GET | `/api/findings` | all findings (+ `needs_human`) |
-| GET | `/api/queue` | JUDGED findings waiting on a person (conflicts first) |
+| GET | `/api/queue` | JUDGED findings waiting on a person (conflicts first, by attention rank; deferred last) |
 | GET | `/api/findings/<id>` | finding, its log, the human decision, denied attempts, rule applied, portal entry |
-| POST | `/api/findings/<id>/approve` or `/reject` | body `{"actor": "ira", "reason": "...", "role": "human"}`. 403 + logged if denied |
+| POST | `/api/findings/<id>/approve`, `/reject` or `/recover` | body `{"actor": "ira", "reason": "...", "role": "human"}`. 403 + logged if denied. Allowed moves settle the judges' bets |
+| GET | `/api/market` | judge leaderboard (balance, weight, history, record), recent ledger entries, attention budget + deferred |
 | POST | `/api/file-approved` | Clicky files APPROVED disputes (gatekeeper transition) |
 | GET | `/api/rules` | proposed + approved learned rules |
 | POST | `/api/rules/<rule_id>/approve` | body `{"actor": "ira"}` |
