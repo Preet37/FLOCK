@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from flock.gatekeeper import GATEKEEPER, transition
-from flock.store import ROOT, JsonStore
+from flock.store import ROOT, Store
 
 PORTAL = ROOT / "data" / "sandbox_portal" / "disputes.jsonl"
 
@@ -31,7 +31,7 @@ def submit_to_sandbox(f: dict[str, Any]) -> str:
     return ref
 
 
-def file_approved(store: JsonStore) -> list[str]:
+def file_approved(store: Store) -> list[str]:
     filed = []
     for f in store.all():
         if f["state"] != "APPROVED":

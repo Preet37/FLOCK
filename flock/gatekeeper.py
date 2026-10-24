@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from flock.models import ANNOTATIONS, TRANSITIONS, Actor
-from flock.store import JsonStore
+from flock.store import Store
 
 
 class Denied(Exception):
@@ -28,7 +28,7 @@ def _diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, list[Any]]
 
 
 def transition(
-    store: JsonStore,
+    store: Store,
     finding_id: str,
     action: str,
     actor: Actor,

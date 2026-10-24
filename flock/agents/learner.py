@@ -13,7 +13,7 @@ import json
 from collections import defaultdict
 from typing import Any
 
-from flock.store import ROOT, JsonStore
+from flock.store import ROOT, Store
 
 RULES = ROOT / "rules.json"
 PROPOSED = ROOT / "data" / "state" / "proposed_rules.json"
@@ -37,7 +37,7 @@ def matching_rule(f: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def propose(store: JsonStore) -> list[dict[str, Any]]:
+def propose(store: Store) -> list[dict[str, Any]]:
     """Look at human approve/reject decisions on conflicts and propose a rule when the same call repeats."""
     by_id = {f["finding_id"]: f for f in store.all()}
     groups: dict[tuple, list[str]] = defaultdict(list)
