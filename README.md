@@ -58,6 +58,26 @@ python -m flock.agents.formatter --confirm            # same, accepting proposed
 - Column maps live in `mappings.json`. Unknown layouts get a proposed mapping (Claude, or a header-name heuristic offline) that a human confirms once; then it's saved and automatic. Run with `--mappings /tmp/m.json` if you want to rehearse the demo moment without touching the committed file.
 - `data/raw/` and `data/std/` are gitignored. To get back to a fixtures-only Quickstart: `rm -rf data/raw/*/ data/raw/manifest.csv data/std/*.csv`.
 
+## Clicky demo (agent files disputes in a sandbox portal)
+
+`flock/portal.py` is a FAKE merchant dispute portal on `127.0.0.1:8765` only (login `sandbox` / `sandbox`).
+By default Clicky writes to `data/sandbox_portal/disputes.jsonl` (no setup). Browser mode is opt-in:
+
+```bash
+python -m playwright install chromium        # once; if it fails, Clicky uses your installed Google Chrome
+python -m flock.portal                       # terminal 1: open http://127.0.0.1:8765 (sandbox / sandbox)
+
+# terminal 2: Clicky logs in, fills the form for each APPROVED finding, submits, reads back the SBX- reference
+export FLOCK_OFFLINE=1
+FLOCK_CLICKY_MODE=browser FLOCK_CLICKY_HEADED=1 python -m flock.pipeline --reset --demo-approve
+```
+
+Refresh "My disputes" in the portal to see the filings. Each finding's `file` entry in `data/state/audit_log.jsonl`
+carries the portal reference (written by the gatekeeper, not Clicky). If the portal isn't running, Clicky starts it;
+if Playwright or a browser is missing, it falls back to the jsonl file. Other knobs: `FLOCK_CLICKY_SLOWMO` (ms,
+headed only), `FLOCK_CLICKY_CHANNEL=chrome`, `FLOCK_PORTAL_USER` / `FLOCK_PORTAL_PASS` / `FLOCK_PORTAL_PORT`.
+Real-browser test: `FLOCK_TEST_BROWSER=1 pytest tests/test_clicky.py`.
+
 ## Getting started (teammates)
 
 ```bash
@@ -106,6 +126,7 @@ flock/store.py         Store protocol + get_store(): JsonStore now, SpacetimeSto
 flock/gatekeeper.py    transition(): the one door, logs every move incl. denied ones
 flock/llm.py           Claude wrapper with offline fallback
 flock/pipeline.py      runs everything end to end
+flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
 flock/agents/          one file per agent, owner named at the top
 fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)
 generator/             Maja's data generator (output in generator/out/, gitignored)
