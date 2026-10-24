@@ -14,3 +14,4 @@ rules.json
 .claude/
 data/exports/
 data/benchmarks/
+data/training/

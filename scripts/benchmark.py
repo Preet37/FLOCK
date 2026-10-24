@@ -123,6 +123,25 @@ def parse_seeds(spec: str) -> list[int]:
     return out
 
 
+_RAW_PATH = __import__("re").compile(r"(?:\S*?/)?\braw/")   # any folder prefix (or none) up to the raw data folder
+
+
+def production_paths(f: dict[str, Any]) -> dict[str, Any]:
+    """Evidence cites data/raw/<source>/<file> as it would in production, not the seed's cache folder. Every
+    contestant then sees the same shape a real run shows, and no seed number leaks into a model's prompt."""
+    fix = lambda text: _RAW_PATH.sub("data/raw/", str(text)) if text else text
+
+    def src(path: str) -> str:
+        path = fix(path)
+        if path.startswith(("data/", "/")) or "raw/" in path:
+            return path
+        return "data/raw/" + path  # the formatter cites files relative to the raw folder it was given
+
+    ev = [{**e, **({"source_file": src(e["source_file"])} if e.get("source_file") else {}),
+           **({"what": fix(e["what"])} if e.get("what") else {})} for e in f.get("evidence", [])]
+    return {**f, "evidence": ev, "reason": fix(f.get("reason", ""))}
+
+
 def seed_dir(seed: int, profile: str, stores: int, days: int) -> Path:
     return SEEDS_DIR / f"{profile}-{stores}x{days}-t{len(generator.TRAPS)}-{seed}"  # a new trap invalidates the cache
 
@@ -151,6 +170,7 @@ def prepare(seed: int, profile: str, stores: int | None, days: int, trap_rate: f
         found = pipeline.detect_real(raw=raw, std=std, mappings=mappings, confirm=True, interactive=False,
                                      progress=NullProgress())
     shutil.copy(out / "answer_key.csv", key_path)
+    found = [production_paths(f) for f in found]
     findings_path.write_text(json.dumps(found))
     meta = {"profile": prof["name"], "stores": n_stores, "days": days, "order_count": len(world["orders"]),
             "key_rows": len(world["key"]), "prepare_seconds": round(time.monotonic() - t0, 1)}
