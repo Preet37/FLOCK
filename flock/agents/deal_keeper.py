@@ -306,3 +306,31 @@ def find_conflicts(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 out.append({"key": {"channel": channel, "store_id": store, "term_type": tt, "promo_code": code},
                             "on": d.isoformat() if d else None, "winner": winner, "conflicts": conflicts})
     return out
+
+
+class TermIndex:
+    """terms_for() with a memory, for year-scale runs. Same answers: terms are pre-filtered to one channel + store
+    and the result is cached per (channel, store, day, promo code), so a million orders cost a few thousand lookups.
+    Callers must treat the returned dict as read-only (the checkers do)."""
+
+    def __init__(self, terms: list[dict[str, Any]]):
+        self.terms = terms
+        self._subset: dict[tuple, list[dict[str, Any]]] = {}
+        self._cache: dict[tuple, dict[str, Any]] = {}
+
+    def subset(self, channel: Any, store: Any) -> list[dict[str, Any]]:
+        k = (channel, store)
+        if k not in self._subset:
+            self._subset[k] = [c for c in self.terms if c["channel"] in (channel, "all")
+                               and c["store_id"] in (store, "all")]
+        return self._subset[k]
+
+    def __call__(self, story: dict[str, Any]) -> dict[str, Any]:
+        channel, store = story.get("channel"), story.get("store_id", "all")
+        on = story.get("placed_at") or (story.get("payout_lines") or [{}])[0].get("payout_date")
+        code = (story.get("pos") or {}).get("promo_code") or next(
+            (ln.get("promo_code") for ln in story.get("payout_lines", []) if ln.get("promo_code")), None)
+        k = (channel, store, str(on)[:10] if on else None, code)
+        if k not in self._cache:
+            self._cache[k] = terms_for(self.subset(channel, store), story)
+        return self._cache[k]

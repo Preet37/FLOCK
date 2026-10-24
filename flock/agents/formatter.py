@@ -28,11 +28,13 @@ import json
 import re
 import sys
 from datetime import date, datetime, timedelta
+from itertools import chain, islice
 from pathlib import Path
 from typing import Any
 
 from flock import llm
 from flock.models import CHANNELS, money
+from flock.progress import Progress, ensure, progress_path
 from flock.store import ROOT
 
 RAW = ROOT / "data" / "raw"
@@ -381,84 +383,332 @@ def raw_files(raw: Path) -> list[Path]:
     return out
 
 
-def dedupe(recs: list[dict], table: str, dropped: list[dict]) -> list[dict]:
-    """Edge case 1: drop rows that are byte-for-byte the same as an earlier row. Everything else stays."""
-    seen: dict[tuple, dict] = {}
-    keep = []
-    for r in recs:
-        k = tuple((c, r.get(c)) for c in TABLES[table] if c not in ("source_file", "source_row")) + (("_raw", r["_raw"]),)
-        if k in seen:
-            first = seen[k]
-            dropped.append({"table": table, "source_file": r["source_file"], "source_row": r["source_row"],
-                            "duplicate_of": f"{first['source_file']}:{first['source_row']}"})
+# ---------------------------------------------------------------------------------------------------------------
+# Fast path: the same per-value rules as standardize_row(), applied a column at a time to chunks of rows
+# (each distinct value is converted once; high-cardinality timestamps are parsed vectorized with pandas,
+# anything pandas can't parse falls back to parse_when). Rows stream to disk, so a year of orders fits in memory.
+# ---------------------------------------------------------------------------------------------------------------
+
+CHUNK_ROWS = 100_000
+VECTOR_DATES = 2_000   # distinct timestamps above this are parsed with pandas instead of strptime one by one
+
+
+def _mapped(col: list, fn) -> list:
+    """fn applied to each distinct value once (ids, money and dates repeat a lot)."""
+    table = {u: fn(u) for u in dict.fromkeys(col)}
+    return [table[v] for v in col]
+
+
+def _money_fn(flip: bool):
+    def f(v: Any) -> float | None:
+        x = parse_money(v)
+        return money(-x) if (x is not None and flip) else x
+    return f
+
+
+def _when_fn(fmt: str | None, iso: bool):
+    def f(v: Any) -> str:
+        d = parse_when(v, fmt)
+        if not d:
+            return ""
+        return d.isoformat(timespec="seconds") if iso else d.date().isoformat()
+    return f
+
+
+def _dates(col: list, fmt: str | None, iso: bool) -> list:
+    fn = _when_fn(fmt, iso)
+    uniq = list(dict.fromkeys(col))
+    strs = [u for u in uniq if isinstance(u, str) and u.strip()]
+    table: dict[Any, str] = {}
+    if fmt and len(strs) > VECTOR_DATES:
+        import pandas as pd
+
+        parsed = pd.to_datetime(pd.Series([s.strip() for s in strs], dtype=object), format=fmt, errors="coerce")
+        text_out = parsed.dt.strftime("%Y-%m-%dT%H:%M:%S" if iso else "%Y-%m-%d")
+        for s, ok, out in zip(strs, parsed.notna().tolist(), text_out.tolist()):
+            if ok:
+                table[s] = out
+    for u in uniq:
+        if u not in table:
+            table[u] = fn(u)
+    return [table[v] for v in col]
+
+
+def standardize_columns(header: list[str], rows: list[list[Any]], m: dict) -> dict[str, list]:
+    """Column-wise standardize_row(): {field: [values]} for one chunk of data rows (same results, much faster)."""
+    n = len(rows)
+    width = len(header)
+    index = {h: i for i, h in enumerate(header) if h}   # last duplicate header wins, like the dict in apply_mapping
+    cols = list(zip(*[r[:width] if len(r) >= width else list(r) + [None] * (width - len(r)) for r in rows])) \
+        if n else [() for _ in header]
+    out: dict[str, list] = {k: [v] * n for k, v in m.get("constants", {}).items()}
+    dates = m.get("dates", {})
+    for col_name, field in m["columns"].items():
+        i = index.get(col_name)
+        out[field] = list(cols[i]) if i is not None and i < len(cols) else [None] * n
+    for f in list(out):
+        col = out[f]
+        if f in MONEY:
+            out[f] = _mapped(col, _money_fn(f in m.get("negate", [])))
+        elif f in DATETIMES:
+            out[f] = _dates(col, dates.get(f), iso=True)
+        elif f in DATES:
+            out[f] = _dates(col, dates.get(f), iso=False)
+        else:
+            out[f] = _mapped(col, text)
+    if m.get("channel_from"):
+        i = index.get(m["channel_from"])
+        out["channel"] = _mapped(list(cols[i]) if i is not None else [None] * n, normalize_channel)
+    if "channel" in out:
+        out["channel"] = _mapped(out["channel"], normalize_channel)
+    if "store_id" in out:
+        out["store_id"] = _mapped(out["store_id"], normalize_store)
+    return out
+
+
+def _nonempty(row: list[Any]) -> bool:
+    for c in row:
+        if c is not None and c != "" and (not isinstance(c, str) or c.strip()):
+            return True
+    return False
+
+
+def iter_sheets(path: Path):
+    """Yields (sheet, head, rest): head = first 10 (rownum, row) pairs, rest = an iterator over every later pair.
+    Streams: a CSV or xlsx is never loaded whole."""
+    if path.suffix.lower() in (".xlsx", ".xlsm"):
+        from openpyxl import load_workbook
+
+        wb = load_workbook(path, data_only=True, read_only=True)
+        try:
+            for ws in wb.worksheets:
+                it = ((i, list(r)) for i, r in enumerate(ws.iter_rows(values_only=True), start=1))
+                head = list(islice(it, 10))
+                yield ws.title, head, it
+        finally:
+            wb.close()
+        return
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        it = enumerate(csv.reader(fh), start=1)
+        head = list(islice(it, 10))
+        yield None, head, it
+
+
+def count_rows(path: Path) -> int:
+    """Cheap row estimate for the progress bar (newlines, or the sheet dimensions for xlsx)."""
+    if path.suffix.lower() in (".xlsx", ".xlsm"):
+        return 0  # sizing a sheet means parsing it; the total grows as its rows are read
+    n = 0
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            n += block.count(b"\n")
+    return n
+
+
+class _Out:
+    """Every std table open for writing (to .tmp files, renamed at the end), plus streaming dedupe."""
+
+    def __init__(self, out: Path):
+        self.out = out
+        self.cols = {**TABLES, "error_charges": ERROR_COLS,
+                     "duplicates_removed": ["table", "source_file", "source_row", "duplicate_of"]}
+        self.fh = {t: (out / f"{t}.csv.tmp").open("w", newline="") for t in self.cols}
+        self.w = {t: csv.writer(fh, lineterminator="\n") for t, fh in self.fh.items()}
+        for t, cols in self.cols.items():
+            self.w[t].writerow(cols)
+        self.seen: dict[str, dict[int, str]] = {t: {} for t in TABLES}
+        self.counts = {t: 0 for t in self.cols}
+
+    def write(self, table: str, label: str, rownums: list[int], recs: dict[str, list], raws: list[tuple]) -> int:
+        """Drop exact duplicates (edge case 1: same standardized values AND same raw cells), write the rest."""
+        n = len(rownums)
+        recs["source_file"], recs["source_row"] = [label] * n, rownums
+        if table == "payout_lines":
+            ids, ch, pid = recs.get("payout_line_id"), recs.get("channel") or [None] * n, recs.get("platform_order_id")
+            if ids is None or not all(ids):
+                # platform gives no line id: one line per order per platform, so channel + platform order id is unique
+                ids = ids or [""] * n
+                pid = pid or [""] * n
+                recs["payout_line_id"] = [x if x else (f"{c}:{p}" if p else f"{label}:{r}")
+                                          for x, c, p, r in zip(ids, ch, pid, rownums)]
+        key_cols = [recs.get(c, [None] * n) for c in TABLES[table] if c not in ("source_file", "source_row")]
+        seen, keep, dropped = self.seen[table], [], []
+        for i, k in enumerate(zip(*key_cols, raws)):
+            h = hash(k)
+            if h in seen:
+                dropped.append([table, label, rownums[i], seen[h]])
+            else:
+                seen[h] = f"{label}:{rownums[i]}"
+                keep.append(i)
+        if dropped:
+            self.w["duplicates_removed"].writerows(dropped)
+            self.counts["duplicates_removed"] += len(dropped)
+        if len(keep) < n:
+            recs = {f: [v[i] for i in keep] for f, v in recs.items()}
+        self._rows(table, recs)
+        if table == "payout_lines" and "error_charge" in recs:
+            idx = [i for i, x in enumerate(recs["error_charge"]) if x]
+            if idx:
+                err = {f: [v[i] for i in idx] for f, v in recs.items()}
+                err["amount"], err["error_charge_id"] = err["error_charge"], err["payout_line_id"]
+                self._rows("error_charges", err)
+        return len(keep)
+
+    def _rows(self, table: str, recs: dict[str, list]) -> None:
+        cols = self.cols[table]
+        n = len(recs["source_row"])
+        out = []
+        for c in cols:
+            v = recs.get(c)
+            if v is None:
+                out.append([""] * n)
+            elif c in MONEY:
+                out.append(["" if x is None else (f"{x:.2f}" if isinstance(x, float) else x) for x in v])
+            else:
+                out.append(["" if x is None else x for x in v])
+        self.w[table].writerows(zip(*out))
+        self.counts[table] += n
+
+    def close(self, ok: bool = True) -> None:
+        for t, fh in self.fh.items():
+            fh.close()
+            tmp = self.out / f"{t}.csv.tmp"
+            if ok:
+                tmp.replace(self.out / f"{t}.csv")
+            else:
+                tmp.unlink(missing_ok=True)
+
+
+def _chunks(rest, hidx_rownum: int, size: int = CHUNK_ROWS):
+    """(rownums, rows) chunks of non-empty data rows after the header row."""
+    nums, rows = [], []
+    for rownum, row in rest:
+        if rownum <= hidx_rownum or not _nonempty(row):
             continue
-        seen[k] = r
-        keep.append(r)
-    return keep
+        nums.append(rownum)
+        rows.append(row)
+        if len(rows) >= size:
+            yield nums, rows
+            nums, rows = [], []
+    if rows:
+        yield nums, rows
 
 
-def write_table(path: Path, cols: list[str], recs: list[dict]) -> None:
-    with path.open("w", newline="") as fh:
-        w = csv.writer(fh, lineterminator="\n")
-        w.writerow(cols)
-        for r in recs:
-            w.writerow(["" if r.get(c) is None else (f"{r[c]:.2f}" if c in MONEY and isinstance(r[c], float) else r[c])
-                        for c in cols])
+STAMP = ".formatted"   # in data/std/: what the tables were last built from
+PENDING = "pending_layouts.json"   # in data/std/: files skipped until a human confirms their layout
+
+
+def pending_layouts(std: Path | None = None) -> list[dict[str, str]]:
+    """Files the last run skipped because nobody has confirmed their layout yet: [{"file", "source"}]."""
+    p = Path(std or STD) / PENDING
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return []
+
+
+def _stamp(files: list[Path], mappings_path: Path) -> str:
+    """Fingerprint of the inputs: every raw file's name, size and mtime, plus the column maps."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for f in files:
+        st = f.stat()
+        h.update(f"{f}|{st.st_size}|{st.st_mtime_ns}\n".encode())
+    mp = Path(mappings_path)
+    h.update(mp.read_bytes() if mp.exists() else b"")
+    return h.hexdigest()
 
 
 def format_all(raw: Path | None = None, out: Path | None = None, mappings_path: Path | None = None,
-               confirm: bool = False, interactive: bool = False, verbose: bool = False) -> dict[str, Path]:
+               confirm: bool = False, interactive: bool = False, verbose: bool = False,
+               progress: Progress | None = None) -> dict[str, Path]:
     """Read every raw data file, write the standard tables, return {table: path} for those that exist.
 
     With nothing in data/raw/ this just returns whatever is already in data/std/ (so the pipeline keeps
-    running on fixtures until real data shows up).
+    running on fixtures until real data shows up). progress (flock.progress.Progress) gets one "format" stage.
+    If nothing changed since the last complete run (same raw files, same mappings), the tables are reused:
+    the pipeline formats again on every run, and a year of data takes a while to read.
     """
     raw, out = Path(raw or RAW), Path(out or STD)  # resolved at call time so tests can repoint RAW/STD
     mappings_path = mappings_path or MAPPINGS
+    progress = ensure(progress)
     out.mkdir(parents=True, exist_ok=True)
     files = raw_files(raw)
-    if files:
-        mappings = load_mappings(mappings_path)
-        recs: dict[str, list[dict]] = {t: [] for t in TABLES}
-        for path in files:
-            source = path.parent.name
-            for sheet, rows in read_sheets(path):
-                label = label_for(path, sheet, raw)
-                name, hidx = find_layout(rows, mappings)
-                if name is None:
-                    hidx = guess_header(rows)
-                    if hidx is None:
-                        if verbose:
-                            print(f"[formatter] skipped {label}: no table found")
-                        continue
-                    header = cells(rows[hidx][1])
-                    proposal = propose_mapping(header, [r for _, r in rows[hidx + 1:]], source)
-                    if not ask_human(label, proposal, confirm, interactive):
-                        continue
-                    prefix = f"{source}_layout_"
-                    name = f"{prefix}{sum(1 for k in mappings if k.startswith(prefix)) + 1}"
-                    mappings[name] = {k: v for k, v in proposal.items() if k != "proposed_by"}
-                    mappings[name]["confirmed_by"] = "human"
-                    save_mappings(mappings, mappings_path)
-                    print(f"    saved as '{name}' in {Path(mappings_path).name}; next time it's automatic")
-                m = mappings[name]
-                got = apply_mapping(label, rows, hidx, m)
-                recs[m["table"]] += got
-                if verbose:
-                    print(f"[formatter] {label}: layout '{name}' -> {len(got)} {m['table']} rows")
-        dropped: list[dict] = []
-        for t in TABLES:
-            recs[t] = dedupe(recs[t], t, dropped)
-        errors = [dict(r, amount=r["error_charge"], error_charge_id=r["payout_line_id"])
-                  for r in recs["payout_lines"] if r.get("error_charge")]
-        for t, cols in TABLES.items():
-            write_table(out / f"{t}.csv", cols, recs[t])
-        write_table(out / "error_charges.csv", ERROR_COLS, errors)
-        write_table(out / "duplicates_removed.csv", ["table", "source_file", "source_row", "duplicate_of"], dropped)
+    stamp = _stamp(files, mappings_path) if files else ""
+    if files and (out / STAMP).exists() and (out / STAMP).read_text() == stamp \
+            and all((out / f"{t}.csv").exists() for t in TABLES):
         if verbose:
-            counts = ", ".join(f"{t} {len(recs[t])}" for t in TABLES)
-            print(f"[formatter] wrote {out}: {counts}, error_charges {len(errors)}; "
-                  f"removed {len(dropped)} exact duplicate rows")
+            print(f"[formatter] {out}: inputs unchanged since the last run, tables reused")
+        files = []
+    if files:
+        (out / STAMP).unlink(missing_ok=True)
+        complete = True
+        pending: list[dict[str, str]] = []
+        mappings = load_mappings(mappings_path)
+        progress.stage("format", total=sum(count_rows(p) for p in files))
+        sink = _Out(out)
+        done = 0
+        try:
+            for path in files:
+                source = path.parent.name
+                for sheet, head, rest in iter_sheets(path):
+                    label = label_for(path, sheet, raw)
+                    name, hidx = find_layout(head, mappings)
+                    first = None
+                    if name is None:
+                        hidx = guess_header(head)
+                        if hidx is None:
+                            if verbose:
+                                print(f"[formatter] skipped {label}: no table found")
+                            complete = False
+                            continue
+                        header = cells(head[hidx][1])
+                        chunks = _chunks(chain(head, rest), head[hidx][0])
+                        first = next(chunks, ([], []))
+                        proposal = propose_mapping(header, first[1], source)
+                        if not ask_human(label, proposal, confirm, interactive):
+                            complete = False
+                            pending.append({"file": label, "source": source})
+                            continue
+                        prefix = f"{source}_layout_"
+                        name = f"{prefix}{sum(1 for k in mappings if k.startswith(prefix)) + 1}"
+                        mappings[name] = {k: v for k, v in proposal.items() if k != "proposed_by"}
+                        mappings[name]["confirmed_by"] = "human"
+                        save_mappings(mappings, mappings_path)
+                        print(f"    saved as '{name}' in {Path(mappings_path).name}; next time it's automatic")
+                        chunks = chain([first], chunks)
+                    else:
+                        chunks = _chunks(chain(head, rest), head[hidx][0])
+                    m = mappings[name]
+                    header = cells(head[hidx][1])
+                    got = 0
+                    for rownums, rows in chunks:
+                        if not rows:
+                            continue
+                        recs = standardize_columns(header, rows, m)
+                        if sheet is None:  # csv: cells are already strings
+                            raws = [tuple(r) for r in rows]
+                        else:
+                            raws = [tuple(text(c) for c in r) for r in rows]
+                        sink.write(m["table"], label, rownums, recs, raws)
+                        got += len(rows)
+                        done += len(rows)
+                        progress.update(done, total=max(progress.total or 0, done))
+                    if verbose:
+                        print(f"[formatter] {label}: layout '{name}' -> {got} {m['table']} rows")
+        except BaseException:
+            sink.close(ok=False)
+            raise
+        sink.close()
+        progress.update(done)
+        (out / PENDING).write_text(json.dumps(pending, indent=2) + "\n")
+        if complete:  # a skipped layout means a later run (after a human says yes) must read everything again
+            (out / STAMP).write_text(_stamp(files, mappings_path))
+        if verbose:
+            counts = ", ".join(f"{t} {sink.counts[t]}" for t in TABLES)
+            print(f"[formatter] wrote {out}: {counts}, error_charges {sink.counts['error_charges']}; "
+                  f"removed {sink.counts['duplicates_removed']} exact duplicate rows")
     found = {}
     for name in ("orders", "payout_lines", "bank_deposits"):
         p = out / f"{name}.csv"
@@ -474,4 +724,5 @@ if __name__ == "__main__":
     ap.add_argument("--out", default=str(STD))
     ap.add_argument("--mappings", default=str(MAPPINGS))
     a = ap.parse_args()
-    format_all(Path(a.raw), Path(a.out), Path(a.mappings), confirm=a.confirm, interactive=True, verbose=True)
+    format_all(Path(a.raw), Path(a.out), Path(a.mappings), confirm=a.confirm, interactive=True, verbose=True,
+               progress=Progress(progress_path()))

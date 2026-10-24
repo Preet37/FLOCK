@@ -1,0 +1,62 @@
+{
+  "name": "default",
+  "description": "The original demo company: a hot chicken franchise group, 12 stores, four channels. Simulated data.",
+  "simulated": true,
+  "brand": "Dave's Hot Chicken",
+  "legal_entity": "Hot Chicken Franchise Group LLC (Dave's Hot Chicken franchisee)",
+  "legal_short": "Hot Chicken Franchise Group LLC",
+  "app_name": "Dave's Hot Chicken mobile app and website",
+  "email_domain": "hotchickenfg.example",
+  "base_monday": "2026-08-03",
+  "default_stores": 12,
+  "cities": ["Pasadena", "Glendale", "Burbank", "Torrance", "Irvine", "Anaheim", "Riverside", "Ontario",
+             "Long Beach", "Santa Ana", "Fullerton", "Pomona", "Carson", "Downey", "Whittier", "Norwalk"],
+  "tax_rates": [0.0725, 0.0875, 0.095, 0.1025],
+  "channels": ["doordash", "ubereats", "grubhub", "direct_app"],
+  "orders_per_day": {"doordash": [5, 9], "ubereats": [3, 7], "grubhub": [2, 5], "direct_app": [2, 5]},
+  "hours": [660, 1305],
+  "items_per_order": [1, 4],
+  "menu": [["No.1 Two Sliders", 13.99], ["No.2 Slider + Tender", 13.99], ["No.3 Two Tenders", 13.99],
+           ["Slider", 7.49], ["Tender", 6.99], ["Fries", 4.49], ["Cheese Fries", 6.49],
+           ["Mac & Cheese", 4.99], ["Kale Slaw", 3.99], ["Shake", 6.49], ["Drink", 2.99]],
+  "average_ticket": 24.0,
+  "seasonality": {"weekday": [1, 1, 1, 1, 1, 1, 1], "monthly": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]},
+  "delivery_minutes": [28, 55],
+  "promo_rate": 0.12,
+  "trap_rate": 2.0,
+  "trap_weights": {"2": 0, "14": 0.25, "15": 0.25},
+  "error_reasons": {"late": "Missing item: Cheese Fries", "duplicate": "Wrong item: Slider instead of Tender",
+                    "legit": "Missing item: Mac & Cheese"},
+  "refund_amounts": [4.49, 6.49, 6.99, 7.49],
+  "unauthorized_rep": ["Kyle Brandt", "kyle.brandt@grubhub.example", "Sales Representative"],
+  "contracts": {
+    "doordash": {
+      "contract_id": "DD-MSA-2025-114", "counterparty": "DoorDash, Inc.", "platform_name": "DoorDash",
+      "tier": "Plus", "commission": 0.25, "fee_name": null, "fee": 0.0,
+      "promo": {"code": "DD-3OFF", "discount": 3.00, "merchant_share": 0.5, "window": "period"},
+      "error_window_hours": 72, "tax_rule": "platform_remits",
+      "authorized_contacts": [["Priya Raman", "priya.raman@doordash.example", "Partner Account Manager"]],
+      "amendment": {"amendment_id": "DD-MSA-2025-114-A1", "tier": "Basic", "commission": 0.20,
+                    "at": "mid", "signed_days_before": 5}
+    },
+    "ubereats": {
+      "contract_id": "UE-RSA-2025-0387", "counterparty": "Uber Eats US LLC", "platform_name": "Uber Eats",
+      "tier": "Standard", "commission": 0.22, "fee_name": "Marketing Fee", "fee": 1.00,
+      "promo": {"code": "UE-BOGO-SLIDER", "discount": 7.49, "merchant_share": 0.5, "window": "period",
+                "adds_items": [["Slider", 7.49], ["Slider", 7.49]]},
+      "error_window_hours": 72, "tax_rule": "platform_remits",
+      "authorized_contacts": [["Marcus Lee", "marcus.lee@ubereats.example", "Senior Account Executive"]]
+    },
+    "grubhub": {
+      "contract_id": "GH-PA-2025-2290", "counterparty": "Grubhub Holdings Inc.", "platform_name": "Grubhub",
+      "tier": "Marketing Basic", "commission": 0.20, "fee_name": "Delivery Network Fee", "fee": 1.25,
+      "promo": {"code": "GH-5OFF", "discount": 5.00, "merchant_share": 1.0, "window": "first_half"},
+      "error_window_hours": 72, "tax_rule": "platform_remits",
+      "authorized_contacts": [["Dana Whitfield", "dana.whitfield@grubhub.example", "Director, Restaurant Partnerships"]]
+    },
+    "direct_app": {
+      "contract_id": "PP-MA-2024-019", "counterparty": "PayProc Payments LLC", "platform_name": "PayProc",
+      "processing_pct": 0.029, "processing_fixed": 0.30
+    }
+  }
+}

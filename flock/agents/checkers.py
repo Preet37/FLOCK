@@ -282,11 +282,15 @@ def check_deposit(story: dict[str, Any], terms: dict[str, Any] | None = None) ->
     dep = story.get("deposit")
     evidence = [{"source_file": dep["source_file"], "row": dep["source_row"],
                  "what": f"bank deposit {dep['deposit_id']} of {actual} on {dep['deposit_date']}"}] if dep else []
+    summary = story.get("payouts") or {}
     for pid in pids:
-        lines = [ln for ln in story["lines"] if ln.get("payout_id") == pid]
-        evidence.append({"source_file": lines[0]["source_file"], "row": lines[0]["source_row"],
-                         "what": f"payout {pid} statement net {money(sum(ln['net'] for ln in lines))} "
-                                 f"({len(lines)} lines)"})
+        if pid in summary:  # matcher's per-payout totals (the lines need not all be in memory)
+            first, count, total = summary[pid]["first"], summary[pid]["count"], summary[pid]["total"]
+        else:
+            lines = [ln for ln in story["lines"] if ln.get("payout_id") == pid]
+            first, count, total = lines[0], len(lines), money(sum(ln["net"] for ln in lines))
+        evidence.append({"source_file": first["source_file"], "row": first["source_row"],
+                         "what": f"payout {pid} statement net {total} ({count} lines)"})
     if dep is None:
         reason = f"Payout {pids[0]} promised {expected}, but no bank deposit for it was found."
     elif abs(gap) <= TOLERANCE:

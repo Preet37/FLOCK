@@ -117,7 +117,7 @@ class Api:
         return {"finding": self.store.get(fid), "log": self.store.log(fid)}
 
     def rules(self) -> dict[str, Any]:
-        return {"approved": learner.approved_rules(), "proposed": learner._read(learner.PROPOSED)}
+        return {"approved": learner.approved_rules(), "proposed": learner._read(learner._proposed_path(self.store))}
 
     def scoreboard(self) -> dict[str, Any]:
         result, text = _captured(score)
@@ -132,7 +132,7 @@ class Api:
         return {"finding": self.store.get(fid), "filed": filed, "proposed": proposed, "was": after["state"]}
 
     def approve_rule(self, rid: str, body: dict[str, Any]) -> dict[str, Any]:
-        return learner.approve(rid, approver=str(body.get("actor") or "human"))
+        return learner.approve(rid, approver=Actor(id=str(body.get("actor") or "human"), role="human"), store=self.store)
 
     def run(self, body: dict[str, Any]) -> dict[str, Any]:
         _, text = _captured(pipeline.run, reset=bool(body.get("reset", True)),

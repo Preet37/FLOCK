@@ -1,5 +1,6 @@
 // Flock dashboard. Plain JS, hash routes: #/  #/queue  #/finding/<id>  #/journal  #/journal/<id>  #/score  #/market
 // Polls /api/summary every second; re-renders the current view when the audit log grows.
+// Also polls /api/progress and updates the live board's progress bar in place (no re-render).
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -8,6 +9,7 @@ const CHANNEL = { doordash: "DoorDash", ubereats: "Uber Eats", grubhub: "Grubhub
 const STRONG = new Set(["contract", "amendment", "auth_email"]);
 let lastVersion = null;
 let lastSummary = null;
+let lastProgress = null;
 let busy = false;
 
 // ---------- helpers ----------
@@ -159,6 +161,35 @@ function activity(entries) {
       <span class="meta">${esc(e.before)} → ${esc(e.after)} · ${when(e.at)}</span></li>`).join("")}</ul>`;
 }
 
+// ---------- run progress (flock.progress -> /api/progress) ----------
+const big = (n) => (n == null ? "?" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n)));
+
+function progressBar(p) {
+  if (!p || !p.status || p.status === "idle") return "";
+  const running = p.status === "running";
+  const frac = running && p.total ? Math.min(1, p.done / p.total) : running ? null : 1;
+  const stages = (p.stages || []).map((s) => `<span class="pstage" title="${esc(big(s.done))} ${esc(s.unit)} in ${esc(s.seconds)}s">${esc(s.name)} <b>${esc(s.seconds)}s</b></span>`).join("");
+  const head = running
+    ? `<b>${esc(p.stage || "starting")}</b> <span class="num">${esc(big(p.done))}${p.total ? " / " + esc(big(p.total)) : ""} ${esc(p.unit || "rows")}</span> <span class="muted">· ${esc(big(p.rate))}/s · ${esc(Math.round(p.elapsed || 0))}s</span>`
+    : `<b>${p.status === "failed" ? "Run failed" : "Run finished"}</b> <span class="muted">in ${esc(Math.round(p.elapsed || 0))}s${p.run ? " · " + esc(p.run) : ""}</span>`;
+  return `<section class="card card-pad progress ${esc(p.status)}" aria-label="Run progress">
+      <div class="phead">${head}<span class="pct num">${frac == null ? "" : Math.round(frac * 100) + "%"}</span></div>
+      <div class="ptrack" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${frac == null ? 0 : Math.round(frac * 100)}">
+        <i class="${frac == null ? "indeterminate" : ""}" style="width:${frac == null ? 30 : Math.round(frac * 100)}%"></i></div>
+      ${stages ? `<div class="pstages">${stages}</div>` : ""}
+    </section>`;
+}
+
+function renderProgress(p) {
+  lastProgress = p;
+  const el = document.getElementById("run-progress");
+  if (el) el.innerHTML = progressBar(p);
+}
+
+async function pollProgress() {
+  try { renderProgress(await api("/api/progress")); } catch { /* the board works without it */ }
+}
+
 async function renderLive() {
   const [s, rows] = await Promise.all([api("/api/summary"), api("/api/findings")]);
   const prev = {};
@@ -166,6 +197,7 @@ async function renderLive() {
   view.innerHTML = `
     <div class="page-head"><div><h1>Live board</h1>
       <div class="sub">Every move below went through the gatekeeper and is in the audit log.</div></div></div>
+    <div id="run-progress">${progressBar(lastProgress)}</div>
     ${counters(s)}
     ${stateStrip(s)}
     <div class="grid-2">
@@ -581,4 +613,6 @@ async function refresh(force = false) {
 api("/api/meta").then((m) => ($("#store-name").textContent = `store: ${m.store}`)).catch(() => {});
 window.addEventListener("hashchange", () => route());
 refresh(true);
+pollProgress();
 setInterval(refresh, 1000);
+setInterval(pollProgress, 700);

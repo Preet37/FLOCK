@@ -148,12 +148,16 @@ def _link_lines(orders: list[dict], lines: list[dict]) -> tuple[dict[str, list[d
         else:
             pending.append(ln)
     unmatched = []
+    by_slot: dict[tuple, list[dict]] = defaultdict(list)  # fallback candidates: same store + channel only
+    if pending:
+        for o in orders:
+            by_slot[(o["store_id"], o["channel"])].append(o)
     for ln in sorted(pending, key=lambda x: -abs(x["gross"])):  # 2. fallback; real lines before adjustments
         key = (ln["channel"], ln.get("platform_order_id"))
         if ln.get("platform_order_id") and key in plat_to_order:
             linked[plat_to_order[key]].append(ln)
             continue
-        free = [o for o in orders if o["order_id"] not in linked]
+        free = [o for o in by_slot.get((ln["store_id"], ln["channel"]), ()) if o["order_id"] not in linked]
         best, c = _fallback(ln, free) if ln["gross"] else (None, 0.0)
         if best:
             linked[best["order_id"]].append(ln)
@@ -166,20 +170,43 @@ def _link_lines(orders: list[dict], lines: list[dict]) -> tuple[dict[str, list[d
 
 
 # payouts <-> deposits ------------------------------------------------------
-def _payout_groups(lines: list[dict]) -> dict[tuple, dict[str, Any]]:
-    groups: dict[tuple, dict[str, Any]] = {}
-    for ln in lines:
+class PayoutTotals:
+    """Running per-payout totals: (channel, payout_id) -> net in cents, line count, first line. Small enough to
+    build in one pass over a year of payout lines without keeping the lines (see flock/scan.py)."""
+
+    def __init__(self) -> None:
+        self.groups: dict[tuple, dict[str, Any]] = {}
+
+    def add(self, ln: dict[str, Any], keep_line: bool = False) -> None:
         key = (ln["channel"], ln.get("payout_id"))
-        g = groups.setdefault(key, {"channel": ln["channel"], "payout_id": ln.get("payout_id"),
-                                    "payout_date": ln.get("payout_date"), "lines": [], "total": 0.0})
-        g["lines"].append(ln)
-        g["total"] = money(g["total"] + ln["net"])
-    return groups
+        g = self.groups.get(key)
+        if g is None:
+            g = self.groups[key] = {"channel": ln["channel"], "payout_id": ln.get("payout_id"),
+                                    "payout_date": ln.get("payout_date"), "lines": [], "cents": 0, "count": 0,
+                                    "first": ln}
+        if keep_line:
+            g["lines"].append(ln)
+        g["cents"] += round(ln["net"] * 100)
+        g["count"] += 1
+
+    def result(self) -> dict[tuple, dict[str, Any]]:
+        for g in self.groups.values():
+            g["total"] = money(g["cents"] / 100)
+        return self.groups
 
 
-def reconcile_deposits(lines: list[dict], deposits: list[dict]) -> list[dict[str, Any]]:
-    """Group payout lines by payout_id and link each group to a bank deposit. Returns deposit stories."""
-    groups = _payout_groups(lines)
+def _payout_groups(lines: list[dict]) -> dict[tuple, dict[str, Any]]:
+    totals = PayoutTotals()
+    for ln in lines:
+        totals.add(ln, keep_line=True)
+    return totals.result()
+
+
+def reconcile_deposits(lines: list[dict], deposits: list[dict],
+                       groups: dict[tuple, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Group payout lines by payout_id and link each group to a bank deposit. Returns deposit stories.
+    groups: pre-aggregated PayoutTotals.result() instead of lines (year-scale runs)."""
+    groups = _payout_groups(lines) if groups is None else groups
     free = dict(groups)
     stories = []
 
@@ -189,6 +216,8 @@ def reconcile_deposits(lines: list[dict], deposits: list[dict]) -> list[dict[str
         stories.append({"kind": "deposit", "deposit_id": dep["deposit_id"] if dep else None,
                         "channel": dep["channel"] if dep else gs[0]["channel"], "deposit": dep,
                         "payout_ids": [g["payout_id"] for g in gs], "lines": [ln for g in gs for ln in g["lines"]],
+                        "payouts": {g["payout_id"]: {"first": g["first"], "count": g["count"], "total": g["total"]}
+                                    for g in gs},
                         "statement_total": total, "deposit_amount": dep["amount"] if dep else 0.0,
                         "match_confidence": confidence})
 
@@ -230,16 +259,35 @@ def reconcile_deposits(lines: list[dict], deposits: list[dict]) -> list[dict[str
 
 
 # the corkboard -------------------------------------------------------------
+def searched_statements(lines: list[dict]) -> dict[str, set]:
+    """Payout files searched per channel: the second source for "sold, never paid"."""
+    statements: dict[str, set] = defaultdict(set)
+    for ln in lines:
+        if ln.get("source_file"):
+            statements[ln["channel"]].add(ln["source_file"])
+    return statements
+
+
 def match(tables: dict) -> tuple[list[dict[str, Any]], list[Finding]]:
     """Returns (stories, findings). Stories = order stories + deposit stories (see module docstring)."""
     t = load_tables(tables)
     orders, lines = t["orders"], t["payout_lines"]
     if not orders and not lines:
         return [], []
-
-    linked, conf, unmatched = _link_lines(orders, lines)
     deposit_stories = reconcile_deposits(lines, t["bank_deposits"])
     deposit_of = {(ds["channel"], pid): ds["deposit_id"] for ds in deposit_stories for pid in ds["payout_ids"]}
+    stories, findings = match_orders(t, deposit_of, searched_statements(lines))
+    return stories + deposit_stories, findings
+
+
+def match_orders(t: dict[str, list[dict]], deposit_of: dict[tuple, str] | None = None,
+                 statements: dict[str, set] | None = None) -> tuple[list[dict[str, Any]], list[Finding]]:
+    """Order stories + missing_order findings for loaded tables (load_tables). Works on any slice of the data
+    that keeps each store's orders and payout lines together (flock/scan.py runs it once per store)."""
+    orders, lines = t["orders"], t["payout_lines"]
+    deposit_of = deposit_of or {}
+    statements = searched_statements(lines) if statements is None else statements
+    linked, conf, unmatched = _link_lines(orders, lines)
 
     plat_to_order = {(ln["channel"], ln.get("platform_order_id")): oid for oid, lns in linked.items() for ln in lns}
     errors, refunds = defaultdict(list), defaultdict(list)
@@ -250,11 +298,6 @@ def match(tables: dict) -> tuple[list[dict[str, Any]], list[Finding]]:
     for r in t["refunds"]:
         if r.get("order_id"):
             refunds[r["order_id"]].append(r)
-
-    statements = defaultdict(set)  # payout files searched per channel: the second source for "sold, never paid"
-    for ln in lines:
-        if ln.get("source_file"):
-            statements[ln["channel"]].add(ln["source_file"])
 
     stories, findings = [], []
     for o in orders:
@@ -291,4 +334,4 @@ def match(tables: dict) -> tuple[list[dict[str, Any]], list[Finding]]:
             reason=f"{channel} paid out order {pid} (gross {money(sum(ln['gross'] for ln in lns))}) and took "
                    f"{deductions} in charges, but the register has no matching order.",
         ))
-    return stories + deposit_stories, findings
+    return stories, findings

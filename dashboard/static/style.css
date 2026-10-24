@@ -260,3 +260,16 @@ td.mono, td .mono { white-space: nowrap; }
 .src-row { margin-top: 6px; font-size: 12px; overflow-x: auto; }
 .src-row table td, .src-row table th { padding: 2px 8px; white-space: nowrap; }
 .notes { margin: 0; padding: 12px 16px 12px 32px; }
+/* run progress (live board) */
+.progress { margin-bottom: 12px; }
+.progress .phead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.progress .pct { margin-left: auto; font-weight: 650; }
+.ptrack { height: 8px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); margin-top: 10px; overflow: hidden; }
+.ptrack i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s ease; }
+.ptrack i.indeterminate { animation: slide 1.2s ease-in-out infinite alternate; }
+.progress.done .ptrack i { background: var(--ok); }
+.progress.failed .ptrack i { background: var(--bad); }
+.pstages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.pstage { font-size: 12px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 99px; padding: 2px 8px; }
+@keyframes slide { from { margin-left: 0; } to { margin-left: 70%; } }
+@media (prefers-reduced-motion: reduce) { .ptrack i { transition: none; } .ptrack i.indeterminate { animation: none; } }
