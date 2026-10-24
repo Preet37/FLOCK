@@ -170,6 +170,24 @@ per_minute, cost_per_1000, offline, fallbacks, human_minutes_per_store_week, see
 (every run ever, with `per_seed[<contestant>]` rows that carry each trap's `got` vs `expected_outcome`).
 `data/benchmarks/results.csv` has the same rows flat, one per contestant and seed plus a `seed=all` aggregate.
 
+## Tuned judge: the training set (step 1)
+
+`scripts/judge_dataset.py` turns generated seeds into the exact conversations the panel has at inference: each judge's
+persona plus the panel system prompt, the finding payload the panel sends (no ids, so nothing about the seed leaks), and
+the `{outcome, confidence, reason}` JSON the panel parses, labelled from that seed's answer key. One example per finding
+per judge, split by seed into `data/training/judge_train.jsonl` and `judge_val.jsonl`, with a `manifest.json`.
+
+```bash
+export FLOCK_OFFLINE=1
+python scripts/judge_dataset.py                       # seeds 1-50 (val 46-50), bagel chain, 2 weeks, ~5 min
+python scripts/judge_dataset.py --seeds 101-105       # refused: the benchmark's held-out seeds are locked
+```
+
+The benchmark's held-out seeds (101-110) are refused before anything is generated and recorded in the manifest, so the
+proof table stays honest. Step 2 happens on the GX10: LoRA an 8B instruct model on `judge_train.jsonl`, watch
+`judge_val.jsonl`, serve it with vLLM, then `python scripts/benchmark.py --contestants rules,local,local-tuned
+--tuned-model <id the server reports>`.
+
 ## Live seed demo (a judge picks the number)
 
 ```bash
