@@ -238,3 +238,14 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
 #toast.bad { background: var(--bad); color: #fff; }
 .foot { color: var(--muted); font-size: 12px; padding-top: 32px; padding-bottom: 32px; }
 td.mono, td .mono { white-space: nowrap; }
+
+/* judge market */
+.h-note { text-transform: none; letter-spacing: 0; font-weight: 500; margin-left: 6px; }
+.att { font-size: 12px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.att.queued { color: var(--info); }
+.att.deferred { color: var(--warn); font-weight: 600; }
+.queue.deferred .q-item { border-style: dashed; }
+.spark { display: block; overflow: visible; }
+.spark polyline, .spark line { fill: none; stroke: var(--muted); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
+.spark.up polyline { stroke: var(--ok); }
+.spark.down polyline { stroke: var(--bad); }

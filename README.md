@@ -41,6 +41,24 @@ That week 1 vs week 2 drop is the "self-improving" demo moment.
 Drop `FLOCK_OFFLINE=1` and set `ANTHROPIC_API_KEY` (see `.env.example`) to use Claude for the judges and dispute drafts.
 `FLOCK_MODEL` picks the model (default `claude-sonnet-5-5`), `FLOCK_LLM_TIMEOUT` the per-call timeout in seconds (default 30). If a call fails or times out, that judge falls back to the offline rules and the finding's reason says so.
 
+## Judge market (bets that settle against reality, human attention as a budget)
+
+Each judge's vote is a bet: a forecast p = P(recoverable) ('conflict' = 0.5, no lean). Bets settle when ground truth
+arrives through the gatekeeper: human approve = recoverable, human reject = correct, RECOVERED (the platform paid) =
+recoverable for any bet still open. Payout is Brier-scored, `10 x (1 - 4(p - y)^2)`: up to +10 for a confident right
+call, 0 for "a human should decide", down to -30 for a confident wrong one, so honest confidence pays best. Judges start
+at 100 credits; the panel weights each judge's confidence by its balance share (unanimity and the guardrails still apply).
+Balances persist across runs and reset with `--forget`. Each run, conflicts are ordered by `|gap| x (1 - weighted
+confidence)`; past `FLOCK_ATTENTION_BUDGET` (default 10) they're marked deferred: still conflicts, still waiting for a person.
+
+```bash
+python -m flock.market                     # leaderboard, open bets, attention used / deferred
+python -m flock.market --recover F-0001    # a human marks a filed dispute paid; open bets settle
+FLOCK_ATTENTION_BUDGET=1 python -m flock.pipeline --reset --demo-approve   # see F-0004 deferred, not decided
+```
+
+Ledger: `data/state/market_ledger.jsonl` (append-only; balances are derived from it). Dashboard: the "Judge market" tab.
+
 ## Data (generator -> collector -> formatter)
 
 ```bash
@@ -124,6 +142,7 @@ FLOCK_CONTEXT.md       everything about the project (problem, research, pitch, p
 flock/models.py        constants, Finding, Actor, the state machine table
 flock/store.py         Store protocol + get_store(): JsonStore now, SpacetimeStore stub
 flock/gatekeeper.py    transition(): the one door, logs every move incl. denied ones
+flock/market.py        judge market: Brier-scored bets settled on human/RECOVERED truth, attention budget
 flock/llm.py           Claude wrapper with offline fallback
 flock/pipeline.py      runs everything end to end
 flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into

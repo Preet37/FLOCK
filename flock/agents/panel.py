@@ -8,6 +8,11 @@ Approved rules (rules.json, from the Learner) are applied first and skip the pan
 With no API key, each judge uses offline rules so the demo still runs. If a live judge errors or times out,
 that judge falls back to offline rules and the finding's reason says so.
 
+Judge market (flock/market.py): each vote is a bet that settles when a human approves / rejects or the platform pays.
+decide() can take the judges' balance shares as weights: the average confidence becomes balance-weighted, so a judge
+with a better track record counts for more. Unanimity is still required and the guardrails below still apply, so
+weights can only move a unanimous call across THRESHOLD, never overrule a disagreement or a guardrail.
+
 Two code guardrails sit on top of the judges, because they are policy, not judgment:
   - a gap within TOLERANCE is never disputed (penny rounding)
   - a deal-term finding with no contract, amendment or authorized email behind it is never auto-disputed
@@ -96,8 +101,20 @@ def vote(judge: str, f: dict[str, Any]) -> dict[str, Any]:
     return v
 
 
-def decide(f: dict[str, Any], rules: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """Returns the patch for the 'judge' transition: outcome, confidence, votes, reason."""
+def weighted_mean(votes: list[dict[str, Any]], weights: dict[str, float] | None = None) -> float:
+    """Average confidence, each judge weighted by its market balance share. No weights = plain mean."""
+    w = [(weights or {}).get(v["judge"], 0.0) for v in votes]
+    if not weights or sum(w) <= 0:
+        return sum(v["confidence"] for v in votes) / len(votes)
+    return round(sum(wi * v["confidence"] for wi, v in zip(w, votes)) / sum(w), 9)  # drop float noise from shares
+
+
+def decide(f: dict[str, Any], rules: list[dict[str, Any]] | None = None,
+           weights: dict[str, float] | None = None) -> dict[str, Any]:
+    """Returns the patch for the 'judge' transition: outcome, confidence, votes, reason.
+
+    weights: judge -> balance share from flock.market.weights(); None means every judge counts the same.
+    """
     rule = learner.matching_rule(f, rules)
     if rule:
         return {"outcome": rule["outcome"], "confidence": 1.0, "votes": [],
@@ -105,12 +122,15 @@ def decide(f: dict[str, Any], rules: list[dict[str, Any]] | None = None) -> dict
 
     with ThreadPoolExecutor(max_workers=len(JUDGES)) as pool:  # judges are independent; run them at once
         votes = list(pool.map(lambda j: vote(j, f), JUDGES))
+    if weights:
+        votes = [{**v, "weight": round(weights.get(v["judge"], 0.0), 4)} for v in votes]
     outcomes = {v["outcome"] for v in votes}
-    mean = sum(v["confidence"] for v in votes) / len(votes)
+    mean = weighted_mean(votes, weights)
     avg = round(mean, 2)
+    how = "balance-weighted confidence" if weights else "avg confidence"
     if len(outcomes) == 1 and mean >= THRESHOLD:  # compare the unrounded mean: 0.7466 is not 75%
         outcome = outcomes.pop()
-        reason = f"All 3 judges agree ({avg:.0%} avg confidence). {votes[0]['reason']}"
+        reason = f"All 3 judges agree ({avg:.0%} {how}). {votes[0]['reason']}"
     else:
         outcome = "conflict"
         reason = "Judges disagree or aren't confident enough; sending to a human. " + " | ".join(

@@ -4,13 +4,17 @@
 - Checks the actor's role may do it (agents propose, humans approve, gatekeeper files).
 - Writes an append-only log entry with a before/after diff, in the same commit as the change.
 - Denied attempts are logged too, then raise Denied.
+- After an allowed approve / reject / recover (ground truth), the judge market settles its bets on that finding.
+  The market only reads the committed move and writes its own ledger; it never changes a finding.
 """
 from __future__ import annotations
 
 import copy
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from flock import market
 from flock.models import ANNOTATIONS, TRANSITIONS, Actor
 from flock.store import Store
 
@@ -73,4 +77,9 @@ def transition(
 
     if not allowed:
         raise Denied(f"{actor.id} ({actor.role}) cannot '{action}' finding {finding_id} in state {state}")
+    if action in market.TRUTH:
+        try:
+            market.on_transition(store, finding_id, action)
+        except Exception as e:  # the move is committed and logged; a market hiccup must not undo or hide it
+            print(f"[market] could not settle bets on {finding_id} after '{action}': {e}", file=sys.stderr)
     return after
