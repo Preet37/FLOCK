@@ -124,7 +124,7 @@ def parse_seeds(spec: str) -> list[int]:
 
 
 def seed_dir(seed: int, profile: str, stores: int, days: int) -> Path:
-    return SEEDS_DIR / f"{profile}-{stores}x{days}-{seed}"
+    return SEEDS_DIR / f"{profile}-{stores}x{days}-t{len(generator.TRAPS)}-{seed}"  # a new trap invalidates the cache
 
 
 def prepare(seed: int, profile: str, stores: int | None, days: int, trap_rate: float | None = None,

@@ -31,8 +31,9 @@ def test_profiles_listed_and_loadable():
 
 
 def test_default_profile_output_is_unchanged(tmp_path):
-    """--seed 42 --stores 12 --weeks 2 gives the same bytes as before profiles existed."""
-    gen.generate(seed=42, stores=12, days=14, out=tmp_path)
+    """--seed 42 --stores 12 --weeks 2 with the original 17 traps gives the same bytes as before profiles existed.
+    (Trap 18, processing fee creep, came later and draws from the RNG, so it is left out of this byte check.)"""
+    gen.generate(seed=42, stores=12, days=14, out=tmp_path, traps=list(range(1, 18)))
     assert sha(tmp_path / "answer_key.csv") == "131b4dfd9f5549099c9293a3b30febabf3cd813a9b2d35b5775f93211a47e605"
     assert sha(tmp_path / "pos_orders.csv") == "394937d79b4da4c5ae5d30b6293de084b7934f5def4a4a6ed8177b562000d77e"
     assert sha(tmp_path / "grubhub_statement.xlsx") == "a9ebc2bc5f3fafeabf95767dfc3e25ad2a0f810d1a4bd9d02602117669e0e7ce"
@@ -101,3 +102,18 @@ def test_cli_profile_flag(tmp_path, capsys, monkeypatch):
     assert "2 stores x 3 days" in out and "ca_bagel_chain, simulated" in out
     first = next(csv.DictReader((tmp_path / "direct_app_orders.csv").open()))
     assert datetime.strptime(first["created"], "%d-%b-%Y %H:%M").hour < 15     # bagel shops close mid-afternoon
+
+
+def test_trap_18_adds_processing_fee_creep_rows_only(tmp_path):
+    """The default trap set now includes 18; it adds creep rows on the direct app and changes nothing else in the key."""
+    import csv
+
+    gen.generate(seed=42, stores=12, days=14, out=tmp_path / "all")
+    gen.generate(seed=42, stores=12, days=14, out=tmp_path / "old", traps=list(range(1, 18)))
+    new = list(csv.DictReader((tmp_path / "all" / "answer_key.csv").open()))
+    old = list(csv.DictReader((tmp_path / "old" / "answer_key.csv").open()))
+    creep = [r for r in new if r["trap_type"] == "processing_fee_creep"]
+    assert creep and all(r["expected_outcome"] == "recoverable" and float(r["amount"]) > 0 for r in creep)
+    from collections import Counter
+    rest = Counter(r["trap_type"] for r in new if r["trap_type"] != "processing_fee_creep")
+    assert rest == Counter(r["trap_type"] for r in old), "every other trap is planted exactly as often as before"

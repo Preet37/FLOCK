@@ -1,4 +1,4 @@
-"""The flock at scale: Matcher + Deal Keeper + Checkers over the std tables, one store at a time, in parallel.
+"""The flock at scale: Matcher + Deal Keeper + Checkers + Anomaly Detector over the std tables, one store at a time, in parallel.
 
 Small data (under SPLIT_ROWS order + payout rows) runs exactly as before, in one process. A year of a 56-store
 chain is ~2.5M rows, which as Python dicts would not fit comfortably in a laptop's memory, so instead:
@@ -22,7 +22,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from flock.agents import checkers, deal_keeper, matcher
+from flock.agents import anomaly, checkers, deal_keeper, matcher
 from flock.progress import Progress, ensure
 
 SPLIT_ROWS = 50_000
@@ -66,6 +66,7 @@ def _detect_small(tables: dict[str, Any], terms: list[dict[str, Any]], progress:
     terms_for = deal_keeper.TermIndex(terms)
     found = [f.to_dict() for f in match_findings]
     found += [f.to_dict() for f in checkers.run_all(stories, terms_for)]
+    found += [f.to_dict() for f in anomaly.detect(stories, terms_for)]
     if context is not None and stories:
         context.update(stories=stories, terms_for=terms_for, orders=matcher.load_tables(tables)["orders"])
     progress.update(len(stories))
@@ -125,7 +126,9 @@ def _run_store(task: tuple) -> tuple[str, list[dict[str, Any]], int]:
     t = matcher.load_tables({**extra, **part})
     stories, found = matcher.match_orders(t, deposit_of, statements)
     out = [f.to_dict() for f in found]
-    out += [f.to_dict() for f in checkers.run_all(stories, deal_keeper.TermIndex(terms))]
+    index = deal_keeper.TermIndex(terms)
+    out += [f.to_dict() for f in checkers.run_all(stories, index)]
+    out += [f.to_dict() for f in anomaly.detect(stories, index)]
     return store, out, len(t["orders"]) + len(t["payout_lines"])
 
 

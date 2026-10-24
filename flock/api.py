@@ -55,6 +55,8 @@ AGENTS: list[dict[str, str]] = [
      "job": "Reads contracts, amendments and emails into deal terms and ranks them by authority."},
     {"actor": "checkers", "name": "Checkers", "owner": "Thabhelo", "role": "agent",
      "job": "Compares what the deal says to what was paid. Plain Python does the money math."},
+    {"actor": "anomaly", "name": "Anomaly Detector", "owner": "Thabhelo", "role": "agent",
+     "job": "Learns each store and app's normal fees, commission and timing from history and flags jumps no rule covers."},
     {"actor": "panel", "name": "Panel", "owner": "Preet", "role": "agent",
      "job": "Three judges vote on each finding. Agreement decides alone; disagreement goes to a human."},
     {"actor": "ranker", "name": "Ranker", "owner": "Preet", "role": "agent",
