@@ -285,7 +285,7 @@ def match(tables: dict) -> tuple[list[dict[str, Any]], list[Finding]]:
         deductions = money(sum(ln["commission"] + ln["promo_merchant_funded"] + ln["error_charge"]
                                + ln["tax_withheld_by_platform"] + ln["other_fees"] for ln in lns))
         findings.append(Finding(
-            order_ids=[lns[0].get("order_id") or pid], channel=channel, check_type="missing_order",
+            order_ids=sorted({lns[0].get("order_id"), pid} - {None, ""}), channel=channel, check_type="missing_order",
             expected=0.0, actual=deductions, gap=deductions,
             evidence=[_ev(ln, f"payout line {ln.get('payout_line_id')} gross {ln['gross']}, net {ln['net']}") for ln in lns],
             reason=f"{channel} paid out order {pid} (gross {money(sum(ln['gross'] for ln in lns))}) and took "

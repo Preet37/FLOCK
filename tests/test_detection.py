@@ -255,3 +255,18 @@ def test_pipeline_real_path(tmp_path, monkeypatch):
     outcomes = sorted(f["outcome"] for f in store.all())
     assert outcomes.count("conflict") == 3 and outcomes.count("correct") == 2  # traps 4, 13, 15 go to a human
     assert all(e["allowed"] for e in store.log())
+
+
+def test_generator_complaint_at_column_counts_as_reported_at():
+    s = _story(error_charge=8.2)
+    s["error_charges"] = [{"amount": 8.2, "reason": "missing item", "delivered_at": "2026-08-17T21:09:20",
+                           "complaint_at": "2026-08-22T09:27:20", "source_file": "e.csv", "source_row": 2}]
+    assert checkers.check_error_charge(s, {}).gap == 8.2
+
+
+def test_stuck_refund_with_no_charge_goes_to_a_human():
+    s = _story()
+    s["refunds"] = [{"refund_id": "R1", "amount": 6.99, "status": "initiated", "source_file": "r.csv", "source_row": 2}]
+    f = checkers.check_refund(s, {})
+    assert (f.expected, f.actual, f.gap) == (6.99, 0.0, 6.99)
+    assert panel.decide(f.to_dict())["outcome"] == "conflict"

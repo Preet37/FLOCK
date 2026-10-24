@@ -177,6 +177,10 @@ def _charges(story: dict[str, Any]) -> list[dict[str, Any]]:
             for ln in story["payout_lines"] if ln["error_charge"] > TOLERANCE]
 
 
+def _reported(c: dict[str, Any]) -> Any:
+    return c.get("reported_at") or c.get("complaint_at")  # the generator names it complaint_at
+
+
 def _stuck_refunds(story: dict[str, Any]) -> list[dict[str, Any]]:
     return [r for r in story.get("refunds", [])
             if str(r.get("status", "")).lower() in STUCK_REFUND and (r.get("money_moved") or 0.0) <= TOLERANCE]
@@ -195,9 +199,9 @@ def check_error_charge(story: dict[str, Any], terms: dict[str, Any]) -> Finding 
     window = float(window_term["value"]) if window_term else ERROR_WINDOW_HOURS
     seen, problems, evidence = set(), [], []
     expected = 0.0
-    for c in sorted(charges, key=lambda c: (str(c.get("reported_at") or ""), c.get("source_row") or 0)):
+    for c in sorted(charges, key=lambda c: (str(_reported(c) or ""), c.get("source_row") or 0)):
         key = (money(c["amount"]), str(c.get("reason") or "").strip().lower())
-        delivered, reported = _ts(c.get("delivered_at")), _ts(c.get("reported_at"))
+        delivered, reported = _ts(c.get("delivered_at")), _ts(_reported(c))
         hours = (reported - delivered).total_seconds() / 3600 if delivered and reported else None
         what = f"error charge {c['amount']}" + (f" ({c['reason']})" if c.get("reason") else "")
         if hours is not None:
@@ -226,6 +230,23 @@ def check_error_charge(story: dict[str, Any], terms: dict[str, Any]) -> Finding 
     )
 
 
+def _unsettled_refund(story: dict[str, Any], stuck: list[dict[str, Any]]) -> Finding | None:
+    """A refund stuck at 'initiated' with no charge to the store: the customer may never have been paid back.
+    One source only, so the panel sends it to a human."""
+    if not stuck:
+        return None
+    owed = money(sum(r["amount"] for r in stuck))
+    moved = money(sum(r.get("money_moved") or 0.0 for r in stuck))
+    return Finding(
+        order_ids=[story["order_id"]], channel=story["channel"], check_type="error_charge",
+        expected=owed, actual=moved, gap=money(owed - moved),
+        evidence=[{"source_file": r["source_file"], "row": r["source_row"],
+                   "what": f"refund {r.get('refund_id')} of {r['amount']} still '{r['status']}', no money moved"}
+                  for r in stuck],
+        reason=f"Refund log shows {owed} as only 'initiated'; no money moved. Confirm with the processor.",
+    )
+
+
 def check_refund(story: dict[str, Any], terms: dict[str, Any]) -> Finding | None:
     """Edge case 13: refund log says 'initiated' but no money moved, yet the store was charged for it.
     Reported as check_type 'error_charge' (the charge to the store) until CONTRACT.md has a refund type."""
@@ -233,7 +254,7 @@ def check_refund(story: dict[str, Any], terms: dict[str, Any]) -> Finding | None
     charged = _charges(story)
     hits = [(r, c) for r in stuck for c in charged if abs(c["amount"] - r["amount"]) <= TOLERANCE]
     if not hits:
-        return None
+        return _unsettled_refund(story, stuck)
     actual = money(sum(c["amount"] for _, c in hits))
     evidence = []
     for r, c in hits:

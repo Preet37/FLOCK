@@ -40,7 +40,8 @@ def score(store: Store | None = None, verbose: bool = True, runs_path: Path = RU
         f = by_order.get(row["order_id"])
         got = f.get("outcome") if f else None
         learned = bool(f and f.get("reason", "").startswith("Applied approved rule"))
-        ok = got == row["expected_outcome"] or (row["expected_outcome"] == "conflict" and learned)
+        quiet = f is None and row["expected_outcome"] == "correct"  # nothing to dispute and nothing raised
+        ok = got == row["expected_outcome"] or quiet or (row["expected_outcome"] == "conflict" and learned)
         if ok:
             caught.append(row)
             if learned:
