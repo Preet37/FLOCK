@@ -36,6 +36,26 @@ pytest                                                      # gatekeeper rules
 That week 1 vs week 2 drop is the "self-improving" demo moment.
 Drop `FLOCK_OFFLINE=1` and set `ANTHROPIC_API_KEY` (see `.env.example`) to use Claude for the judges and dispute drafts.
 
+## Clicky demo (agent files disputes in a sandbox portal)
+
+`flock/portal.py` is a FAKE merchant dispute portal on `127.0.0.1:8765` only (login `sandbox` / `sandbox`).
+By default Clicky writes to `data/sandbox_portal/disputes.jsonl` (no setup). Browser mode is opt-in:
+
+```bash
+python -m playwright install chromium        # once; if it fails, Clicky uses your installed Google Chrome
+python -m flock.portal                       # terminal 1: open http://127.0.0.1:8765 (sandbox / sandbox)
+
+# terminal 2: Clicky logs in, fills the form for each APPROVED finding, submits, reads back the SBX- reference
+export FLOCK_OFFLINE=1
+FLOCK_CLICKY_MODE=browser FLOCK_CLICKY_HEADED=1 python -m flock.pipeline --reset --demo-approve
+```
+
+Refresh "My disputes" in the portal to see the filings. Each finding's `file` entry in `data/state/audit_log.jsonl`
+carries the portal reference (written by the gatekeeper, not Clicky). If the portal isn't running, Clicky starts it;
+if Playwright or a browser is missing, it falls back to the jsonl file. Other knobs: `FLOCK_CLICKY_SLOWMO` (ms,
+headed only), `FLOCK_CLICKY_CHANNEL=chrome`, `FLOCK_PORTAL_USER` / `FLOCK_PORTAL_PASS` / `FLOCK_PORTAL_PORT`.
+Real-browser test: `FLOCK_TEST_BROWSER=1 pytest tests/test_clicky.py`.
+
 ## Getting started (teammates)
 
 ```bash
@@ -84,6 +104,7 @@ flock/store.py         findings + append-only audit log (JSON now, SpacetimeDB l
 flock/gatekeeper.py    transition(): the one door, logs every move incl. denied ones
 flock/llm.py           Claude wrapper with offline fallback
 flock/pipeline.py      runs everything end to end
+flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
 flock/agents/          one file per agent, owner named at the top
 fixtures/              fake findings so everyone can work in parallel
 generator/             Maja's data generator
