@@ -30,11 +30,12 @@ python scripts/score.py                                     # caught 6/6, 2 sent
 python -m flock.agents.learner --approve R-001              # human approves the rule the Learner proposed
 python -m flock.pipeline --reset --demo-approve             # WEEK 2: same traps, 0 sent to a human
 python scripts/score.py
-pytest                                                      # gatekeeper rules
+pytest                                                      # gatekeeper + brain tests (offline, mocked Claude)
 ```
 
 That week 1 vs week 2 drop is the "self-improving" demo moment.
 Drop `FLOCK_OFFLINE=1` and set `ANTHROPIC_API_KEY` (see `.env.example`) to use Claude for the judges and dispute drafts.
+`FLOCK_MODEL` picks the model (default `claude-sonnet-5-5`), `FLOCK_LLM_TIMEOUT` the per-call timeout in seconds (default 30). If a call fails or times out, that judge falls back to the offline rules and the finding's reason says so.
 
 ## Data (generator -> collector -> formatter)
 
@@ -102,11 +103,11 @@ flock/gatekeeper.py    transition(): the one door, logs every move incl. denied 
 flock/llm.py           Claude wrapper with offline fallback
 flock/pipeline.py      runs everything end to end
 flock/agents/          one file per agent, owner named at the top
-fixtures/              fake findings so everyone can work in parallel
+fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)
 generator/             Maja's data generator (output in generator/out/, gitignored)
 mappings.json          Formatter column maps per source layout (human-confirmed)
 scripts/score.py       scoreboard vs answer key
-tests/                 gatekeeper tests
+tests/                 gatekeeper, panel, ranker, learner, dispute writer, llm, end-to-end
 dashboard/             Ira's UI
 docs/                  Hyphenate track notes, sponsor rules, pipeline sketch
 ```

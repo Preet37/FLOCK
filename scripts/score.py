@@ -17,9 +17,9 @@ sys.path.insert(0, str(ROOT))
 from flock.store import JsonStore  # noqa: E402
 
 
-def score() -> dict:
+def score(store: JsonStore | None = None) -> dict:
     key = list(csv.DictReader((ROOT / "data" / "answer_key.csv").open()))
-    findings = JsonStore().all()
+    findings = (store or JsonStore()).all()
     by_order = {o: f for f in findings for o in f["order_ids"]}
 
     caught, missed, false_alarm, by_rule = [], [], [], []
@@ -43,7 +43,7 @@ def score() -> dict:
     for row, got in missed:
         print(f"  MISSED {row['order_id']} {row['trap_type']}: expected {row['expected_outcome']}, got {got}")
     return {"caught": len(caught), "total": len(key), "missed": len(missed),
-            "false_alarms": len(false_alarm), "recovered": recovered, "to_human": to_human}
+            "false_alarms": len(false_alarm), "recovered": recovered, "to_human": to_human, "by_rule": len(by_rule)}
 
 
 if __name__ == "__main__":

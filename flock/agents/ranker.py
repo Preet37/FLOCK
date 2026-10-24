@@ -24,11 +24,14 @@ def score(f: dict[str, Any]) -> float:
 
 
 def within_budget(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Recoverable findings, best first, capped per channel."""
+    """Recoverable findings, best first, capped per channel. Not worth the effort (score <= 0) = not filed.
+    Unknown channels get no budget, so nothing is filed somewhere we haven't agreed a limit for."""
     used: dict[str, int] = {}
     out = []
     for f in sorted(findings, key=lambda x: x.get("rank_score") or 0, reverse=True):
         ch = f["channel"]
+        if f.get("outcome") != "recoverable":
+            continue
         if used.get(ch, 0) < DISPUTE_LIMIT.get(ch, 0) and (f.get("rank_score") or 0) > 0:
             used[ch] = used.get(ch, 0) + 1
             out.append(f)
