@@ -31,6 +31,7 @@ class FakeClient:
 def live(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
     monkeypatch.delenv("FLOCK_OFFLINE", raising=False)
+    monkeypatch.setenv("FLOCK_AUDIT_RATE", "0")  # audit sampling has its own tests in test_panel.py
 
     def install(reply):
         client = FakeClient(reply)
@@ -95,7 +96,8 @@ def test_parse_json_object_gives_up_cleanly(text):
 def test_live_judge_vote_is_used_and_normalized(live):
     live('```json\n{"outcome": " Recoverable ", "confidence": "85%", "reason": "Contract says 20%."}\n```')
     v = panel.vote("judge.strict", fake("F-0001"))
-    assert v == {"outcome": "recoverable", "confidence": 0.85, "reason": "Contract says 20%.", "judge": "judge.strict"}
+    assert v == {"outcome": "recoverable", "confidence": 0.85, "reason": "Contract says 20%.", "judge": "judge.strict",
+                 "model": "anthropic/claude-sonnet-5-5"}
 
 
 @pytest.mark.parametrize("conf,want", [(1.7, 0.017), (-3, 0.0), (40, 0.4), ("0.6", 0.6)])

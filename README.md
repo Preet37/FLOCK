@@ -30,7 +30,7 @@ python scripts/score.py                                     # caught 6/6, 2 sent
 python -m flock.agents.learner --approve R-001              # human approves the rule the Learner proposed
 python -m flock.pipeline --reset --demo-approve             # WEEK 2: same traps, 0 sent to a human
 python scripts/score.py                                     # also prints Week 1: 2 | Week 2: 0
-pytest                                                      # all tests (offline, Claude mocked)
+pytest                                                      # all tests (offline, models mocked)
 python -m dashboard.app                                     # dashboard at http://127.0.0.1:5050
 ```
 
@@ -38,8 +38,54 @@ Dashboard details (screens, API, the live `--pace` demo) are in `dashboard/READM
 Storage is picked by `FLOCK_STORE=json|spacetime` (json default) through `flock.store.get_store()`.
 
 That week 1 vs week 2 drop is the "self-improving" demo moment.
-Drop `FLOCK_OFFLINE=1` and set `ANTHROPIC_API_KEY` (see `.env.example`) to use Claude for the judges and dispute drafts.
-`FLOCK_MODEL` picks the model (default `claude-sonnet-5-5`), `FLOCK_LLM_TIMEOUT` the per-call timeout in seconds (default 30). If a call fails or times out, that judge falls back to the offline rules and the finding's reason says so.
+With nothing set (or `FLOCK_OFFLINE=1`) everything runs on offline rules, exactly as above.
+
+## Models (local first, Claude as reviewer)
+
+The judges, the dispute writer and the column mapper can each run on a different provider. All of them speak
+the OpenAI chat API over plain HTTP (no extra dependency), except Claude:
+
+| Provider | What | Env |
+| --- | --- | --- |
+| `local` | vLLM or Ollama on our NVIDIA GX10 (or a laptop) | `FLOCK_LOCAL_URL` (default `http://127.0.0.1:11434/v1`), `FLOCK_LOCAL_MODEL` (default `llama3.1:8b`), `FLOCK_LOCAL_API_KEY` (optional) |
+| `groq` | Groq cloud | `GROQ_API_KEY`, `FLOCK_GROQ_MODEL` (default `llama-3.3-70b-versatile`) |
+| `nvidia` | build.nvidia.com | `NVIDIA_API_KEY`, `FLOCK_NVIDIA_MODEL` (default `meta/llama-3.3-70b-instruct`), `FLOCK_NVIDIA_URL` |
+| `anthropic` | Claude | `ANTHROPIC_API_KEY`, `FLOCK_MODEL` (default `claude-sonnet-5-5`) |
+| `offline` | never call anything | |
+
+| Role | Env | Default |
+| --- | --- | --- |
+| Judges | `FLOCK_JUDGE_PROVIDERS` comma list in panel order (strict, operator, skeptic), e.g. `local,local,groq`; one entry = all three. `FLOCK_JUDGE_MODELS` optionally gives each judge its own model | `FLOCK_PROVIDER` |
+| Reviewer | `FLOCK_REVIEWER_PROVIDER`, `FLOCK_REVIEWER_MODEL` | `anthropic` |
+| Dispute writer | `FLOCK_WRITER_PROVIDER`, `FLOCK_WRITER_MODEL` | `FLOCK_PROVIDER` |
+| Column mapper | `FLOCK_MAPPER_PROVIDER`, `FLOCK_MAPPER_MODEL` | `FLOCK_PROVIDER` |
+
+`FLOCK_PROVIDER` defaults to `anthropic`, which is offline without a key. So setting only `ANTHROPIC_API_KEY`
+still means "Claude everywhere", as before. A provider without its key falls back to offline rules.
+`FLOCK_LLM_TIMEOUT` is the per-call timeout in seconds (default 30). If a call fails or times out, that judge
+falls back to the offline rules and the finding's reason says so. Each live vote records the `model` that cast it.
+
+How a live panel decides:
+1. Round 1: three judges vote independently, in parallel.
+2. If they disagree: one debate round. Each judge sees the other two votes and reasons and may revise. Both rounds stay in `votes` (`round: 1`, `round: 2`).
+3. Still split: the finding is a `conflict` and goes to a human. The reviewer does **not** break the tie; it writes `review_memo` on the finding (each side, and what evidence would settle it).
+4. Audit sample: `FLOCK_AUDIT_RATE` (default `0.1`, picked by a hash of `finding_id`, so the same finding is always in or out) of the findings the panel decided on its own get a reviewer second opinion. If the reviewer disagrees, the finding becomes a `conflict`, the reason starts with "Audit sample: ...", and a human decides.
+
+Offline the debate and the reviewer do nothing. Approved rules, the tolerance and weak-evidence guardrails, and
+"agents propose, humans approve" all still apply on top of any model.
+
+Pointing it at the GX10 (over Tailscale):
+
+```bash
+# on the GX10: serve an OpenAI-compatible endpoint, e.g.
+#   vllm serve <model> --host 0.0.0.0 --port 8000      or      OLLAMA_HOST=0.0.0.0 ollama serve
+export FLOCK_LOCAL_URL=http://<gx10-tailscale-name-or-100.x.y.z>:8000/v1   # Ollama: :11434/v1
+export FLOCK_LOCAL_MODEL=<model id the server reports>
+export FLOCK_JUDGE_PROVIDERS=local,local,local FLOCK_WRITER_PROVIDER=local FLOCK_MAPPER_PROVIDER=local
+export ANTHROPIC_API_KEY=...                                               # reviewer only
+unset FLOCK_OFFLINE
+python scripts/llm_check.py        # pings every configured route: latency, which model answered, models served
+```
 
 ## Data (generator -> collector -> formatter)
 
@@ -124,15 +170,15 @@ FLOCK_CONTEXT.md       everything about the project (problem, research, pitch, p
 flock/models.py        constants, Finding, Actor, the state machine table
 flock/store.py         Store protocol + get_store(): JsonStore now, SpacetimeStore stub
 flock/gatekeeper.py    transition(): the one door, logs every move incl. denied ones
-flock/llm.py           Claude wrapper with offline fallback
+flock/llm.py           model providers (local/vLLM/Ollama, Groq, NVIDIA, Claude) per role, offline fallback
 flock/pipeline.py      runs everything end to end
 flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
 flock/agents/          one file per agent, owner named at the top
 fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)
 generator/             Maja's data generator (output in generator/out/, gitignored)
 mappings.json          Formatter column maps per source layout (human-confirmed)
-scripts/score.py       scoreboard vs answer key
-tests/                 gatekeeper, store, dashboard, detection, data, panel/ranker/learner/writer, llm, end-to-end
+scripts/score.py       scoreboard vs answer key (scripts/llm_check.py pings the configured models)
+tests/                 gatekeeper, store, dashboard, detection, data, panel/ranker/learner/writer, llm, providers, end-to-end
 dashboard/             Ira's UI: Flask + one page (python -m dashboard.app)
 docs/                  Hyphenate track notes, sponsor rules, pipeline sketch
 ```
