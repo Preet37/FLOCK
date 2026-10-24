@@ -131,6 +131,19 @@ python generator/generate.py --profile ca_bagel_chain --weeks 52   # another (si
 - Column maps live in `mappings.json`. Unknown layouts get a proposed mapping (Claude, or a header-name heuristic offline) that a human confirms once; then it's saved and automatic. Run with `--mappings /tmp/m.json` if you want to rehearse the demo moment without touching the committed file.
 - `data/raw/` and `data/std/` are gitignored. To get back to a fixtures-only Quickstart: `rm -rf data/raw/*/ data/raw/manifest.csv data/std/*.csv`.
 
+## Anomaly Detector (learned, not written)
+
+`flock/agents/anomaly.py` runs next to the Checkers on the same stories. For each store x channel it fits the normal
+fee line (`other_fees ~ a x gross + b`), commission rate and payout timing from earlier weeks, then flags a later week
+whose orders break the pattern by more than the baseline noise. It only watches a metric when **no deal term covers
+it**: a fee or commission term makes that the Checkers' job, so nothing is reported twice. Findings carry
+`check_type: anomaly`, cite the baseline and the offending rows, and go through the panel like everything else.
+
+The generator's trap 18, `processing_fee_creep`, is the proof: the direct app's processor quietly raises its rate for one
+store-week. Its contract states a percentage plus a fixed amount, so the Deal Keeper has no flat fee to compare and no
+rule fires. The scoreboard shows the detector catching every creeping order (2 weeks: 55/55 on the default company,
+year scale through the parallel path too) with no innocent order flagged.
+
 ## Benchmark (the proof table)
 
 `scripts/benchmark.py` runs every contestant on the SAME findings from held-out seeds and writes one results table.
@@ -209,7 +222,7 @@ Work on a branch (`git checkout -b maja/generator`), push it, and open a PR into
 ## Pipeline
 
 ```
-Collect -> Read -> Connect -> Deal terms -> Check -> Judge (3-judge panel) -> Rank -> Draft
+Collect -> Read -> Connect -> Deal terms -> Check + Anomaly Detector -> Judge (3-judge panel) -> Rank -> Draft
         -> [human approves] -> File (Clicky, sandbox portal) -> Journal (draft GL entries) -> Learn (proposes rules)
 Audit log underneath every step, via flock/gatekeeper.py
 ```
@@ -229,7 +242,7 @@ As soon as `data/std/` has real tables and the matcher/checkers return findings,
 | Who | Now working on | Owns |
 | --- | --- | --- |
 | **Preet** | GX10 setup (vLLM, three local models), offline run, model providers, judge panel + market, merging into `main` | `flock/llm.py`, `panel.py`, `ranker.py`, `learner.py`, `dispute_writer.py`, `clicky.py`, `portal.py`, `market.py` |
-| **Thabhelo** | ML: anomaly detector, benchmark harness (`scripts/benchmark.py`), tuned local judge with held-out eval | `matcher.py`, `checkers.py`, `deal_keeper.py`, `flock/api.py`, new ML code |
+| **Thabhelo** | ML: anomaly detector, benchmark harness (`scripts/benchmark.py`), tuned local judge with held-out eval | `matcher.py`, `checkers.py`, `deal_keeper.py`, `anomaly.py`, `flock/api.py`, `scripts/benchmark.py`, new ML code |
 | **Himaja** | UI: the demo flow on the dashboard, including a benchmark tab | `dashboard/`; still owns `generator/`, `collector.py`, `formatter.py`, `profiles/` |
 | **Ira** | [confirm] SpacetimeDB backend, pitch, video, Figma/Notability process tracks | `flock/store.py` (SpacetimeStore), `gatekeeper.py`, `scripts/score.py` |
 
@@ -256,7 +269,7 @@ flock/progress.py      progress reporter: terminal bar + data/state/progress.jso
 flock/demo.py          live seed demo: generate -> collect -> pipeline -> score, then restore
 profiles/              company profiles for the generator (default, ca_bagel_chain: simulated)
 flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
-flock/agents/          one file per agent, owner named at the top
+flock/agents/          one file per agent, owner named at the top (anomaly.py: learned baselines, no deal term needed)
 fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)
 generator/             Maja's data generator (output in generator/out/, gitignored)
 mappings.json          Formatter column maps per source layout (human-confirmed)

@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 CHANNELS = ["doordash", "ubereats", "grubhub", "direct_app"]
-CHECK_TYPES = ["commission", "promo", "tax", "error_charge", "deposit", "missing_order"]
+CHECK_TYPES = ["commission", "promo", "tax", "error_charge", "deposit", "missing_order", "fee", "anomaly"]
 OUTCOMES = ["correct", "recoverable", "conflict"]
 
 # Strongest first. Used by the Deal Keeper when sources disagree.

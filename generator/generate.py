@@ -83,6 +83,7 @@ TRAPS = {
     15: ("unauthorized_rep_promise", "conflict"),
     16: ("legit_error_charge", "correct"),
     17: ("penny_rounding", "correct"),
+    18: ("processing_fee_creep", "recoverable"),   # the direct app's processor quietly raises its rate for one store-week
 }
 MINI_TRAPS = [3, 7, 16]
 
@@ -363,8 +364,10 @@ def plant_traps(rng: random.Random, world: dict, traps: list[int]) -> None:
 
     # 14 / 15 first: they cover every order of one store on one day
     by_slot: dict[tuple, list[dict]] = {}
+    by_slot_week: dict[tuple, list[dict]] = {}
     for o in orders:
         by_slot.setdefault((o["channel"], o["store_id"], o["day"]), []).append(o)
+        by_slot_week.setdefault((o["channel"], o["store_id"], week_index(start, o["day"])), []).append(o)
     for no, ch, auth in ((14, "ubereats", True), (15, "grubhub", False)):
         if no not in traps or ch not in by_ch:
             continue
@@ -440,6 +443,24 @@ def plant_traps(rng: random.Random, world: dict, traps: list[int]) -> None:
     for o in picks(17, "ubereats", lambda o: not o["promo_code"]):   # penny rounding
         o["actual"]["commission"] = money(o["actual"]["commission"] + 0.01)
         key(17, o["order_id"], 0.0)
+    if 18 in traps and "direct_app" in by_ch and world["weeks"] >= 2:   # processing fee creep: no deal term covers it
+        slots = sorted({(o["store_id"], week_index(start, o["day"])) for o in by_ch["direct_app"]
+                        if week_index(start, o["day"]) >= 1 and o["order_id"] not in used})
+        for _ in range(counts.get(18, 1)):
+            if not slots:
+                break
+            i = rng.randrange(len(slots))
+            store_id, wk = slots[i]
+            slots[i] = slots[-1]
+            slots.pop()
+            bump_pct, bump_fixed = rng.choice([0.006, 0.008, 0.010]), rng.choice([0.05, 0.10])
+            for o in by_slot_week[("direct_app", store_id, wk)]:
+                if o["order_id"] in used:
+                    continue
+                used.add(o["order_id"])
+                extra = money(o["subtotal"] * bump_pct + bump_fixed)
+                o["actual"]["other_fees"] = money(o["actual"]["other_fees"] + extra)   # truth keeps the contract rate
+                key(18, o["order_id"], extra)
     for o in picks(1, "doordash"):                       # export glitch: rows appear twice, byte for byte
         world["dup_order_ids"].append(o["order_id"])
         key(1, o["order_id"], 0.0)
@@ -980,7 +1001,7 @@ def main() -> None:
     ap.add_argument("--stores", type=int, default=None, help="default: the profile's store count (12 for default)")
     ap.add_argument("--weeks", type=int, default=2)
     ap.add_argument("--days", type=int, default=None, help="overrides --weeks (e.g. --days 1)")
-    ap.add_argument("--traps", default="all", help="comma list of trap numbers 1-17, or 'all'")
+    ap.add_argument("--traps", default="all", help="comma list of trap numbers 1-18, or 'all'")
     ap.add_argument("--trap-rate", type=float, default=None,
                     help="instances of each trap per 100 store-weeks (default: the profile's, 2.0); min 1 each")
     ap.add_argument("--mini", action="store_true", help="first milestone: 1 store x 1 day, traps 3,7,16")

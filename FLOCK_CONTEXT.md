@@ -382,6 +382,7 @@ Each goes in data/answer_key.csv with order_id, trap_type, correct outcome, corr
 15. Rep email waives a fee, sender NOT authorized -> conflict
 16. Legit error charge -> correct, must NOT be disputed (tests false alarms)
 17. Penny rounding differences -> ignore within tolerance
+18. The direct app's payment processor quietly raises its processing rate for one store-week; no contract term states a flat fee, so only history can catch it -> recoverable (Anomaly Detector)
 
 **Data generation approach**
 - Seeded Python generator. Build the TRUE world first, then render each source with its own quirks, then plant traps and write the answer key.

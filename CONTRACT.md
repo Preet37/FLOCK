@@ -41,7 +41,7 @@ To pick the term for one channel + store + term_type on one day (`deal_keeper.ef
 Authority ranking (used only for same-day ties and non-binding claims), strongest first: contract, amendment, auth_email, unauth_email, call_note.
 
 ## Finding (one per discrepancy)
-`finding_id, order_ids[], channel, check_type (commission|promo|tax|error_charge|deposit|missing_order), expected, actual, gap, evidence[] (source_file + row or quote), outcome (correct|recoverable|conflict), confidence, reason (plain English), votes[], rank_score, dispute_draft, state`
+`finding_id, order_ids[], channel, check_type (commission|promo|tax|error_charge|deposit|missing_order|fee|anomaly), expected, actual, gap, evidence[] (source_file + row or quote), outcome (correct|recoverable|conflict), confidence, reason (plain English), votes[], rank_score, dispute_draft, state`
 
 ## States (the only allowed moves)
 
