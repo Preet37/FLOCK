@@ -8,6 +8,8 @@ It never writes a finding itself: approve / reject call flock.gatekeeper.transit
 person's Actor, and filing goes through Clicky, which also uses the gatekeeper.
 Journal entries work the same way: approve / reject are gatekeeper transitions (machine=JOURNAL) with the
 person's Actor, and "export" has the gatekeeper post every approved entry to a CSV in data/exports/.
+The Flock view polls GET /api/agents?since=<cursor> (flock/agents_live.py folds the store's agent feed): only agents
+that changed since the cursor come back, and past a few hundred per role they are pooled, so it stays light.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, request, send_from_directory
 
-from flock import llm, market
+from flock import agents_live, llm, market
 from flock.agents import clicky, journal, learner, panel
 from flock.gatekeeper import Denied, transition
 from flock.models import JE_TRANSITIONS, JOURNAL, TRANSITIONS, Actor
@@ -96,7 +98,16 @@ def detail(store: Store, finding_id: str) -> dict[str, Any]:
         "rule": rule,
         "filed": portal_entry(f.get("portal_ref")),
         "needs_human": needs_human(f),
+        "agents": finding_agents(store, finding_id),
     }
+
+
+def finding_agents(store: Store, finding_id: str) -> list[dict[str, Any]]:
+    """The latest run's agents that worked on this finding (judge, investigator, writer), oldest first."""
+    rows = agents_live.events(store)
+    run = rows[-1].get("run") if rows else None
+    mine = [e for e in rows if e.get("run") == run and e.get("subject") == finding_id]
+    return sorted(agents_live.fold(mine).values(), key=lambda a: a.get("seq") or 0)
 
 
 def je_brief(je: dict[str, Any]) -> dict[str, Any]:
@@ -242,6 +253,15 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
     def api_airgap():
         """'air-gapped: N model calls, 0 left this network' for the last run, plus each role's route now."""
         return jsonify(airgap_status(st()))
+
+    @app.get("/api/agents")
+    def api_agents():
+        """The live flock: counts per role, active agents, and agents changed since ?since=<cursor>."""
+        try:
+            since = int(request.args.get("since") or 0)
+        except ValueError:
+            return jsonify(error="since must be a number"), 400
+        return jsonify(agents_live.snapshot(st(), since))
 
     @app.get("/api/meta")
     def api_meta():

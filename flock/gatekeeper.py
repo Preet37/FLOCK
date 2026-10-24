@@ -3,6 +3,8 @@
 - Checks the move is legal (state machine in models.TRANSITIONS / ANNOTATIONS; journal entries: models.JE_TRANSITIONS).
 - Checks the actor's role may do it (agents propose, humans approve, gatekeeper files / posts).
 - Runs the subject type's guard, if any (a journal entry that doesn't balance can't be approved).
+- Keeps field-limited annotations to their fields (models.ANNOTATION_FIELDS: an investigator's 'investigate' may
+  only write case_file; a patch touching anything else is denied).
 - Writes an append-only log entry with a before/after diff, in the same commit as the change.
 - Denied attempts are logged too, then raise Denied.
 - After an allowed approve / reject / recover on a finding (ground truth), the judge market settles its bets on it.
@@ -61,6 +63,10 @@ def transition(
         blocked = f"{finding_id} is not a {machine.name}"
     else:
         blocked = machine.guard(before, action) if allowed and machine.guard else None
+    if allowed and not blocked and action in machine.fields:
+        extra = sorted(set(patch or {}) - machine.fields[action])
+        if extra:
+            blocked = f"'{action}' may only write {', '.join(sorted(machine.fields[action]))}, not {', '.join(extra)}"
     allowed = allowed and not blocked
     # 'state' can never be set through a patch; only the state machine moves it.
     patch = {k: v for k, v in (patch or {}).items() if k not in ("state", machine.id_key)}

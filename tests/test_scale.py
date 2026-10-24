@@ -13,8 +13,8 @@ import pytest
 
 from conftest import ROOT
 from dashboard.app import create_app
-from flock import demo, pipeline, scan
-from flock.agents import collector, deal_keeper, formatter
+from flock import agents_live, demo, pipeline, scan
+from flock.agents import collector, deal_keeper, formatter, investigator
 from flock.progress import NullProgress, Progress, progress_path, read_progress
 from flock.store import JsonStore
 from generator import generate as gen
@@ -95,6 +95,49 @@ def test_split_detection_matches_single_process(scaled):
     split = scan.detect(tables, terms, split_rows=0, workers=1)
     pooled = scan.detect(tables, terms, split_rows=0, workers=2)
     assert one and sig(one) == sig(split) == sig(pooled)
+
+
+def test_the_flock_on_real_data(scaled):
+    """A worker per store, the deposit checker, a judge per finding, and investigators only on the triggers."""
+    store = scaled["store"]
+    snap = agents_live.snapshot(store)
+    by = {}
+    for a in snap["agents"]:
+        by.setdefault(a["role"], []).append(a)
+    assert sorted(a["subject"] for a in by["worker"]) == sorted({o["store_id"] for o in scaled["w"]["orders"]})
+    assert [a["agent_id"] for a in by["checker"]] == ["checker:deposits"]
+    findings = store.all()
+    assert snap["counts"]["judge"]["total"] == len(findings) and snap["active_count"] == 0
+    owners = {a["agent_id"] for a in by["worker"] + by["checker"]}
+    assert all(a["parent_id"] in owners for a in by["judge"] if not a.get("pooled"))   # past SAMPLE: one pool
+    cased = {f["finding_id"]: f for f in findings if f.get("case_file")}
+    assert {a["subject"] for a in by.get("investigator", [])} == set(cased)
+    for fid, f in cased.items():  # each one for a reason, and logged as a gatekeeper annotation
+        trigger = f["case_file"]["trigger"]
+        if trigger == "conflict_no_memo":
+            assert f["outcome"] == "conflict" and not f.get("review_memo")
+        else:
+            assert f["check_type"] in ("deposit", "missing_order") and len(f["evidence"]) < 2
+        assert [e["action"] for e in store.log(fid)].count("investigate") == 1
+    unexplained = [f for f in findings if f.get("outcome") == "conflict" or investigator.detection_trigger(
+        {**f, "case_file": None})]
+    assert len(cased) == len(unexplained) > 0
+
+
+def test_split_workers_report_per_store(scaled):
+    std, raw = scaled["base"] / "std", scaled["base"] / "raw"
+    tables = {n: std / f"{n}.csv" for n in ("orders", "payout_lines", "bank_deposits", "error_charges", "refunds")}
+    terms = deal_keeper.extract_terms(raw / "contracts", raw / "emails")
+    s = JsonStore(scaled["base"] / "split_state")
+    t = agents_live.Tracker(s, "RUN-S")
+    found = scan.detect(tables, terms, split_rows=0, workers=2, agents=t)
+    t.close()
+    agents = agents_live.fold(s.agents())
+    workers = [a for a in agents.values() if a["role"] == "worker"]
+    assert len(workers) == len({o["store_id"] for o in scaled["w"]["orders"]})
+    assert {a["state"] for a in workers} == {"done"} and all(a.get("rows") for a in workers)
+    assert set(t.owner) == {f["finding_id"] for f in found}
+    assert sum(a.get("findings", 0) for a in agents.values()) == len(found)
 
 
 def test_term_index_matches_terms_for(scaled):

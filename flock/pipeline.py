@@ -19,6 +19,11 @@ over between runs; --forget resets them. Conflicts are ordered by the value of a
 budget (FLOCK_ATTENTION_BUDGET, default 10) they're marked 'deferred' and wait. The demo human skips deferred items.
 Journal entries (flock/agents/journal.py) are drafted from the matched payouts after the human decisions, waiting for
 a human to approve; at year scale (split detection) they are skipped with a note.
+
+The live flock (flock/agents_live.py): every agent with a job writes spawn / working / done events to the store's
+agent feed (worker per store, deposit checker, judge per finding, writer per draft, Clicky, the journal drafter,
+the learner). An unexplained finding also gets an investigator sub-agent (flock/agents/investigator.py) that attaches
+a case file through the gatekeeper; it never changes an outcome or a dollar. The dashboard's Flock view shows them.
 """
 from __future__ import annotations
 
@@ -29,8 +34,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flock import llm, market, scan
-from flock.agents import clicky, deal_keeper, dispute_writer, formatter, journal, learner, panel, ranker
+from flock import agents_live, llm, market, scan
+from flock.agents import (clicky, deal_keeper, dispute_writer, formatter, investigator, journal, learner, panel,
+                          ranker)
 from flock.gatekeeper import transition
 from flock.models import Actor, Finding
 from flock.progress import Progress, ensure, progress_path
@@ -50,10 +56,11 @@ OPTIONAL_TABLES = ("error_charges", "refunds")  # extra std tables the checkers 
 
 def detect_real(raw: Path | None = None, std: Path | None = None, mappings: Path | None = None,
                 confirm: bool = False, interactive: bool = False, progress: Progress | None = None,
-                context: dict | None = None) -> list[dict]:
+                context: dict | None = None, agents: agents_live.Tracker | None = None) -> list[dict]:
     """Formatter + Matcher + Deal Keeper + Checkers on data/raw -> data/std (or the given folders).
     Empty list if no data yet. If `context` is given, it also gets what the Journal Entry Drafter needs
-    (stories, terms_for, orders) when the data is small enough to match in one process."""
+    (stories, terms_for, orders) when the data is small enough to match in one process, plus the std tables and deal
+    terms (tables, terms) for investigators. agents: the run's live tracker (flock/agents_live.py)."""
     std = Path(std or formatter.STD)
     raw = Path(raw or formatter.RAW)
     tables = dict(formatter.format_all(raw, std, mappings, confirm=confirm, interactive=interactive,
@@ -64,7 +71,10 @@ def detect_real(raw: Path | None = None, std: Path | None = None, mappings: Path
             tables[name] = p
     terms = deal_keeper.extract_terms(raw / "contracts", raw / "emails") if raw != formatter.RAW \
         else deal_keeper.extract_terms()
-    return hold_unread(scan.detect(tables, terms, progress, context=context), formatter.pending_layouts(std))
+    if context is not None:
+        context.update(tables=tables, terms=terms)
+    return hold_unread(scan.detect(tables, terms, progress, context=context, agents=agents),
+                       formatter.pending_layouts(std))
 
 
 def hold_unread(found: list[dict], pending: list[dict]) -> list[dict]:
@@ -83,8 +93,8 @@ def hold_unread(found: list[dict], pending: list[dict]) -> list[dict]:
 
 
 def detect(fixtures: Path | None = None, progress: Progress | None = None, context: dict | None = None,
-           **data) -> tuple[list[dict], str]:
-    found = detect_real(progress=progress, context=context, **data) if fixtures is None else []
+           agents: agents_live.Tracker | None = None, **data) -> tuple[list[dict], str]:
+    found = detect_real(progress=progress, context=context, agents=agents, **data) if fixtures is None else []
     if found:
         where = data.get("std")
         return found, f"real data ({where})" if where else "real data (data/std)"
@@ -93,7 +103,13 @@ def detect(fixtures: Path | None = None, progress: Progress | None = None, conte
     path = Path(fixtures or FIXTURES)
     rows = json.loads(path.read_text())
     name = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path.name
-    return [Finding(**f).to_dict() for f in rows], str(name)
+    found = [Finding(**f).to_dict() for f in rows]
+    if agents is not None:  # no stores in a fixtures file: one worker reads it
+        w = agents.spawn("worker", subject=str(name), agent_id="worker:fixtures").working(f"reading {name}")
+        for f in found:
+            agents.owner[f["finding_id"]] = w.id
+        w.done(f"{len(found)} findings from {name}", findings=len(found))
+    return found, str(name)
 
 
 def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, pace: float = 0.0,
@@ -141,14 +157,25 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
 def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
          pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None) -> None:
     run_id = "RUN-" + uuid.uuid4().hex[:8]
+    flock = agents_live.Tracker(store, run_id)
+    try:
+        _stages(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path, jstore,
+                attention_budget, run_id, flock)
+    finally:
+        flock.close()
 
+
+def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
+            pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
+            run_id: str, flock: agents_live.Tracker) -> None:
     def move(finding_id: str, action: str, actor: Actor, **kw) -> None:
         transition(store, finding_id, action, actor, **kw)
         if pace:
+            flock.flush()  # the live board shows each agent's latest state during the pause
             time.sleep(pace)
 
     context: dict = {}
-    findings, source = detect(fixtures, progress, context, **data)
+    findings, source = detect(fixtures, progress, context, agents=flock, **data)
     print(f"\n== Flock run on {source}: {len(findings)} findings ==")
 
     progress.stage("log findings", total=len(findings), unit="findings")
@@ -157,13 +184,27 @@ def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, da
         move(f["finding_id"], "check", CHECKER, reason="Checker computed expected vs actual in code")
         progress.update(i)
 
+    # investigators, only for unexplained findings: a deposit / missing_order gap with one source behind it
+    book = investigator.Casebook(context.get("tables"), context.get("terms"))
+    jobs = [(f, t, flock.owner.get(f["finding_id"])) for f in store.all()
+            if f["state"] == "CHECKED" and (t := investigator.detection_trigger(f))]
+    if jobs:
+        progress.stage("investigate", total=len(jobs), unit="findings")
+        investigator.run(store, jobs, book, flock)
+
     rules = learner.approved_rules(rules_path)
     weights = market.weights(store)  # balances carried over from earlier weeks' settled bets
     todo = [f for f in store.all() if f["state"] == "CHECKED"]
     progress.stage("judge", total=len(todo), unit="findings")
     decisions = {}
     for i, f in enumerate(todo, 1):
-        decisions[f["finding_id"]] = panel.decide(f, rules, weights)
+        judge = flock.spawn("judge", parent=flock.owner.get(f["finding_id"]), subject=f["finding_id"],
+                            agent_id=f"judge:{f['finding_id']}").working("3 judges voting")
+        flock.judge_of[f["finding_id"]] = judge.id
+        d = decisions[f["finding_id"]] = panel.decide(f, rules, weights)
+        judge.done(f"{d['outcome']}: " + (", ".join(f"{v['judge'].replace('judge.', '')} {v['outcome']}"
+                                                     for v in d["votes"] if v.get("round") in (None, 2))
+                                          or d["reason"][:120]), outcome=d["outcome"])
         progress.update(i)
     escalations = [{**store.get(fid), **d} for fid, d in decisions.items() if d["outcome"] == "conflict"]
     attention = market.allocate_attention(escalations, attention_budget, weights)
@@ -171,6 +212,13 @@ def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, da
         patch = {**d, "attention": attention[fid]} if fid in attention else d  # labels only; still a conflict
         move(fid, "judge", panel.ACTOR, patch=patch, reason="Panel vote")
         market.record_stakes(store, fid, d["votes"], run_id)
+
+    # investigators for what the panel sent to a human without a review memo
+    jobs = [(f, t, flock.judge_of.get(f["finding_id"])) for f in store.all()
+            if f["state"] == "JUDGED" and (t := investigator.conflict_trigger(f))]
+    if jobs:
+        progress.stage("investigate", total=len(jobs), unit="findings")
+        investigator.run(store, jobs, book, flock)
 
     todo = [f for f in store.all() if f["state"] == "JUDGED" and f["outcome"] == "recoverable"]
     progress.stage("rank", total=len(todo), unit="findings")
@@ -180,8 +228,11 @@ def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, da
         progress.update(i)
 
     for f in ranker.within_budget([x for x in store.all() if x["state"] == "JUDGED" and x["outcome"] == "recoverable"]):
+        writer = flock.spawn("writer", parent=flock.judge_of.get(f["finding_id"]), subject=f["finding_id"],
+                             agent_id=f"writer:{f['finding_id']}").working("drafting the dispute")
         move(f["finding_id"], "draft", dispute_writer.ACTOR,
              patch={"dispute_draft": dispute_writer.draft(f)}, reason="Drafted dispute, waiting for human")
+        writer.done(f"drafted a ${abs(f['gap']):.2f} dispute to {f['channel']}, waiting for a human")
 
     if demo_approve:
         for f in store.all():
@@ -192,22 +243,31 @@ def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, da
             elif f["outcome"] == "conflict" and f.get("attention", {}).get("status") != "deferred":
                 move(f["finding_id"], "reject", DEMO_HUMAN,
                      reason="Rep had no authority to change the deal; accept the charge")
+        bot = flock.spawn("clicky", subject="sandbox portal", agent_id="clicky").working("filing approved disputes")
         filed = clicky.file_approved(store, portal)
+        bot.done(f"filed {len(filed)} disputes in the sandbox portal", filed=len(filed))
         print(f"Clicky filed {len(filed)} disputes in the sandbox portal")
 
     if context.get("stories"):
+        jagent = flock.spawn("journal", subject="journal entries", agent_id="journal").working(
+            "drafting entries per store x channel x payout")
         entries = journal.draft(context["stories"], store.all(), context["terms_for"], context["orders"])
         drafted = journal.draft_into(jstore, entries)
         bad = sum(1 for je in entries if not je["balanced"])
+        jagent.done(f"drafted {len(drafted)} entries, {bad} unbalanced", drafted=len(drafted))
         print(f"Journal drafted {len(drafted)} entries (store x channel x payout), {bad} unbalanced; "
               f"waiting for a human to approve")
     elif source.startswith("real data"):
         print("Journal: skipped at year scale (split detection keeps no order stories); run a week at a time to draft")
 
+    teacher = flock.spawn("learner", subject="rules", agent_id="learner").working("reading human decisions")
     proposed = learner.propose(store, rules_path)
+    teacher.done(f"proposed {len(proposed)} rule(s)", proposed=len(proposed))
     record_run(store, source, runs_path)
     summary(store, proposed)
     market_summary(store)
+    print("flock: " + ", ".join(f"{n} {role}{'s' if n != 1 else ''}" for role, n in flock.counts.items())
+          + f" ({flock.total()} agents)")
     airgap_summary(store)
 
 

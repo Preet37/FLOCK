@@ -1,6 +1,7 @@
-// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/finding/<id>  #/journal  #/journal/<id>  #/score  #/market
+// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/flock  #/finding/<id>  #/journal  #/journal/<id>  #/score  #/market
 // Polls /api/summary every second; re-renders the current view when the audit log grows.
-// Also polls /api/progress and updates the live board's progress bar in place (no re-render).
+// Also polls /api/progress and updates the live board's progress bar in place (no re-render), and
+// /api/agents?since=<cursor> for the Flock view (only agents that changed come back).
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -343,6 +344,7 @@ async function renderFinding(id) {
               <span class="why muted">${esc(v.reason)}</span></div>`).join("")}
         </section>
 
+        ${caseFileCard(f.case_file)}
         ${f.dispute_draft ? `<section class="card"><div class="card-head"><h2>Dispute draft</h2><span class="muted">dispute_writer · not sent until a human approves</span></div><pre class="draft">${esc(f.dispute_draft)}</pre></section>` : ""}
         ${d.filed ? `<section class="card"><div class="card-head"><h2>Filed</h2><span class="muted">sandbox portal (never a real one)</span></div>
           <div class="card-pad"><b class="mono">${esc(d.filed.portal_ref)}</b> · ${usd(d.filed.amount)} to ${chan(d.filed.channel)} · ${when(d.filed.at)}</div></section>` : ""}
@@ -361,6 +363,7 @@ async function renderFinding(id) {
         <div class="side-block"><h3>Outcome</h3><div class="v">${f.outcome ? badge(f.outcome, f.outcome) : '<span class="muted">pending</span>'}</div></div>
         <div class="side-block"><h3>Filed as</h3><div class="v mono">${esc(f.portal_ref || "") || '<span class="muted">not filed</span>'}</div></div>
         <div class="side-block"><h3>Rank score</h3><div class="v num">${f.rank_score != null ? esc(f.rank_score) : '<span class="muted">n/a</span>'}</div></div>
+        <div class="side-block"><h3>Agents on this finding</h3><div class="v">${findingAgents(d.agents)}</div></div>
         <div class="side-block"><h3>Denied attempts</h3><div class="v">${d.denied.length ? d.denied.map((e) => `<div><b>${esc(e.actor)}</b> (${esc(e.role)}) tried to ${esc(e.action)}</div>`).join("") : '<span class="muted">None</span>'}</div></div>
       </aside>
     </div>`;
@@ -552,6 +555,134 @@ async function renderJournalEntry(id) {
     </div>`;
 }
 
+// ---------- the live flock (flock/agents_live.py -> /api/agents) ----------
+// Keeps every agent of the latest run in `flock.agents`, merged from incremental polls (?since=<cursor>).
+const ROLES = ["worker", "checker", "judge", "investigator", "writer", "clicky", "learner", "journal"];
+const ROLE_JOB = {
+  worker: "matches one store's orders to payouts and runs the checkers",
+  checker: "reconciles payouts with bank deposits",
+  judge: "three votes on one finding",
+  investigator: "builds a case file for an unexplained finding",
+  writer: "drafts one dispute",
+  clicky: "files approved disputes in the sandbox portal",
+  learner: "proposes rules from human decisions",
+  journal: "drafts the journal entries",
+};
+const flock = { cursor: 0, run: null, agents: new Map(), counts: {}, active: [], activeCount: 0, total: 0 };
+
+async function pollAgents() {
+  const d = await api(`/api/agents?since=${flock.cursor}`);
+  if (d.reset) flock.agents.clear();
+  for (const a of d.agents) flock.agents.set(a.agent_id, a);
+  const changed = d.reset || d.agents.length > 0 || d.cursor !== flock.cursor;
+  Object.assign(flock, { cursor: d.cursor, run: d.run, counts: d.counts, active: d.active, activeCount: d.active_count, total: d.total });
+  const fc = $("#flock-count");
+  if (fc) { fc.textContent = big(d.total); fc.classList.toggle("hot", d.active_count > 0); }
+  return changed;
+}
+
+const stateWord = { spawned: "spawned", working: "working", done: "done", failed: "failed" };
+const agentTitle = (a) => `${a.role}${a.subject ? " · " + a.subject : ""} · ${stateWord[a.state] || a.state}${a.summary ? "\n" + a.summary : ""}`;
+const subjectLink = (s) => (/^F-/.test(String(s || "")) ? `<a href="#/finding/${esc(s)}" class="mono">${esc(s)}</a>` : `<span class="mono">${esc(s ?? "")}</span>`);
+
+function agentChip(a, parentSubject) {
+  const text = a.pooled ? `${a.role} ×${big(a.count)}` : (a.subject != null && a.subject === parentSubject ? a.role : (a.subject ?? a.agent_id));
+  const href = /^F-/.test(String(a.subject || "")) ? `#/finding/${esc(a.subject)}` : null;
+  const inner = `<span class="fl-dot"></span>${esc(text)}`;
+  return href
+    ? `<a class="fl-chip r-${esc(a.role)} s-${esc(a.state)}" href="${href}" title="${esc(agentTitle(a))}">${inner}</a>`
+    : `<span class="fl-chip r-${esc(a.role)} s-${esc(a.state)}" title="${esc(agentTitle(a))}">${inner}</span>`;
+}
+
+function agentNode(a, kids, depth = 0) {
+  const mine = kids.get(a.agent_id) || [];
+  const leaves = mine.filter((k) => !(kids.get(k.agent_id) || []).length);
+  const branches = mine.filter((k) => (kids.get(k.agent_id) || []).length);
+  const pool = a.pooled ? ` <span class="num">${big(a.done)}/${big(a.count)} done${a.failed ? `, ${big(a.failed)} failed` : ""}</span>` : "";
+  return `<div class="fl-node r-${esc(a.role)} s-${esc(a.state)}" style="--depth:${depth}">
+      <div class="fl-head"><span class="fl-dot"></span><b>${esc(a.role)}</b> ${a.pooled ? '<span class="muted">pooled</span>' : subjectLink(a.subject)}
+        <span class="fl-state">${esc(stateWord[a.state] || a.state)}</span>${pool}
+        <span class="fl-sum muted">${esc(a.summary || "")}</span></div>
+      ${branches.length ? `<div class="fl-branches">${branches.map((k) => agentNode(k, kids, depth + 1)).join("")}</div>` : ""}
+      ${leaves.length ? `<div class="fl-kids">${leaves.map((k) => agentChip(k, a.subject)).join("")}</div>` : ""}
+    </div>`;
+}
+
+function flockTree() {
+  const all = [...flock.agents.values()];
+  const ids = new Set(all.map((a) => a.agent_id));
+  const kids = new Map();
+  const roots = [];
+  for (const a of all) {
+    if (a.parent_id && ids.has(a.parent_id)) {
+      if (!kids.has(a.parent_id)) kids.set(a.parent_id, []);
+      kids.get(a.parent_id).push(a);
+    } else roots.push(a);
+  }
+  const order = (a) => [ROLES.indexOf(a.role), a.seq || 0];
+  const cmp = (x, y) => { const a = order(x), b = order(y); return a[0] - b[0] || a[1] - b[1]; };
+  roots.sort(cmp);
+  kids.forEach((v) => v.sort(cmp));
+  return roots.map((a) => agentNode(a, kids)).join("");
+}
+
+function roleCards() {
+  return `<div class="fl-roles">${ROLES.map((r) => {
+    const c = flock.counts[r] || { total: 0, working: 0, spawned: 0, done: 0, failed: 0 };
+    const live = (c.working || 0) + (c.spawned || 0);
+    return `<div class="card fl-role r-${r}${c.total ? "" : " idle"}" title="${esc(ROLE_JOB[r])}">
+        <div class="fl-role-head"><span class="fl-dot"></span>${esc(r)}</div>
+        <div class="value num">${big(c.total)}</div>
+        <div class="hint">${live ? `<b>${big(live)} active</b> · ` : ""}${big(c.done)} done${c.failed ? ` · <span class="bad-t">${big(c.failed)} failed</span>` : ""}</div>
+      </div>`;
+  }).join("")}</div>`;
+}
+
+async function renderFlock() {
+  try { await pollAgents(); } catch (e) { view.innerHTML = `<div class="card empty section-gap">${esc(e.message)}</div>`; return; }
+  drawFlock();
+}
+
+function drawFlock() {
+  const inv = flock.counts.investigator || { total: 0 };
+  view.innerHTML = `
+    <div class="page-head"><div><h1>Flock</h1>
+      <div class="sub">Every agent with a job: one worker per store, a judge per finding, and an investigator only when a finding can't be explained.
+        ${flock.run ? `<span class="mono">${esc(flock.run)}</span>` : ""}</div></div>
+      <div class="muted num">${big(flock.total)} agents · ${big(flock.activeCount)} active · ${big(inv.total)} investigator${inv.total === 1 ? "" : "s"}</div></div>
+    ${roleCards()}
+    <section class="card section-gap"><div class="card-head"><h2>Working now</h2><span class="muted">${flock.activeCount ? `${big(flock.activeCount)} active` : "nobody, the run is idle"}</span></div>
+      ${flock.active.length ? `<div class="fl-kids fl-active">${flock.active.map((a) => agentChip(a)).join("")}</div>` : '<div class="empty">No agent is working. Start a run: <code>python -m flock.pipeline --reset --pace 0.3</code></div>'}
+    </section>
+    <section class="card section-gap"><div class="card-head"><h2>Who spawned whom</h2>
+        <span class="muted fl-legend"><span class="fl-chip s-spawned"><span class="fl-dot"></span>spawned</span><span class="fl-chip s-working"><span class="fl-dot"></span>working</span><span class="fl-chip s-done"><span class="fl-dot"></span>done</span><span class="fl-chip s-failed"><span class="fl-dot"></span>failed</span></span></div>
+      <div class="fl-tree">${flock.agents.size ? flockTree() : '<div class="empty">No agents yet for this store. Run the pipeline to see the flock.</div>'}</div>
+    </section>`;
+}
+
+function caseFileCard(cf) {
+  if (!cf) return "";
+  const rows = (items, head, row) => (items && items.length ? `<div class="table-scroll"><table><thead><tr>${head}</tr></thead><tbody>${items.map(row).join("")}</tbody></table></div>` : "");
+  return `<section class="card cf"><div class="card-head"><h2>Case file</h2>
+      <span class="muted">investigator · ${esc(cf.why)} · ${esc(cf.summary_by === "template" ? "template summary" : cf.summary_by)} · adds evidence, never changes the outcome or the money</span></div>
+    <div class="card-pad">${cf.summary_by === "template" ? `<b>${esc(cf.why[0].toUpperCase() + cf.why.slice(1))}.</b>` : esc(cf.summary)}
+      <ul class="cf-facts">${(cf.facts || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+      <div><b>Check next:</b> ${esc(cf.next_step)}</div></div>
+    ${rows(cf.payouts, "<th>Payout</th><th>Date</th><th>Store</th><th class=\"r\">Lines</th><th class=\"r\">Net</th>",
+      (p) => `<tr><td class="mono">${esc(p.payout_id)}</td><td>${esc(p.payout_date)}</td><td>${esc(p.store_id ?? "")}</td><td class="r num">${esc(p.lines)}</td><td class="r num">${usd(p.net)}</td></tr>`)}
+    ${rows(cf.nearby_deposits, "<th>Nearby deposit</th><th>Date</th><th class=\"r\">Amount</th><th class=\"r\">Off by</th><th>Memo names it</th>",
+      (d) => `<tr><td class="mono">${esc(d.deposit_id)}</td><td>${esc(d.deposit_date)}</td><td class="r num">${usd(d.amount)}</td><td class="r num">${usd(d.off_by)}</td><td>${d.memo_names_payout ? "yes" : "no"}</td></tr>`)}
+    ${rows(cf.claims, "<th>Claim</th><th>Authority</th><th>Value</th><th>Effective</th>",
+      (c) => `<tr><td>${c.quote ? `“${esc(c.quote)}”` : ""}<div class="muted mono">${esc(c.source_file ?? "")}</div></td><td>${authBadge(c.authority)}${c.binding ? "" : ' <span class="muted">non-binding</span>'}</td>
+        <td class="num">${esc(c.value ?? "")}</td><td class="muted">${esc(c.effective_from ?? "")}${c.effective_to ? " to " + esc(c.effective_to) : ""}</td></tr>`)}
+  </section>`;
+}
+
+function findingAgents(agents) {
+  if (!agents || !agents.length) return '<span class="muted">None recorded</span>';
+  return agents.map((a) => `<div class="fl-mini"><span class="fl-chip r-${esc(a.role)} s-${esc(a.state)}"><span class="fl-dot"></span>${esc(a.role)}</span> <span class="muted">${esc(a.summary || stateWord[a.state] || "")}</span></div>`).join("");
+}
+
 // ---------- router + polling ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
@@ -560,13 +691,14 @@ function route() {
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on",
     (a.dataset.view === "live" && (h === "/" || m)) || (a.dataset.view === "queue" && h === "/queue")
     || (a.dataset.view === "journal" && (h === "/journal" || jm)) || (a.dataset.view === "score" && h === "/score")
-    || (a.dataset.view === "market" && h === "/market")));
+    || (a.dataset.view === "market" && h === "/market") || (a.dataset.view === "flock" && h === "/flock")));
   if (m) return renderFinding(decodeURIComponent(m[1]));
   if (jm) return renderJournalEntry(decodeURIComponent(jm[1]));
   if (h === "/journal") return renderJournal();
   if (h === "/queue") return renderQueue();
   if (h === "/score") return renderScore();
   if (h === "/market") return renderMarket();
+  if (h === "/flock") return renderFlock();
   return renderLive();
 }
 
@@ -616,3 +748,8 @@ refresh(true);
 pollProgress();
 setInterval(refresh, 1000);
 setInterval(pollProgress, 700);
+// the Flock view redraws only when an agent changed; elsewhere the poll just keeps the tab's counter fresh
+setInterval(async () => {
+  const onFlock = (location.hash.replace(/^#/, "") || "/") === "/flock";
+  try { if ((await pollAgents()) && onFlock && !busy) drawFlock(); } catch { /* the board works without it */ }
+}, 1000);
