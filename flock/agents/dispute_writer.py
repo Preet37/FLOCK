@@ -51,6 +51,7 @@ def draft(f: dict[str, Any]) -> str:
         "Write a short, polite, factual dispute to a delivery platform's merchant support on behalf of a restaurant. "
         "Use only the facts given. Cite each piece of evidence by its source file. Under 120 words. No em dashes.",
         json.dumps({k: f[k] for k in ("channel", "check_type", "order_ids", "expected", "actual", "gap", "evidence")}),
+        r=llm.route("writer"),
     )
     if text:
         if not _cites_all(text, f):

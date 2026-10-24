@@ -299,7 +299,7 @@ def llm_mapping(header: list[str], sample: list[list[str]], source: str) -> dict
     user = (f"Source folder: {source}\nHeaders: {json.dumps(header)}\nSample rows: {json.dumps(sample[:3])}\n"
             f"Target tables and fields: {json.dumps(fields)}\n"
             'Return {"table": "<one table>", "columns": {"<header>": "<field>"}}.')
-    got = llm.ask_json(system, user)
+    got = llm.ask_json(system, user, r=llm.route("mapper"))
     if not got or got.get("table") not in fields or not isinstance(got.get("columns"), dict):
         return None
     allowed = set(fields[got["table"]])

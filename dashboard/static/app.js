@@ -264,7 +264,8 @@ async function renderFinding(id) {
             <span class="muted">${f.confidence != null ? `${pct(f.confidence)} confidence` : ""}</span></div>
           <div class="card-pad" style="padding-bottom:${f.votes && f.votes.length ? 0 : 16}px">${esc(f.reason)}
             ${d.rule ? `<div class="muted" style="margin-top:6px">${esc(d.rule.rule_id)}, approved by <b>${esc(d.rule.approved_by)}</b>, learned from ${esc(d.rule.evidence_count)} human decisions (${esc((d.rule.precedents || []).join(", "))})</div>` : ""}</div>
-          ${(f.votes || []).map((v) => `<div class="vote"><b>${esc(v.judge)}</b>
+          ${f.review_memo ? `<div class="card-pad"><b>Reviewer memo for the human</b> <span class="muted">(the reviewer explains the split; it does not decide)</span><div>${esc(f.review_memo)}</div></div>` : ""}
+          ${(f.votes || []).map((v) => `<div class="vote"><b>${esc(v.judge)}${v.round ? ` <span class="muted">${esc(v.round === "audit" ? "audit" : v.round === 2 ? "after debate" : "round 1")}</span>` : ""}</b>
               <span>${badge(v.outcome, v.outcome)} <span class="num">${pct(v.confidence)}</span><div class="bar"><i style="width:${Math.round(v.confidence * 100)}%"></i></div></span>
               <span class="why muted">${esc(v.reason)}</span></div>`).join("")}
         </section>
