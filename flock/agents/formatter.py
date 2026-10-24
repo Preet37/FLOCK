@@ -406,14 +406,15 @@ def write_table(path: Path, cols: list[str], recs: list[dict]) -> None:
                         for c in cols])
 
 
-def format_all(raw: Path = RAW, out: Path = STD, mappings_path: Path = MAPPINGS, confirm: bool = False,
-               interactive: bool = False, verbose: bool = False) -> dict[str, Path]:
+def format_all(raw: Path | None = None, out: Path | None = None, mappings_path: Path | None = None,
+               confirm: bool = False, interactive: bool = False, verbose: bool = False) -> dict[str, Path]:
     """Read every raw data file, write the standard tables, return {table: path} for those that exist.
 
     With nothing in data/raw/ this just returns whatever is already in data/std/ (so the pipeline keeps
     running on fixtures until real data shows up).
     """
-    raw, out = Path(raw), Path(out)
+    raw, out = Path(raw or RAW), Path(out or STD)  # resolved at call time so tests can repoint RAW/STD
+    mappings_path = mappings_path or MAPPINGS
     out.mkdir(parents=True, exist_ok=True)
     files = raw_files(raw)
     if files:

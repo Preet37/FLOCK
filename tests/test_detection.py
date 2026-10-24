@@ -19,7 +19,7 @@ TABLES = {n: FIX / f"std_{n}.csv" for n in ("orders", "payout_lines", "bank_depo
 # key (order_id, or platform/payout id), trap, check_type, gap, outcome after the offline panel
 TRAPS = [
     ("ORD-2010", "3 sold, never paid", "missing_order", 18.75, "recoverable"),
-    ("DD-X99", "4 payout with no POS order", "missing_order", 3.00, "recoverable"),
+    ("DD-X99", "4 payout with no POS order", "missing_order", 3.00, "conflict"),
     ("DD-PAY-W1", "5 one deposit covers two weeks", "deposit", 0.00, "correct"),
     ("GH-PAY-W1", "6 statement total != deposit", "deposit", 5.00, "recoverable"),
     ("ORD-2001", "7 commission wrong tier", "commission", 1.00, "recoverable"),
@@ -28,7 +28,7 @@ TRAPS = [
     ("ORD-2002", "10 error charge reported 72h+ after delivery", "error_charge", 8.40, "recoverable"),
     ("ORD-2003", "11 same error charge twice", "error_charge", 6.00, "recoverable"),
     ("ORD-2005", "12 tax deducted though platform collected it", "tax", 3.50, "recoverable"),
-    ("ORD-2011", "13 refund initiated, no money moved", "error_charge", 10.00, "recoverable"),
+    ("ORD-2011", "13 refund initiated, no money moved", "error_charge", 10.00, "conflict"),
     ("ORD-2008", "14 authorized rep waived the fee", "fee", 1.50, "recoverable"),
     ("ORD-2009", "15 unauthorized rep waived the fee", "fee", 2.00, "conflict"),
     ("ORD-2004", "16 legit error charge", "error_charge", 0.00, "correct"),
@@ -253,5 +253,5 @@ def test_pipeline_real_path(tmp_path, monkeypatch):
         transition(store, f["finding_id"], "check", agent, reason="test")
         transition(store, f["finding_id"], "judge", panel.ACTOR, patch=panel.decide(store.get(f["finding_id"])))
     outcomes = sorted(f["outcome"] for f in store.all())
-    assert outcomes.count("conflict") == 1 and outcomes.count("correct") == 2
+    assert outcomes.count("conflict") == 3 and outcomes.count("correct") == 2  # traps 4, 13, 15 go to a human
     assert all(e["allowed"] for e in store.log())

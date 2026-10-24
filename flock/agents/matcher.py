@@ -251,6 +251,11 @@ def match(tables: dict) -> tuple[list[dict[str, Any]], list[Finding]]:
         if r.get("order_id"):
             refunds[r["order_id"]].append(r)
 
+    statements = defaultdict(set)  # payout files searched per channel: the second source for "sold, never paid"
+    for ln in lines:
+        if ln.get("source_file"):
+            statements[ln["channel"]].add(ln["source_file"])
+
     stories, findings = [], []
     for o in orders:
         lns = linked.get(o["order_id"])
@@ -267,7 +272,9 @@ def match(tables: dict) -> tuple[list[dict[str, Any]], list[Finding]]:
             findings.append(Finding(
                 order_ids=[o["order_id"]], channel=o["channel"], check_type="missing_order",
                 expected=o["subtotal"], actual=0.0, gap=o["subtotal"],
-                evidence=[_ev(o, f"{o['channel']} order {o['order_id']} for {o['subtotal']} in the register")],
+                evidence=[_ev(o, f"{o['channel']} order {o['order_id']} for {o['subtotal']} in the register")]
+                + [{"source_file": sf, "what": f"no payout line for {o['order_id']} in this statement"}
+                   for sf in sorted(statements.get(o["channel"], ()))],
                 reason=f"Register shows a {o['subtotal']} {o['channel']} order that is in no payout: sold, never paid.",
             ))
 
