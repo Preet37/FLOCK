@@ -65,7 +65,7 @@ the OpenAI chat API over plain HTTP (no extra dependency), except Claude:
 
 `FLOCK_PROVIDER` defaults to `anthropic`, which is offline without a key. So setting only `ANTHROPIC_API_KEY`
 still means "Claude everywhere", as before. A provider without its key falls back to offline rules.
-`FLOCK_LLM_TIMEOUT` is the per-call timeout in seconds (default 30). If a call fails or times out, that judge
+`FLOCK_LLM_TIMEOUT` is the per-call timeout in seconds (default 30). `FLOCK_AIRGAP=1` refuses any provider off this network (see GX10 below). If a call fails or times out, that judge
 falls back to the offline rules and the finding's reason says so. Each live vote records the `model` that cast it.
 
 How a live panel decides:
@@ -77,18 +77,48 @@ How a live panel decides:
 Offline the debate and the reviewer do nothing. Approved rules, the tolerance and weak-evidence guardrails, and
 "agents propose, humans approve" all still apply on top of any model.
 
-Pointing it at the GX10 (over Tailscale):
+## GX10 (local models over Tailscale, nothing changed on the box)
+
+The GX10's Ollama listens on `127.0.0.1:11434` only and the machine is shared, so we don't reconfigure it: an SSH
+tunnel maps it to `127.0.0.1:11435` on the laptop. [`scripts/gx10.sh`](scripts/gx10.sh) does the plumbing
+(`ssh gx10` alias, see the top of the script for knobs):
 
 ```bash
-# on the GX10: serve an OpenAI-compatible endpoint, e.g.
-#   vllm serve <model> --host 0.0.0.0 --port 8000      or      OLLAMA_HOST=0.0.0.0 ollama serve
-export FLOCK_LOCAL_URL=http://<gx10-tailscale-name-or-100.x.y.z>:8000/v1   # Ollama: :11434/v1
-export FLOCK_LOCAL_MODEL=<model id the server reports>
-export FLOCK_JUDGE_PROVIDERS=local,local,local FLOCK_WRITER_PROVIDER=local FLOCK_MAPPER_PROVIDER=local
-export ANTHROPIC_API_KEY=...                                               # reviewer only
-unset FLOCK_OFFLINE
-python scripts/llm_check.py        # pings every configured route: latency, which model answered, models served
+scripts/gx10.sh tunnel                  # terminal 1: keeps ssh -N -L 11435:127.0.0.1:11434 gx10 up, reconnects on drop
+eval "$(scripts/gx10.sh env)"           # judges = gpt-oss:20b, qwen3:30b, gemma3:27b; writer + mapper local
+eval "$(scripts/gx10.sh env --airgap)"  # same + local reviewer + FLOCK_AIRGAP=1 (the Wi-Fi-off demo)
+scripts/gx10.sh status                  # tailscale line for gx10, tunnel up?, models on disk (/api/tags), loaded (/api/ps)
+scripts/gx10.sh pull small              # ollama pull ON the GX10 under nohup, log ~/flock-pulls.log: qwen3:8b gemma3:12b llama3.1:8b
+scripts/gx10.sh pull large              # gpt-oss:20b qwen3:30b gemma3:27b  (scripts/gx10.sh log to watch)
+python scripts/llm_check.py             # pings every configured route: latency, which model answered, models served
 ```
+
+**Air gap (`FLOCK_AIRGAP=1`).** `flock/llm.py` then only calls providers whose URL host is on this network:
+loopback, private ranges, link-local, Tailscale (`100.64.0.0/10`, `*.ts.net`, or a one-word MagicDNS name that
+resolves there). Anthropic, Groq and NVIDIA's hosted API become offline with a reason ("FLOCK_AIRGAP=1: groq would
+call api.groq.com, which is off this network") and their roles use offline rules. Every model call is counted by host,
+air-gapped or not; the pipeline prints `air-gapped: N model calls, 0 left this network` (or names the hosts that were
+called) and saves it to `data/state/airgap.json`; the dashboard serves it at `GET /api/airgap` (also in `/api/meta`).
+That's the evidence behind "Wi-Fi off": a count, not a claim.
+
+**Judge load test.** [`scripts/judge_load.py`](scripts/judge_load.py) pushes N findings through the real panel at a
+chosen concurrency and writes `results/judge_load_<provider>_<timestamp>.json` (p50 / p95 seconds per finding,
+findings/min, per-judge model + latency, fallbacks, offline, cost). Schema for the benchmark:
+[`docs/benchmark_schema.md`](docs/benchmark_schema.md). `results/` is gitignored.
+
+```bash
+python scripts/judge_load.py --provider local --models qwen2.5-coder:14b --n 6 --concurrency 3   # laptop Ollama
+eval "$(scripts/gx10.sh env --airgap)"; python scripts/judge_load.py --n 60 --concurrency 8      # GX10, 3 models
+python scripts/judge_load.py --source seed --seed 4821 --n 40     # findings from a fresh generated seed (temp dir)
+FLOCK_OFFLINE=1 python scripts/judge_load.py --n 100              # rules-only baseline
+```
+
+First real number (MacBook Air, Ollama, `qwen2.5-coder:14b` as all three judges, 6 fixture findings, concurrency 3,
+air-gapped): p50 88.4s, p95 126.0s per finding, 1.48 findings/min, 21 model calls all to 127.0.0.1, 0 fallbacks.
+A laptop serializes the requests; the GX10 numbers go next to it.
+
+Serving with vLLM instead (OpenAI-compatible on `:8000`): point `FLOCK_LOCAL_URL` at it (tunnel or the Tailscale
+address) and set `FLOCK_LOCAL_MODEL` / `FLOCK_JUDGE_MODELS` to the ids it reports.
 
 ## Judge market (bets that settle against reality, human attention as a budget)
 
@@ -236,6 +266,7 @@ generator/             Maja's data generator (output in generator/out/, gitignor
 mappings.json          Formatter column maps per source layout (human-confirmed)
 chart_of_accounts.json GL accounts + which account each kind of amount posts to (Journal Entry Drafter)
 scripts/score.py       scoreboard vs answer key (scripts/llm_check.py pings the configured models)
+scripts/gx10.sh        GX10 tunnel / env / status / model pulls; scripts/judge_load.py panel latency + throughput
 tests/                 gatekeeper, store, dashboard, detection, data, panel/ranker/learner/writer, llm, providers, market, journal, end-to-end
 dashboard/             Ira's UI: Flask + one page (python -m dashboard.app)
 docs/                  Hyphenate track notes, sponsor rules, pipeline sketch

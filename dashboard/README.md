@@ -51,7 +51,8 @@ findings as the gatekeeper.
 | GET | `/api/rules` | proposed + approved learned rules |
 | POST | `/api/rules/<rule_id>/approve` | body `{"actor": "ira"}` |
 | GET | `/api/score` | scoreboard, per-trap results, run history |
-| GET | `/api/meta` | store backend, states, state machine (findings + journal entries) |
+| GET | `/api/meta` | store backend, states, state machine (findings + journal entries), `airgap` (enforced?, last run line) |
+| GET | `/api/airgap` | air-gap evidence: last run's model calls by host ("air-gapped: N model calls, 0 left this network", offending hosts), each role's route and whether it stays on this network (`FLOCK_AIRGAP=1`) |
 | GET | `/api/progress` | current run: `status` (idle/running/done/failed), `stage`, `done`/`total`, `rate` (rows/s), finished `stages` |
 | GET | `/api/journal` | journal entries (no source rows), count per state, unbalanced count, total debits / credits |
 | GET | `/api/journal/<je_id>` | one entry with its lines, sources and audit log |

@@ -56,8 +56,7 @@ def served_models(provider: str) -> list[str] | str:
 
 def check(r: tuple[str, str]) -> dict:
     if not llm.available(r):
-        key = "ANTHROPIC_API_KEY" if r[0] == "anthropic" else llm.OPENAI_COMPATIBLE.get(r[0], (None,) * 5)[2]
-        why ="FLOCK_OFFLINE=1" if os.environ.get("FLOCK_OFFLINE") == "1" else (f"no {key}" if key else "offline")
+        why = llm.offline_reason(r) or "offline"
         return {"status": "OFFLINE", "detail": f"{why}: this role uses offline rules"}
     start = time.perf_counter()
     try:
@@ -86,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"        {res['detail']}")
         if r[0] == "local" and res["status"] != "OFFLINE":
             print(f"        {llm.base_url('local')} serves: {served_models('local')}")
+    if llm.airgap():
+        print(llm.airgap_report()["line"])
     return 1 if failed else 0
 
 

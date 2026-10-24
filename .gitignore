@@ -13,3 +13,5 @@ generator/out/
 rules.json
 .claude/
 data/exports/
+results/*
+!results/README.md

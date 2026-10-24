@@ -27,17 +27,31 @@ Which provider each role uses:
 Other env:
   FLOCK_LLM_TIMEOUT  seconds per request before we give up and fall back (default 30)
   FLOCK_OFFLINE=1    never call any provider, even with keys
+  FLOCK_AIRGAP=1     only call providers whose URL host is on this network: loopback, private (10/8, 172.16/12,
+                     192.168/16), link-local, Tailscale (100.64.0.0/10, *.ts.net, or a one-word MagicDNS name such
+                     as "gx10" that resolves there). Anything else (anthropic, groq, nvidia by default) is offline
+                     with a reason saying why, and its role uses offline rules.
+
+Every model call is counted by host (airgap_report()), air-gapped or not, so a run can prove where its calls went:
+"air-gapped: 412 model calls, 0 left this network". The pipeline prints that line and writes it to
+data/state/airgap.json for the dashboard (GET /api/airgap).
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
+import socket
 import sys
 import threading
 import urllib.error
 import urllib.request
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
 MODEL = os.environ.get("FLOCK_MODEL", DEFAULT_MODEL)  # kept for anyone importing it; model() is read per call
@@ -52,8 +66,14 @@ OPENAI_COMPATIBLE = {
 PROVIDERS = ("local", "groq", "nvidia", "anthropic", "offline")
 ROLE_ENV = {"reviewer": "FLOCK_REVIEWER_PROVIDER", "writer": "FLOCK_WRITER_PROVIDER", "mapper": "FLOCK_MAPPER_PROVIDER"}
 
+ANTHROPIC_URL = "https://api.anthropic.com"
+TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")  # CGNAT range Tailscale hands out (100.x.y.z)
+
 _client_lock = threading.Lock()
 _client_obj = None
+_stats_lock = threading.Lock()
+_calls: Counter = Counter()      # host -> model calls made (attempted) by this process
+_refused: dict[str, str] = {}    # route label -> why FLOCK_AIRGAP kept it offline
 
 
 def model() -> str:
@@ -108,9 +128,16 @@ def label(r: tuple[str, str]) -> str:
 
 
 def available(r: tuple[str, str] | None = None) -> bool:
-    """Would a call on this route reach a model? False offline, or when the provider's key is missing."""
-    provider = (r or route())[0]
+    """Would a call on this route reach a model? False offline, when the provider's key is missing, or when
+    FLOCK_AIRGAP=1 and its host is off this network (offline_reason() says which)."""
+    r = r or route()
+    provider = r[0]
     if os.environ.get("FLOCK_OFFLINE") == "1" or provider == "offline":
+        return False
+    blocked = airgap_block(r)
+    if blocked:
+        with _stats_lock:
+            _refused[label(r)] = blocked
         return False
     if provider == "anthropic":
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -137,6 +164,134 @@ def base_url(provider: str) -> str:
     return (os.environ.get(url_env) or url_default).rstrip("/")
 
 
+# --- air gap ---------------------------------------------------------------------------------------------------
+
+def airgap() -> bool:
+    return os.environ.get("FLOCK_AIRGAP") == "1"
+
+
+def host(provider: str) -> str:
+    """The host a provider's calls go to ('' for offline / unknown providers)."""
+    if provider in OPENAI_COMPATIBLE:
+        url = base_url(provider)
+    elif provider == "anthropic":
+        url = os.environ.get("ANTHROPIC_BASE_URL") or ANTHROPIC_URL
+    else:
+        return ""
+    return (urlparse(url).hostname or "").lower()
+
+
+def _private_ip(text: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(text.split("%")[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback or ip.is_private or ip.is_link_local or ip in TAILSCALE_NET
+
+
+def on_this_network(h: str) -> bool:
+    """True when calls to host h stay on this network: loopback, private, link-local or Tailscale.
+
+    IP literals are checked directly. localhost and *.ts.net (Tailscale MagicDNS) pass by name. A one-word name
+    ("gx10") is resolved (Tailscale or /etc/hosts answers it locally) and every address must be private. Any other
+    DNS name counts as the internet and is refused without being looked up."""
+    h = (h or "").strip("[]").lower().rstrip(".")
+    if not h:
+        return False
+    if _private_ip(h):
+        return True
+    if h == "localhost" or h.endswith(".localhost") or h.endswith(".ts.net"):
+        return True
+    if "." in h or ":" in h:
+        return False
+    try:
+        addrs = {a[4][0] for a in socket.getaddrinfo(h, None)}
+    except OSError:
+        return False
+    return bool(addrs) and all(_private_ip(a) for a in addrs)
+
+
+def airgap_block(r: tuple[str, str]) -> str | None:
+    """Why FLOCK_AIRGAP=1 keeps this route offline, or None when it may be called."""
+    if not airgap() or r[0] == "offline":
+        return None
+    h = host(r[0])
+    if not h:
+        return f"FLOCK_AIRGAP=1: unknown provider {r[0]!r} has no URL to check"
+    if not on_this_network(h):
+        return f"FLOCK_AIRGAP=1: {r[0]} would call {h}, which is off this network"
+    return None
+
+
+def offline_reason(r: tuple[str, str]) -> str | None:
+    """Why a route won't reach a model (None when it will). For health checks and the dashboard."""
+    provider = r[0]
+    if os.environ.get("FLOCK_OFFLINE") == "1":
+        return "FLOCK_OFFLINE=1"
+    if provider == "offline":
+        return "provider is 'offline'"
+    blocked = airgap_block(r)
+    if blocked:
+        return blocked
+    if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+        return "no ANTHROPIC_API_KEY"
+    if provider in OPENAI_COMPATIBLE and provider != "local" and not os.environ.get(OPENAI_COMPATIBLE[provider][2]):
+        return f"no {OPENAI_COMPATIBLE[provider][2]}"
+    return None
+
+
+def _count(provider: str) -> None:
+    with _stats_lock:
+        _calls[host(provider) or provider] += 1
+
+
+def reset_calls() -> None:
+    """Start a fresh count (the pipeline does this at the start of each run)."""
+    with _stats_lock:
+        _calls.clear()
+        _refused.clear()
+
+
+def airgap_report() -> dict[str, Any]:
+    """Where this process's model calls went. 'external' = hosts off this network (empty when air-gapped)."""
+    with _stats_lock:
+        calls, refused = dict(_calls), dict(_refused)
+    external = {h: n for h, n in calls.items() if not on_this_network(h)}
+    total, left = sum(calls.values()), sum(external.values())
+    if airgap():
+        line = f"air-gapped: {total} model calls, {left} left this network"
+    else:
+        line = f"not air-gapped (FLOCK_AIRGAP=1 enforces it): {total} model calls, {left} left this network"
+    if external:
+        line += " (" + ", ".join(f"{h}: {n}" for h, n in sorted(external.items())) + ")"
+    if refused:
+        line += f"; kept offline: {', '.join(sorted(refused))}"
+    return {"airgap": airgap(), "calls": total, "by_host": calls, "external_calls": left,
+            "external_hosts": sorted(external), "refused": refused, "line": line,
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def write_airgap_report(path: Path | str) -> dict[str, Any]:
+    """Save airgap_report() as JSON for the dashboard. Never breaks a run."""
+    rep = airgap_report()
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rep, indent=2))
+    except OSError:
+        pass
+    return rep
+
+
+def read_airgap_report(path: Path | str) -> dict[str, Any] | None:
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def _openai_chat(provider: str, model_id: str, system: str, user: str, max_tokens: int) -> tuple[str, str]:
     """POST {base}/chat/completions with plain urllib. Works for vLLM, Ollama, Groq and build.nvidia.com."""
     key_env = OPENAI_COMPATIBLE[provider][2]
@@ -148,6 +303,7 @@ def _openai_chat(provider: str, model_id: str, system: str, user: str, max_token
     if os.environ.get(key_env):
         headers["Authorization"] = f"Bearer {os.environ[key_env]}"
     req = urllib.request.Request(base_url(provider) + "/chat/completions", data=body, headers=headers, method="POST")
+    _count(provider)
     try:
         with urllib.request.urlopen(req, timeout=timeout()) as resp:
             data = json.loads(resp.read().decode())
@@ -161,10 +317,14 @@ def _openai_chat(provider: str, model_id: str, system: str, user: str, max_token
 def complete(system: str, user: str, max_tokens: int, r: tuple[str, str] | None = None) -> tuple[str, str]:
     """One raw call: (reply text, the model id the server says answered). Raises on any failure."""
     provider, model_id = r or route()
+    blocked = airgap_block((provider, model_id))
+    if blocked:  # callers check available() first; this is the last line of defence
+        raise PermissionError(blocked)
     if provider in OPENAI_COMPATIBLE:
         return _openai_chat(provider, model_id, system, user, max_tokens)
     if provider != "anthropic":
         raise ValueError(f"unknown provider {provider!r} (use one of {', '.join(PROVIDERS)})")
+    _count(provider)
     msg = _client().messages.create(
         model=model_id, max_tokens=max_tokens, system=system,
         messages=[{"role": "user", "content": user}],
