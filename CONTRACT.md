@@ -23,8 +23,22 @@ data/state/          findings.json + audit_log.jsonl (written by the store)
 ## Deal term (output of Deal Keeper)
 `term_id, channel, store_id (or "all"), term_type (commission|promo_split|fee|tax_rule), value, effective_from, effective_to, authority (contract|amendment|auth_email|unauth_email|call_note), quote, source_file`
 
-Authority ranking, strongest first: contract, amendment, auth_email, unauth_email, call_note.
-Stronger wins automatically. Equal strength or unknown authority = conflict.
+### Which term is in effect (newest binding document wins)
+
+Two kinds of source:
+- **Binding:** `contract`, `amendment`, `auth_email` (a rep the contract says may change terms). These can change the deal.
+- **Non-binding:** `unauth_email`, `call_note`, unknown authority. These can never change the deal on their own.
+
+To pick the term for one channel + store + term_type on one day (`deal_keeper.effective()`):
+1. Keep only claims active that day (`effective_from <= day <= effective_to`; blank = open-ended).
+2. If any binding claim is active, only binding claims can win:
+   a. A store-specific claim beats an `"all"` stores claim.
+   b. The latest `effective_from` wins (that's what an amendment or an authorized waiver is for).
+   c. Same `effective_from`: ranked contract > amendment > auth_email; same rank with different values = conflict.
+3. Non-binding claims that disagree with the winner are kept as `conflicts`. They go in the finding's evidence and a human decides; they never change the expected amount silently.
+4. If only non-binding claims exist: ranked unauth_email > call_note; unknown authority or a tie = conflict (no winner, a human decides).
+
+Authority ranking (used only for same-day ties and non-binding claims), strongest first: contract, amendment, auth_email, unauth_email, call_note.
 
 ## Finding (one per discrepancy)
 `finding_id, order_ids[], channel, check_type (commission|promo|tax|error_charge|deposit|missing_order), expected, actual, gap, evidence[] (source_file + row or quote), outcome (correct|recoverable|conflict), confidence, reason (plain English), votes[], rank_score, dispute_draft, state`

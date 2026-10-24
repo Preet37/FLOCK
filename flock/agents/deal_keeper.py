@@ -4,7 +4,7 @@ IN:  data/raw/contracts/*, data/raw/emails/*  (later: read by a local model on t
 OUT: list of deal terms (CONTRACT.md "Deal term"), each with quote + authority
 
 Authority, strongest first: contract > amendment > auth_email > unauth_email > call_note.
-Stronger claim wins automatically. Equal strength or unknown authority -> a conflict (goes to a human).
+Newest binding document wins; see CONTRACT.md "Which term is in effect" and effective() below.
 
 How a term is picked for one channel/store/date (effective()):
   1. Binding sources (contract, amendment, auth_email): the latest effective_from supersedes older ones
