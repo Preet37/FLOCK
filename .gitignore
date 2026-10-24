@@ -12,3 +12,4 @@ data/sandbox_portal/
 generator/out/
 rules.json
 .claude/
+data/exports/

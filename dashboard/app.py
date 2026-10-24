@@ -6,10 +6,13 @@
 Reads through the Store protocol (flock.store.get_store, so FLOCK_STORE picks the backend).
 It never writes a finding itself: approve / reject call flock.gatekeeper.transition() with the
 person's Actor, and filing goes through Clicky, which also uses the gatekeeper.
+Journal entries work the same way: approve / reject are gatekeeper transitions (machine=JOURNAL) with the
+person's Actor, and "export" has the gatekeeper post every approved entry to a CSV in data/exports/.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib.util
 import json
 from pathlib import Path
@@ -17,14 +20,16 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, request, send_from_directory
 
-from flock.agents import clicky, learner
+from flock.agents import clicky, journal, learner
 from flock.gatekeeper import Denied, transition
-from flock.models import TRANSITIONS, Actor
-from flock.store import ROOT, Store, get_store
+from flock.models import JE_TRANSITIONS, JOURNAL, TRANSITIONS, Actor
+from flock.store import ROOT, JournalStore, Store, get_journal_store, get_store
 
 STATIC = Path(__file__).resolve().parent / "static"
 STATES = ["NEW", "CHECKED", "JUDGED", "APPROVED", "REJECTED", "FILED", "RECOVERED"]
 HUMAN_ACTIONS = ("approve", "reject")
+JE_STATES = ["DRAFT", "APPROVED", "REJECTED", "POSTED"]
+DATA = ROOT / "data"
 
 
 def _load_scoreboard():
@@ -90,13 +95,38 @@ def detail(store: Store, finding_id: str) -> dict[str, Any]:
     }
 
 
-def create_app(store: Store | None = None, runs_path: Path | None = None) -> Flask:
+def je_brief(je: dict[str, Any]) -> dict[str, Any]:
+    """A journal entry for the list view: everything but the per-line source rows."""
+    disputed = sum(ln["debit"] for ln in je["lines"] if ln.get("finding_id") and ln["account_type"] == "asset")
+    return {**{k: v for k, v in je.items() if k != "lines"}, "line_count": len(je["lines"]),
+            "disputed": round(disputed, 2)}
+
+
+def source_row(file: str, row: int) -> dict[str, Any] | None:
+    """One raw row (header + values) from a CSV under data/, so a journal line's source can be opened."""
+    path = (ROOT / file).resolve()
+    if not path.is_relative_to(DATA.resolve()) or not path.is_file() or path.suffix.lower() != ".csv":
+        return None
+    with path.open(newline="") as fh:
+        rows = list(csv.reader(fh))
+    if not rows or not (2 <= row <= len(rows)):
+        return None
+    return {"file": file, "row": row, "header": rows[0], "values": rows[row - 1]}
+
+
+def create_app(store: Store | None = None, runs_path: Path | None = None, journal_store: JournalStore | None = None,
+               exports_dir: Path | None = None) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.config["STORE"] = store if store is not None else get_store()
     app.config["RUNS_PATH"] = runs_path or scoreboard.RUNS
+    app.config["JOURNAL"] = journal_store if journal_store is not None else get_journal_store(app.config["STORE"])
+    app.config["EXPORTS"] = exports_dir or journal.EXPORTS
 
     def st() -> Store:
         return app.config["STORE"]
+
+    def js() -> JournalStore:
+        return app.config["JOURNAL"]
 
     def body() -> dict[str, Any]:
         return request.get_json(silent=True) or {}
@@ -180,7 +210,64 @@ def create_app(store: Store | None = None, runs_path: Path | None = None) -> Fla
     def api_meta():
         return jsonify(states=STATES, store=type(st()).__name__,
                        transitions=[{"from": s, "action": a, "to": t, "roles": sorted(r)}
-                                    for (s, a), (t, r) in TRANSITIONS.items()])
+                                    for (s, a), (t, r) in TRANSITIONS.items()],
+                       journal_transitions=[{"from": s, "action": a, "to": t, "roles": sorted(r)}
+                                            for (s, a), (t, r) in JE_TRANSITIONS.items()])
+
+    # journal entries ----------------------------------------------------------------
+    @app.get("/api/journal")
+    def api_journal():
+        rows = sorted(js().all(), key=lambda j: (j["store_id"], j.get("week") or "", j["channel"], j["payout_id"]))
+        return jsonify(entries=[je_brief(j) for j in rows],
+                       by_state={s: sum(1 for j in rows if j["state"] == s) for s in JE_STATES},
+                       unbalanced=sum(1 for j in rows if not j["balanced"]),
+                       debits=round(sum(j["total_debit"] for j in rows), 2),
+                       credits=round(sum(j["total_credit"] for j in rows), 2))
+
+    @app.get("/api/journal/<je_id>")
+    def api_journal_detail(je_id: str):
+        try:
+            je = js().get(je_id)
+        except KeyError:
+            abort(404, f"no journal entry {je_id}")
+        log = js().log(je_id)
+        return jsonify(entry=je, log=log, denied=[e for e in log if not e["allowed"]])
+
+    @app.post("/api/journal/export")
+    def api_journal_export():
+        """The gatekeeper posts every APPROVED entry: one CSV import file, each entry APPROVED -> POSTED."""
+        return jsonify(journal.export_approved(js(), app.config["EXPORTS"]))
+
+    @app.post("/api/journal/<je_id>/<action>")
+    def api_journal_decide(je_id: str, action: str):
+        """Approve or reject a drafted entry. Same rule as findings: the gatekeeper decides; denials are logged."""
+        if action not in HUMAN_ACTIONS:
+            return jsonify(error=f"the dashboard only does {' / '.join(HUMAN_ACTIONS)}"), 400
+        b = body()
+        name = str(b.get("actor") or "").strip()
+        if not name:
+            return jsonify(error="say who you are: 'actor' is required"), 400
+        actor = Actor(id=name, role=str(b.get("role") or "human"))
+        reason = str(b.get("reason") or "").strip() or "via the dashboard"
+        try:
+            after = transition(js(), je_id, action, actor, reason=reason, evidence=[], machine=JOURNAL)
+        except KeyError:
+            return jsonify(error=f"no journal entry {je_id}"), 404
+        except Denied as e:
+            return jsonify(error=str(e), log_entry=js().log(je_id)[-1]), 403
+        return jsonify(entry=je_brief(after), log_entry=js().log(je_id)[-1])
+
+    @app.get("/api/source")
+    def api_source():
+        """One raw CSV row under data/ (a journal line's source link)."""
+        try:
+            row = int(request.args.get("row", ""))
+        except ValueError:
+            return jsonify(error="row must be a number"), 400
+        found = source_row(str(request.args.get("file", "")), row)
+        if found is None:
+            abort(404, "no such CSV row under data/")
+        return jsonify(found)
 
     @app.errorhandler(404)
     def not_found(e):

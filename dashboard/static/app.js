@@ -1,4 +1,4 @@
-// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/finding/<id>  #/score
+// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/finding/<id>  #/journal  #/journal/<id>  #/score
 // Polls /api/summary every second; re-renders the current view when the audit log grows.
 "use strict";
 
@@ -67,6 +67,35 @@ async function approveRule(id) {
   await refresh(true);
 }
 
+async function decideJe(id, action, reason, role = "human") {
+  busy = true;
+  try {
+    await api(`/api/journal/${encodeURIComponent(id)}/${action}`, {
+      method: "POST", body: JSON.stringify({ actor: role === "human" ? actorName() : "journal", role, reason }),
+    });
+    toast(`${id} ${action === "approve" ? "approved" : "rejected"} by ${actorName()}. Logged.`);
+  } catch (e) {
+    toast(e.status === 403 ? `Gatekeeper denied it: ${e.message}. The attempt is in the audit log.` : e.message, true);
+  } finally { busy = false; await refresh(true); }
+}
+
+async function exportJournal() {
+  try {
+    const r = await api("/api/journal/export", { method: "POST" });
+    toast(r.posted.length ? `Gatekeeper posted ${r.posted.length} entries to ${r.file}` : "Nothing approved to export.");
+  } catch (e) { toast(e.message, true); }
+  await refresh(true);
+}
+
+async function showSource(btn) {
+  const box = btn.closest("td").querySelector(".src-row");
+  try {
+    const r = await api(`/api/source?file=${encodeURIComponent(btn.dataset.file)}&row=${encodeURIComponent(btn.dataset.row)}`);
+    box.innerHTML = `<table><tr>${r.header.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>
+      <tr>${r.values.map((v) => `<td class="mono">${esc(v)}</td>`).join("")}</tr></table>`;
+  } catch (e) { box.textContent = `${btn.dataset.file} row ${btn.dataset.row}: ${e.message}`; }
+}
+
 document.addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-act]");
   if (b) {
@@ -77,6 +106,10 @@ document.addEventListener("click", (ev) => {
     if (b.dataset.act === "agent-try") decide(id, "approve", "Agent tried to approve its own call", "agent");
     if (b.dataset.act === "file") fileApproved();
     if (b.dataset.act === "rule") approveRule(id);
+    if (b.dataset.act === "je-approve" || b.dataset.act === "je-reject") decideJe(id, b.dataset.act.slice(3), reason);
+    if (b.dataset.act === "je-agent-try") decideJe(id, "approve", "Agent tried to approve its own journal entry", "agent");
+    if (b.dataset.act === "je-export") exportJournal();
+    if (b.dataset.act === "src") showSource(b);
     return;
   }
   const row = ev.target.closest("tr[data-href]");
@@ -120,7 +153,7 @@ function activity(entries) {
   return `<ul class="feed">${entries.map((e) => `<li>
       <span class="dot ${e.allowed ? esc(e.role) : "denied"}"></span>
       <span><b>${esc(e.actor)}</b> ${e.allowed ? esc(e.action) : `tried to <b>${esc(e.action)}</b>, denied`}
-        <a href="#/finding/${esc(e.subject_id)}" class="mono">${esc(e.subject_id)}</a></span>
+        <a href="${e.subject_type === "journal_entry" ? "#/journal/" : "#/finding/"}${esc(e.subject_id)}" class="mono">${esc(e.subject_id)}</a></span>
       <span class="meta">${esc(e.before)} → ${esc(e.after)} · ${when(e.at)}</span></li>`).join("")}</ul>`;
 }
 
@@ -320,13 +353,99 @@ async function renderScore() {
     ${rulesCard(rules)}`;
 }
 
+// ---------- journal entries ----------
+const balancedMark = (j) => (j.balanced ? '<b class="ok-t">balanced</b>' : '<b class="bad-t">does not balance</b>');
+
+async function renderJournal() {
+  const d = await api("/api/journal");
+  const rows = d.entries;
+  const approved = rows.filter((j) => j.state === "APPROVED").length;
+  const groups = {};
+  rows.forEach((j) => ((groups[`${j.store_id} · ${j.week || "no week"}`] ||= []).push(j)));
+  const table = (list) => `<div class="table-scroll"><table><thead><tr>
+      <th>Journal</th><th>Channel</th><th>Payout</th><th>Date</th><th class="r">Debits</th><th class="r">Credits</th>
+      <th class="r">Disputed</th><th>Check</th><th>State</th><th></th></tr></thead><tbody>
+    ${list.map((j) => `<tr class="link" data-href="#/journal/${esc(j.je_id)}">
+      <td><a href="#/journal/${esc(j.je_id)}" class="mono">${esc(j.journal_no)}</a></td><td>${chan(j.channel)}</td>
+      <td class="mono">${esc(j.payout_id)}</td><td>${esc(j.date)}</td>
+      <td class="r num">${usd(j.total_debit)}</td><td class="r num">${usd(j.total_credit)}</td>
+      <td class="r num">${j.disputed ? usd(j.disputed) : ""}</td><td>${balancedMark(j)}</td><td>${badge(j.state, j.state)}</td>
+      <td>${j.state === "DRAFT" ? `<button class="btn-ok" data-act="je-approve" data-id="${esc(j.je_id)}">Approve</button>` : ""}</td></tr>`).join("")}
+    </tbody></table></div>`;
+  view.innerHTML = `
+    <div class="page-head"><div><h1>Journal entries</h1>
+      <div class="sub">One draft entry per store, channel and payout. The agent drafts; you approve as <b>${esc(actorName())}</b> (human);
+        only the gatekeeper posts, by writing the GL import file.</div></div>
+      ${approved ? `<button class="btn-ok" data-act="je-export">Export ${approved} approved to the GL import</button>` : ""}</div>
+    <div class="stats">
+      <div class="card stat"><div class="label">Entries</div><div class="value">${rows.length}</div>
+        <div class="hint">${d.by_state.DRAFT} draft · ${d.by_state.APPROVED} approved · ${d.by_state.POSTED} posted</div></div>
+      <div class="card stat"><div class="label">Debits = credits</div><div class="value num">${usd(d.debits)}</div>
+        <div class="hint">${d.unbalanced ? `<b class="bad-t">${d.unbalanced} unbalanced</b>` : "every entry balances to the cent"}</div></div>
+      <div class="card stat accent"><div class="label">Due from platforms (disputed)</div>
+        <div class="value num">${usd(rows.reduce((a, j) => a + j.disputed, 0))}</div><div class="hint">booked as a receivable, not expense</div></div>
+    </div>
+    ${rows.length ? Object.entries(groups).map(([k, list]) => `<section class="card je-group"><div class="card-head"><h2>${esc(k)}</h2>
+        <span class="muted">${list.length} entr${list.length === 1 ? "y" : "ies"}</span></div>${table(list)}</section>`).join("")
+      : `<div class="card empty section-gap">No journal entries. They are drafted on real data: run the generator, collector and formatter, then <code>python -m flock.pipeline --reset</code>.</div>`}`;
+}
+
+function sourceLinks(ln) {
+  const out = [];
+  (ln.sources || []).forEach((s) => s.rows.slice(0, 3).forEach((r) => out.push(
+    `<button class="btn-ghost src mono" data-act="src" data-file="${esc(s.source_file)}" data-row="${esc(r)}">${esc(s.source_file.split("/").pop())}:${esc(r)}</button>`)));
+  const n = (ln.sources || []).reduce((a, s) => a + s.rows.length, 0);
+  return out.join("") + (n > out.length ? `<span class="muted">+${n - out.length} more</span>` : "");
+}
+
+async function renderJournalEntry(id) {
+  let d;
+  try { d = await api(`/api/journal/${encodeURIComponent(id)}`); }
+  catch (e) { view.innerHTML = `<div class="card empty section-gap">${esc(e.message)}. <a href="#/journal">Back to the journal</a></div>`; return; }
+  const j = d.entry;
+  view.innerHTML = `
+    <div class="pr-head">
+      <div class="muted"><a href="#/journal">Journal</a> / entry</div>
+      <h1 style="margin-top:6px">${esc(j.journal_no)} · ${chan(j.channel)} payout ${esc(j.payout_id)} · store ${esc(j.store_id)} <span class="id">${esc(j.je_id)}</span></h1>
+      <div class="pr-meta">${badge(j.state, j.state)} ${balancedMark(j)}
+        <span>dated ${esc(j.date)}${j.deposit_id ? ` · deposit <span class="mono">${esc(j.deposit_id)}</span>` : ""} · tax rule ${esc(j.tax_rule || "none in effect")}</span>
+        ${j.export_file ? `<span>posted to <span class="mono">${esc(j.export_file)}</span></span>` : ""}</div>
+    </div>
+    <div class="stack">
+      <section class="card"><div class="card-head"><h2>Lines</h2><span class="muted">location ${esc(j.store_id)} · class ${chan(j.channel)}</span></div>
+        <div class="table-scroll"><table class="je-lines"><thead><tr><th>#</th><th>Account</th><th class="r">Debit</th><th class="r">Credit</th><th>Memo and sources</th></tr></thead><tbody>
+        ${j.lines.map((ln) => `<tr><td class="num">${ln.line_no}</td><td><span class="mono">${esc(ln.account)}</span> ${esc(ln.account_name)}</td>
+          <td class="r num">${ln.debit ? usd(ln.debit) : ""}</td><td class="r num">${ln.credit ? usd(ln.credit) : ""}</td>
+          <td class="memo">${esc(ln.memo)}${ln.finding_id ? ` <a class="mono" href="#/finding/${esc(ln.finding_id)}">${esc(ln.finding_id)}</a>` : ""}
+            <div>${sourceLinks(ln)}</div><div class="src-row"></div></td></tr>`).join("")}
+        </tbody><tfoot><tr><td></td><td>Total</td><td class="r num">${usd(j.total_debit)}</td><td class="r num">${usd(j.total_credit)}</td><td>${balancedMark(j)}</td></tr></tfoot></table></div>
+      </section>
+      ${j.notes && j.notes.length ? `<section class="card"><div class="card-head"><h2>Notes</h2></div><ul class="notes">${j.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></section>` : ""}
+      <section><h2>Audit trail</h2>${timeline(d.log)}
+        ${j.state === "DRAFT" ? `<div class="card card-pad decide"><b>Your call, ${esc(actorName())}.</b>
+          <span class="muted">Approve = ready to post to the GL. Reject = do not post.</span>
+          <div class="q-actions">
+            <textarea data-reason="${esc(j.je_id)}" rows="1" placeholder="Reason (goes in the audit log)"></textarea>
+            <button class="btn-ok" data-act="je-approve" data-id="${esc(j.je_id)}">Approve</button>
+            <button class="btn-bad" data-act="je-reject" data-id="${esc(j.je_id)}">Reject</button>
+            <button class="btn-ghost" data-act="je-agent-try" data-id="${esc(j.je_id)}" title="Shows the gatekeeper refusing an agent">Try as an agent</button>
+          </div></div>` : ""}
+        ${j.state === "APPROVED" ? `<div class="card card-pad decide"><button class="btn-ok" data-act="je-export">Export approved entries to the GL import</button></div>` : ""}
+      </section>
+    </div>`;
+}
+
 // ---------- router + polling ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
   const m = h.match(/^\/finding\/(.+)$/);
+  const jm = h.match(/^\/journal\/(.+)$/);
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on",
-    (a.dataset.view === "live" && (h === "/" || m)) || (a.dataset.view === "queue" && h === "/queue") || (a.dataset.view === "score" && h === "/score")));
+    (a.dataset.view === "live" && (h === "/" || m)) || (a.dataset.view === "queue" && h === "/queue")
+    || (a.dataset.view === "journal" && (h === "/journal" || jm)) || (a.dataset.view === "score" && h === "/score")));
   if (m) return renderFinding(decodeURIComponent(m[1]));
+  if (jm) return renderJournalEntry(decodeURIComponent(jm[1]));
+  if (h === "/journal") return renderJournal();
   if (h === "/queue") return renderQueue();
   if (h === "/score") return renderScore();
   return renderLive();

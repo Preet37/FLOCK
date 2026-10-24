@@ -1,0 +1,38 @@
+{
+  "_about": "Chart of accounts for the Journal Entry Drafter (flock/agents/journal.py). 'accounts' is the GL list (number, name, type) as it would exist in NetSuite / QuickBooks; 'roles' maps each kind of amount the drafter books to an account number, so a group with different numbering only edits this file. 'channel_roles' overrides a role for one channel.",
+  "accounts": [
+    {"number": "1010", "name": "Cash - Operating", "type": "asset"},
+    {"number": "1250", "name": "Due from Platform (Disputed)", "type": "asset"},
+    {"number": "1260", "name": "Sales Tax Due from Platform", "type": "asset"},
+    {"number": "1270", "name": "Platform Payouts in Transit", "type": "asset"},
+    {"number": "1290", "name": "Payout Clearing - Unexplained", "type": "asset"},
+    {"number": "2200", "name": "Sales Tax Payable", "type": "liability"},
+    {"number": "4100", "name": "Delivery Sales", "type": "income"},
+    {"number": "4110", "name": "Online Ordering Sales", "type": "income"},
+    {"number": "6110", "name": "Delivery Commission Expense", "type": "expense"},
+    {"number": "6120", "name": "Promotions Expense - Merchant Funded", "type": "expense"},
+    {"number": "6130", "name": "Marketplace Fees", "type": "expense"},
+    {"number": "6140", "name": "Payment Processing Fees", "type": "expense"},
+    {"number": "6150", "name": "Error Charge Expense", "type": "expense"},
+    {"number": "6160", "name": "Sales Tax Withheld by Platform", "type": "expense"},
+    {"number": "6190", "name": "Delivery Payout Variance", "type": "expense"}
+  ],
+  "roles": {
+    "cash": "1010",
+    "disputed_receivable": "1250",
+    "tax_due_from_platform": "1260",
+    "payout_in_transit": "1270",
+    "payout_clearing": "1290",
+    "sales_tax_payable": "2200",
+    "sales": "4100",
+    "commission": "6110",
+    "promotions": "6120",
+    "fees": "6130",
+    "error_charges": "6150",
+    "tax_withheld": "6160",
+    "payout_variance": "6190"
+  },
+  "channel_roles": {
+    "direct_app": {"sales": "4110", "fees": "6140"}
+  }
+}

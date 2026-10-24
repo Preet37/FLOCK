@@ -5,7 +5,8 @@
   python -m flock.pipeline --reset --forget         # also wipe learned rules (true day-one run)
   python -m flock.pipeline --reset --pace 0.4       # sleep between moves so the dashboard counters visibly tick
 
-Collect -> Read -> Connect -> Deal terms -> Check -> Judge -> Rank -> Draft -> [human] -> File -> Learn
+Collect -> Read -> Connect -> Deal terms -> Check -> Judge -> Rank -> Draft -> [human] -> File -> Journal -> Learn
+Journal (real data only): one draft journal entry per store/channel/payout, waiting for a human to approve.
 Uses real data from data/std/ once Maja and Thabhelo's agents produce it; until then, fixtures/fake_findings.json.
 Each run appends a one-line summary to data/state/runs.jsonl (week 1, week 2, ...) for the scoreboard;
 --forget starts that history over, because it's a true day one.
@@ -18,10 +19,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flock.agents import checkers, clicky, deal_keeper, dispute_writer, formatter, learner, matcher, panel, ranker
+from flock.agents import (checkers, clicky, deal_keeper, dispute_writer, formatter, journal, learner, matcher, panel,
+                          ranker)
 from flock.gatekeeper import transition
 from flock.models import Actor, Finding
-from flock.store import ROOT, STATE_DIR, Store, get_store
+from flock.store import ROOT, STATE_DIR, Store, get_journal_store, get_store
 
 FIXTURES = ROOT / "fixtures" / "fake_findings.json"
 RUNS = STATE_DIR / "runs.jsonl"
@@ -32,8 +34,9 @@ DEMO_HUMAN = Actor(id="demo-controller", role="human")
 OPTIONAL_TABLES = ("error_charges", "refunds")  # extra std tables the checkers use when the formatter writes them
 
 
-def detect_real() -> list[dict]:
-    """Matcher + Deal Keeper + Checkers on data/std/ and data/raw/{contracts,emails}. Empty list if no data yet."""
+def detect_real(context: dict | None = None) -> list[dict]:
+    """Matcher + Deal Keeper + Checkers on data/std/ and data/raw/{contracts,emails}. Empty list if no data yet.
+    If `context` is given, it also gets what the Journal Entry Drafter needs: stories, terms_for, orders."""
     tables = dict(formatter.format_all())
     for name in OPTIONAL_TABLES:
         p = formatter.STD / f"{name}.csv"
@@ -41,15 +44,20 @@ def detect_real() -> list[dict]:
             tables[name] = p
     stories, match_findings = matcher.match(tables)
     terms = deal_keeper.extract_terms()
+    terms_for = lambda s: deal_keeper.terms_for(terms, s)  # noqa: E731
     found = [f.to_dict() for f in match_findings]
-    found += [f.to_dict() for f in checkers.run_all(stories, lambda s: deal_keeper.terms_for(terms, s))]
+    found += [f.to_dict() for f in checkers.run_all(stories, terms_for)]
+    if context is not None and stories:
+        context.update(stories=stories, terms_for=terms_for, orders=matcher.load_tables(tables)["orders"])
     return found
 
 
-def detect(fixtures: Path | None = None) -> tuple[list[dict], str]:
-    found = detect_real() if fixtures is None else []
+def detect(fixtures: Path | None = None, context: dict | None = None) -> tuple[list[dict], str]:
+    found = detect_real(context) if fixtures is None else []
     if found:
         return found, "real data (data/std)"
+    if context is not None:
+        context.clear()  # fixtures have no payout tables: nothing to journal
     path = Path(fixtures or FIXTURES)
     rows = json.loads(path.read_text())
     name = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path.name
@@ -63,8 +71,10 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     store = store or get_store()
     rules_path = Path(rules_path or learner.RULES)
     portal = Path(portal or clicky.PORTAL)
+    jstore = get_journal_store(store)
     if reset:
         store.reset()
+        jstore.reset()
         portal.unlink(missing_ok=True)
     if forget:
         rules_path.unlink(missing_ok=True)
@@ -75,7 +85,8 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
         if pace:
             time.sleep(pace)
 
-    findings, source = detect(fixtures)
+    context: dict = {}
+    findings, source = detect(fixtures, context)
     print(f"\n== Flock run on {source}: {len(findings)} findings ==")
 
     for f in findings:
@@ -107,6 +118,13 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
                      reason="Rep had no authority to change the deal; accept the charge")
         filed = clicky.file_approved(store, portal)
         print(f"Clicky filed {len(filed)} disputes in the sandbox portal")
+
+    if context.get("stories"):
+        entries = journal.draft(context["stories"], store.all(), context["terms_for"], context["orders"])
+        drafted = journal.draft_into(jstore, entries)
+        bad = sum(1 for je in entries if not je["balanced"])
+        print(f"Journal drafted {len(drafted)} entries (store x channel x payout), {bad} unbalanced; "
+              f"waiting for a human to approve")
 
     proposed = learner.propose(store, rules_path)
     record_run(store, source)

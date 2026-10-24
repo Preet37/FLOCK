@@ -20,7 +20,11 @@ Screens, in demo order:
 3. **Finding detail, the PR view** (`#/finding/F-0003`): numbers (computed in code), sources and claims with their
    authority, rule applied or the 3 judges' votes and confidences, dispute draft, what was filed, who decided, and the
    full audit trail with diffs. Denied attempts show in red. "Try as an agent" shows the gatekeeper refusing an agent.
-4. **Scoreboard** (`#/score`): `scripts/score.py` (caught, missed, false alarms, dollars, each trap vs the answer key)
+4. **Journal** (`#/journal`, `#/journal/<je_id>`): draft journal entries per store and week (real data only), each
+   with debits, credits, a balanced check, disputed amounts booked as "Due from Platform", Approve (human), and
+   "Export N approved to the GL import" (the gatekeeper posts). The entry view shows every line with its finding link
+   and clickable source rows, plus the entry's audit trail and "Try as an agent".
+5. **Scoreboard** (`#/score`): `scripts/score.py` (caught, missed, false alarms, dollars, each trap vs the answer key)
    plus human hand-offs by week from `data/state/runs.jsonl`.
 
 ## The rule it keeps
@@ -42,7 +46,12 @@ findings as the gatekeeper.
 | GET | `/api/rules` | proposed + approved learned rules |
 | POST | `/api/rules/<rule_id>/approve` | body `{"actor": "ira"}` |
 | GET | `/api/score` | scoreboard, per-trap results, run history |
-| GET | `/api/meta` | store backend, states, state machine |
+| GET | `/api/meta` | store backend, states, state machine (findings + journal entries) |
+| GET | `/api/journal` | journal entries (no source rows), count per state, unbalanced count, total debits / credits |
+| GET | `/api/journal/<je_id>` | one entry with its lines, sources and audit log |
+| POST | `/api/journal/<je_id>/approve` or `/reject` | body `{"actor": "ira", "reason": "...", "role": "human"}`. 403 + logged if denied (agents, unbalanced entries) |
+| POST | `/api/journal/export` | the gatekeeper posts every APPROVED entry to `data/exports/journal_entries_<time>.csv` |
+| GET | `/api/source?file=data/...csv&row=N` | one raw CSV row (header + values) under `data/`, for a journal line's source link |
 
 ## SpacetimeDB
 

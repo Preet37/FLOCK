@@ -238,3 +238,15 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
 #toast.bad { background: var(--bad); color: #fff; }
 .foot { color: var(--muted); font-size: 12px; padding-top: 32px; padding-bottom: 32px; }
 td.mono, td .mono { white-space: nowrap; }
+
+/* journal entries */
+.b-DRAFT { background: var(--info-soft); color: var(--info); }
+.b-POSTED { background: var(--done-soft); color: var(--done); }
+.je-group { margin-top: 18px; }
+.je-group h3 { margin: 0 0 8px; }
+.je-lines td.memo { max-width: 360px; }
+.je-lines tfoot td { font-weight: 650; border-top: 2px solid var(--border); }
+.src { display: inline-block; margin: 2px 6px 0 0; font-size: 12px; }
+.src-row { margin-top: 6px; font-size: 12px; overflow-x: auto; }
+.src-row table td, .src-row table th { padding: 2px 8px; white-space: nowrap; }
+.notes { margin: 0; padding: 12px 16px 12px 32px; }

@@ -1,9 +1,13 @@
-"""The one door. Every change to a finding goes through transition().
+"""The one door. Every change to a finding (or a journal entry) goes through transition().
 
-- Checks the move is legal (state machine in models.TRANSITIONS / ANNOTATIONS).
-- Checks the actor's role may do it (agents propose, humans approve, gatekeeper files).
+- Checks the move is legal (state machine in models.TRANSITIONS / ANNOTATIONS; journal entries: models.JE_TRANSITIONS).
+- Checks the actor's role may do it (agents propose, humans approve, gatekeeper files / posts).
+- Runs the subject type's guard, if any (a journal entry that doesn't balance can't be approved).
 - Writes an append-only log entry with a before/after diff, in the same commit as the change.
 - Denied attempts are logged too, then raise Denied.
+
+`machine` picks the subject type (models.FINDING by default, models.JOURNAL for journal entries); every
+subject type writes to the same audit log, and each entry says which type it was (subject_type).
 """
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ import copy
 from datetime import datetime, timezone
 from typing import Any
 
-from flock.models import ANNOTATIONS, TRANSITIONS, Actor
+from flock.models import FINDING, Actor, Machine
 from flock.store import Store
 
 
@@ -35,42 +39,54 @@ def transition(
     patch: dict[str, Any] | None = None,
     reason: str = "",
     evidence: list[Any] | None = None,
+    machine: Machine = FINDING,
 ) -> dict[str, Any]:
     item = store.get(finding_id)
     before = copy.deepcopy(item)
     state = item["state"]
 
-    if (state, action) in TRANSITIONS:
-        to_state, roles = TRANSITIONS[(state, action)]
-    elif (state, action) in ANNOTATIONS:
-        to_state, roles = state, ANNOTATIONS[(state, action)]
+    if (state, action) in machine.transitions:
+        to_state, roles = machine.transitions[(state, action)]
+    elif (state, action) in machine.annotations:
+        to_state, roles = state, machine.annotations[(state, action)]
     else:
         to_state, roles = None, set()
 
     allowed = to_state is not None and actor.role in roles
+    if allowed and machine.id_key not in item:  # e.g. the journal machine pointed at a finding
+        blocked = f"{finding_id} is not a {machine.name}"
+    else:
+        blocked = machine.guard(before, action) if allowed and machine.guard else None
+    allowed = allowed and not blocked
     # 'state' can never be set through a patch; only the state machine moves it.
-    patch = {k: v for k, v in (patch or {}).items() if k not in ("state", "finding_id")}
+    patch = {k: v for k, v in (patch or {}).items() if k not in ("state", machine.id_key)}
 
     after = copy.deepcopy(before)
     if allowed:
         after.update(patch)
         after["state"] = to_state
 
+    if blocked:
+        denial = f"DENIED: {blocked}. {reason}".strip()
+    else:
+        denial = f"DENIED: {actor.role} may not '{action}' from {state}. {reason}".strip()
     entry = {
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "actor": actor.id,
         "role": actor.role,
         "action": action,
         "subject_id": finding_id,
+        "subject_type": machine.name,
         "allowed": allowed,
         "before": before["state"],
         "after": after["state"],
         "diff": _diff(before, after) if allowed else {},
-        "reason": reason if allowed else f"DENIED: {actor.role} may not '{action}' from {state}. {reason}".strip(),
+        "reason": reason if allowed else denial,
         "evidence": evidence if evidence is not None else item.get("evidence", []),
     }
     store.commit(after if allowed else None, entry)
 
     if not allowed:
-        raise Denied(f"{actor.id} ({actor.role}) cannot '{action}' finding {finding_id} in state {state}")
+        why = f": {blocked}" if blocked else ""
+        raise Denied(f"{actor.id} ({actor.role}) cannot '{action}' {machine.name} {finding_id} in state {state}{why}")
     return after

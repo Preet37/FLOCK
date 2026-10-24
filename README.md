@@ -93,9 +93,16 @@ Work on a branch (`git checkout -b maja/generator`), push it, and open a PR into
 
 ```
 Collect -> Read -> Connect -> Deal terms -> Check -> Judge (3-judge panel) -> Rank -> Draft
-        -> [human approves] -> File (Clicky, sandbox portal) -> Learn (proposes rules)
+        -> [human approves] -> File (Clicky, sandbox portal) -> Journal (draft GL entries) -> Learn (proposes rules)
 Audit log underneath every step, via flock/gatekeeper.py
 ```
+
+**Journal entries (real data only).** `flock/agents/journal.py` drafts one balanced journal entry per store, channel
+and payout: Dr Cash (the store's share of the bank deposit), Dr commission / promotions / fees / error charges,
+Dr Due from Platform (Disputed) for every open finding (with its `finding_id`, instead of expense), Cr Delivery Sales,
+and sales tax by the deal's `tax_rule`. Accounts come from `chart_of_accounts.json`. Entries are drafts until a human
+approves them (dashboard "Journal" tab); then the gatekeeper posts them by writing a NetSuite / QuickBooks-style
+import CSV to `data/exports/`. Approve and post are gatekeeper transitions in the same audit log as findings.
 
 Until real data exists, the pipeline runs on `fixtures/fake_findings.json` (6 findings) scored against `data/answer_key.csv`.
 As soon as `data/std/` has real tables and the matcher/checkers return findings, the pipeline switches to real data automatically.
@@ -131,6 +138,7 @@ flock/agents/          one file per agent, owner named at the top
 fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)
 generator/             Maja's data generator (output in generator/out/, gitignored)
 mappings.json          Formatter column maps per source layout (human-confirmed)
+chart_of_accounts.json GL accounts + which account each kind of amount posts to (Journal Entry Drafter)
 scripts/score.py       scoreboard vs answer key
 tests/                 gatekeeper, store, dashboard, detection, data, panel/ranker/learner/writer, llm, end-to-end
 dashboard/             Ira's UI: Flask + one page (python -m dashboard.app)
