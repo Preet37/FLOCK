@@ -1,5 +1,7 @@
 # Plan to submission
 
+**Company: Noah's NY Bagels** (~56 California locations, mid-market). Data is simulated with `--profile ca_bagel_chain`.
+
 **Everyone: read this, then check your row in "Who's on what".** Submission: **Sunday Oct 25, 9:00 AM**. Judging 10:30 AM to 12:30 PM, full team at the table. Demo + pitch: 3 minutes.
 
 ## Where we are (on `main`)
@@ -98,7 +100,7 @@ One UI: the dashboard in this repo (`dashboard/`). If anyone has UI work in anot
 
 ## The 3-minute demo (draft)
 
-1. **0:00 to 0:30, plant the depth.** "A 56-store chain gets paid by four apps under four different deals. The same short payout can be right, wrong, or a judgment call depending on which contract or amendment was in effect." Show one finding where that's true.
+1. **0:00 to 0:30, plant the depth.** "Noah's NY Bagels: 56 California stores, paid by four apps under four different deals. The same short payout can be right, wrong, or a judgment call depending on which contract or amendment was in effect." Show one finding where that's true.
 2. **0:30 to 1:15, the year.** Hit run with Wi-Fi off. The progress bar goes through 1.24M orders; three local models judge; the board fills.
 3. **1:15 to 2:00, accountable.** Open one finding like a pull request: sources, the deal term in effect, judge votes and bets, the reviewer memo, the human decision, the journal entry. Show "Try as an agent" being refused.
 4. **2:00 to 2:30, it learns.** Week 1 sends N to a human; approve one rule; week 2 sends fewer. The operator judge lost credits for backing an unauthorized rep.

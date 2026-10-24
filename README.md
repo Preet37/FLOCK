@@ -4,12 +4,12 @@ Flock does the boring job a restaurant pays an accountant to do by hand: it take
 
 > **Team: read [`docs/PLAN.md`](docs/PLAN.md) now.** It has the plan to submission (Sun Oct 25, 9 AM), the GX10 + benchmark plan, the 3-minute demo, and who's on what. Updated Saturday Oct 24.
 
-**The problem (Dave's Hot Chicken, dozens of franchise stores):**
-- **What:** Dave's gets paid by four food apps (DoorDash, Uber Eats, Grubhub, its own app), and each one sends money and reports in a different, messy way.
-- **Why:** Each app has its own deal with Dave's (commission tiers, promos, refund rules), and none of them talk to each other or to Dave's register, bank or contracts.
-- **When:** Every week, when the payouts land as lump sums that never match what the stores actually sold.
-- **Where:** On a staff accountant's desk, stuck in four app portals, the register, the bank and a pile of spreadsheets.
-- **Why it matters:** Dave's pays someone to sort it all by hand. It's slow, and mistakes mean Dave's loses money it already earned.
+**The company: Noah's NY Bagels**, about 56 locations across California, a mid-market chain. All data in this repo is **simulated** (`--profile ca_bagel_chain`); no real Noah's records or contract terms are used.
+- **What:** the stores get paid by delivery apps (DoorDash, Uber Eats, Grubhub) and their own ordering channel, and each one sends money and reports in a different, messy way.
+- **Why:** each app has its own deal (commission tiers, promos, refund rules), and none of them talk to each other or to the register, bank or contracts.
+- **When:** every week, when the payouts land as lump sums that never match what the stores actually sold.
+- **Where:** on a staff accountant's desk, stuck in app portals, the register, the bank and a pile of spreadsheets.
+- **Why it matters:** someone gets paid to sort it all by hand. It's slow, and mistakes mean the company loses money it already earned.
 
 ## Read first
 
