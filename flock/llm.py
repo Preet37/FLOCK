@@ -12,6 +12,12 @@ Providers:
   nvidia     NVIDIA_API_KEY, FLOCK_NVIDIA_MODEL (default meta/llama-3.3-70b-instruct),
              FLOCK_NVIDIA_URL (default https://integrate.api.nvidia.com/v1, build.nvidia.com)
   anthropic  ANTHROPIC_API_KEY, FLOCK_MODEL (default claude-sonnet-5-5)
+  creao      CREAO's Developer Platform (developer.creao.ai): every Flock AI role runs as a hosted CREAO agent.
+             CREAO_API_KEY (cr_sk_...), FLOCK_CREAO_URL (default https://developer.creao.ai). The "model" slot of a
+             creao route is the CREAO agent id: by role from creao_agents.json (scripts/creao_setup.py --create writes
+             it; FLOCK_CREAO_AGENTS points elsewhere), or FLOCK_CREAO_AGENT for every role, or FLOCK_*_MODEL per role.
+             FLOCK_CREAO_LLM picks the model CREAO runs the agent on (e.g. anthropic/claude-haiku-5-5);
+             FLOCK_CREAO_MODE=async polls POST /v1/runs instead of the realtime NDJSON stream.
   offline    never call anything (same as leaving a key out)
 
 Which provider each role uses:
@@ -20,7 +26,8 @@ Which provider each role uses:
   FLOCK_REVIEWER_PROVIDER  second opinions + escalation memos (default anthropic)
   FLOCK_WRITER_PROVIDER    dispute drafts
   FLOCK_MAPPER_PROVIDER    column mappings for unseen report layouts
-  FLOCK_REVIEWER_MODEL / FLOCK_WRITER_MODEL / FLOCK_MAPPER_MODEL   optional model id for that role
+  FLOCK_READER_PROVIDER    the Deal Keeper's document reader (PDFs, free-text emails -> deal terms with quotes)
+  FLOCK_REVIEWER_MODEL / FLOCK_WRITER_MODEL / FLOCK_MAPPER_MODEL / FLOCK_READER_MODEL   optional model id for that role
   FLOCK_PROVIDER           default for judge/writer/mapper when their own variable is unset (default anthropic,
                            which is offline without ANTHROPIC_API_KEY: nothing set = offline rules)
 
@@ -63,8 +70,15 @@ OPENAI_COMPATIBLE = {
     "nvidia": ("FLOCK_NVIDIA_URL", "https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY", "FLOCK_NVIDIA_MODEL",
                "meta/llama-3.3-70b-instruct"),
 }
-PROVIDERS = ("local", "groq", "nvidia", "anthropic", "offline")
-ROLE_ENV = {"reviewer": "FLOCK_REVIEWER_PROVIDER", "writer": "FLOCK_WRITER_PROVIDER", "mapper": "FLOCK_MAPPER_PROVIDER"}
+PROVIDERS = ("local", "groq", "nvidia", "anthropic", "creao", "offline")
+ROLE_ENV = {"reviewer": "FLOCK_REVIEWER_PROVIDER", "writer": "FLOCK_WRITER_PROVIDER", "mapper": "FLOCK_MAPPER_PROVIDER",
+            "reader": "FLOCK_READER_PROVIDER"}
+
+CREAO_URL = "https://developer.creao.ai"
+CREAO_AGENTS_FILE = Path(__file__).resolve().parent.parent / "creao_agents.json"   # role -> CREAO agent id
+CREAO_ROLE_KEYS = {("judge", 0): "judge.strict", ("judge", 1): "judge.operator", ("judge", 2): "judge.skeptic"}
+CREAO_POLL_SECONDS = 1.0
+_credits: Counter = Counter()    # CREAO agent id -> credits reported by completed runs
 
 ANTHROPIC_URL = "https://api.anthropic.com"
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")  # CGNAT range Tailscale hands out (100.x.y.z)
@@ -99,12 +113,29 @@ def _pick(items: list[str], index: int, repeat_last: bool = True) -> str:
     return items[-1] if items and (repeat_last or len(items) == 1) else ""
 
 
-def default_model(provider: str) -> str:
+def creao_agents() -> dict[str, str]:
+    """role -> CREAO agent id, from creao_agents.json (or FLOCK_CREAO_AGENTS). Empty when nobody has run the setup."""
+    path = Path(os.environ.get("FLOCK_CREAO_AGENTS") or CREAO_AGENTS_FILE)
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    agents = data.get("agents", data) if isinstance(data, dict) else {}
+    return {k: str(v["agent_id"] if isinstance(v, dict) else v) for k, v in agents.items() if v}
+
+
+def creao_role_key(role: str, index: int = 0) -> str:
+    return CREAO_ROLE_KEYS.get((role, index), role)
+
+
+def default_model(provider: str, role: str = "default", index: int = 0) -> str:
     if provider == "anthropic":
         return model()
     if provider in OPENAI_COMPATIBLE:
         _, _, _, model_env, fallback = OPENAI_COMPATIBLE[provider]
         return os.environ.get(model_env) or fallback
+    if provider == "creao":  # the "model" of a creao route is the agent that plays this role
+        return creao_agents().get(creao_role_key(role, index)) or os.environ.get("FLOCK_CREAO_AGENT") or ""
     return ""
 
 
@@ -120,7 +151,7 @@ def route(role: str = "default", index: int = 0) -> tuple[str, str]:
         override = (os.environ.get(f"FLOCK_{role.upper()}_MODEL") or "").strip()
     else:
         provider = fallback
-    return provider, override or default_model(provider)
+    return provider, override or default_model(provider, role, index)
 
 
 def label(r: tuple[str, str]) -> str:
@@ -145,6 +176,8 @@ def available(r: tuple[str, str] | None = None) -> bool:
         return True  # chosen on purpose; no key needed. If it's unreachable, the call fails and says so.
     if provider in OPENAI_COMPATIBLE:
         return bool(os.environ.get(OPENAI_COMPATIBLE[provider][2]))
+    if provider == "creao":
+        return bool(os.environ.get("CREAO_API_KEY")) and bool(r[1])  # a key and an agent to run
     return True  # unknown name: let the call fail loudly so the audit trail records the typo
 
 
@@ -176,9 +209,15 @@ def host(provider: str) -> str:
         url = base_url(provider)
     elif provider == "anthropic":
         url = os.environ.get("ANTHROPIC_BASE_URL") or ANTHROPIC_URL
+    elif provider == "creao":
+        url = creao_url()
     else:
         return ""
     return (urlparse(url).hostname or "").lower()
+
+
+def creao_url() -> str:
+    return (os.environ.get("FLOCK_CREAO_URL") or CREAO_URL).rstrip("/")
 
 
 def _private_ip(text: str) -> bool:
@@ -239,6 +278,11 @@ def offline_reason(r: tuple[str, str]) -> str | None:
         return "no ANTHROPIC_API_KEY"
     if provider in OPENAI_COMPATIBLE and provider != "local" and not os.environ.get(OPENAI_COMPATIBLE[provider][2]):
         return f"no {OPENAI_COMPATIBLE[provider][2]}"
+    if provider == "creao":
+        if not os.environ.get("CREAO_API_KEY"):
+            return "no CREAO_API_KEY"
+        if not r[1]:
+            return "no CREAO agent for this role (python scripts/creao_setup.py --create, or FLOCK_CREAO_AGENT)"
     return None
 
 
@@ -252,6 +296,14 @@ def reset_calls() -> None:
     with _stats_lock:
         _calls.clear()
         _refused.clear()
+        _credits.clear()
+
+
+def creao_credits() -> dict[str, Any]:
+    """CREAO credits this process has spent, in total and per agent (from each completed run's usage.credits)."""
+    with _stats_lock:
+        by_agent = dict(_credits)
+    return {"credits": round(sum(by_agent.values()), 4), "by_agent": by_agent}
 
 
 def airgap_report() -> dict[str, Any]:
@@ -314,6 +366,121 @@ def _openai_chat(provider: str, model_id: str, system: str, user: str, max_token
     return (msg.get("content") or "").strip(), str(data.get("model") or model_id)
 
 
+
+# --- CREAO Developer Platform --------------------------------------------------------------------------------------
+
+class CreaoHTTPError(RuntimeError):
+    def __init__(self, code: int, error: str):
+        super().__init__(f"HTTP {code} from creao: {error}")
+        self.code, self.error = code, error
+
+
+def _creao_request(method: str, path: str, body: dict[str, Any] | None = None) -> bytes:
+    """One call to developer.creao.ai with the account key. Returns the raw body; raises CreaoHTTPError on 4xx/5xx."""
+    headers = {"Authorization": f"Bearer {os.environ.get('CREAO_API_KEY', '')}", "Accept": "application/json"}
+    data = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body).encode()
+    req = urllib.request.Request(creao_url() + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout()) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode(errors="replace") if e.fp else ""
+        try:
+            code = json.loads(raw).get("error") or raw[:120]
+        except ValueError:
+            code = raw[:120]
+        raise CreaoHTTPError(e.code, str(code)) from None
+
+
+def _creao_text(result: Any) -> str:
+    text = result.get("text") if isinstance(result, dict) else result
+    return (text if isinstance(text, str) else json.dumps(text)).strip() if text is not None else ""
+
+
+def _creao_realtime(body: dict[str, Any]) -> tuple[str, str]:
+    """POST /v1/realtime/runs: NDJSON, one event per line; the answer is the output_text deltas (or result.text)."""
+    raw = _creao_request("POST", "/v1/realtime/runs", body)
+    deltas, final, served, failed = [], None, "", None
+    for line in raw.decode(errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        kind = ev.get("type")
+        if kind == "run.created":
+            served = str(ev.get("model") or "")
+        elif kind == "output_text.delta":
+            deltas.append(str(ev.get("delta") or ""))
+        elif kind == "run.completed":
+            final = ev.get("result")
+            _creao_note_credits(body["agent_id"], ev.get("usage"))
+        elif kind in ("run.failed", "error"):
+            err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+            failed = str(err.get("code") or ev.get("code") or kind)
+            _creao_note_credits(body["agent_id"], ev.get("usage"))
+    if failed and final is None:
+        raise RuntimeError(f"creao run failed: {failed}")
+    text = "".join(deltas).strip() or _creao_text(final)
+    return text, f"creao:{served}" if served else "creao"
+
+
+def _creao_async(body: dict[str, Any]) -> tuple[str, str]:
+    """POST /v1/runs then poll GET /v1/runs/{run_id} until completed/failed/cancelled (bounded by FLOCK_LLM_TIMEOUT)."""
+    import time
+
+    run = json.loads(_creao_request("POST", "/v1/runs", body) or b"{}")
+    run_id = run.get("run_id")
+    if not run_id:
+        raise RuntimeError("creao: run was not created")
+    deadline = time.monotonic() + timeout()
+    while True:
+        status = json.loads(_creao_request("GET", f"/v1/runs/{run_id}") or b"{}")
+        state = status.get("status")
+        if state == "completed":
+            _creao_note_credits(body["agent_id"], status.get("usage"))
+            return _creao_text(status.get("result")), f"creao:{status.get('model') or ''}".rstrip(":")
+        if state in ("failed", "cancelled"):
+            err = status.get("error") if isinstance(status.get("error"), dict) else {}
+            raise RuntimeError(f"creao run {state}: {err.get('code') or ''}".strip())
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"creao run {run_id} still {state} after {timeout():.0f}s")
+        time.sleep(CREAO_POLL_SECONDS)
+
+
+def _creao_note_credits(agent_id: str, usage: Any) -> None:
+    try:
+        credits = float((usage or {}).get("credits") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return
+    if credits:
+        with _stats_lock:
+            _credits[agent_id] += credits
+
+
+def _creao_run(agent_id: str, system: str, user: str, max_tokens: int) -> tuple[str, str]:
+    """Run a Flock role as a hosted CREAO agent. The agent was created to treat `instructions` as its system prompt
+    and answer `request` with only the JSON the instructions ask for (scripts/creao_setup.py). max_tokens is
+    advisory: CREAO sizes its own replies."""
+    body: dict[str, Any] = {"agent_id": agent_id, "input": {"instructions": system, "request": user,
+                                                             "max_tokens": max_tokens}}
+    if os.environ.get("FLOCK_CREAO_LLM"):
+        body["model"] = os.environ["FLOCK_CREAO_LLM"]
+    _count("creao")
+    if (os.environ.get("FLOCK_CREAO_MODE") or "realtime").lower() != "async":
+        try:
+            return _creao_realtime(body)
+        except CreaoHTTPError as e:
+            if e.code not in (403, 404, 405):  # realtime not enabled for this account or route: poll instead
+                raise
+    return _creao_async(body)
+
+
 def complete(system: str, user: str, max_tokens: int, r: tuple[str, str] | None = None) -> tuple[str, str]:
     """One raw call: (reply text, the model id the server says answered). Raises on any failure."""
     provider, model_id = r or route()
@@ -322,6 +489,10 @@ def complete(system: str, user: str, max_tokens: int, r: tuple[str, str] | None 
         raise PermissionError(blocked)
     if provider in OPENAI_COMPATIBLE:
         return _openai_chat(provider, model_id, system, user, max_tokens)
+    if provider == "creao":
+        if not model_id:
+            raise ValueError("creao: no agent id for this role (scripts/creao_setup.py --create)")
+        return _creao_run(model_id, system, user, max_tokens)
     if provider != "anthropic":
         raise ValueError(f"unknown provider {provider!r} (use one of {', '.join(PROVIDERS)})")
     _count(provider)

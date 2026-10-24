@@ -88,6 +88,10 @@ CONTESTANTS: dict[str, dict[str, Any]] = {
                     "env": {"FLOCK_JUDGE_PROVIDERS": "local", "FLOCK_JUDGE_MODELS": "${TUNED}",
                             "FLOCK_REVIEWER_PROVIDER": "offline", "FLOCK_WRITER_PROVIDER": "offline",
                             "FLOCK_MAPPER_PROVIDER": "offline"}},
+    "creao": {"label": "CREAO hosted agents", "offline": False,
+              "needs": "CREAO_API_KEY and creao_agents.json (python scripts/creao_setup.py --create)",
+              "env": {"FLOCK_JUDGE_PROVIDERS": "creao", "FLOCK_REVIEWER_PROVIDER": "offline",
+                      "FLOCK_WRITER_PROVIDER": "offline", "FLOCK_MAPPER_PROVIDER": "offline"}},
     "groq": {"label": "Groq, Llama 3.3 70B", "offline": False, "needs": "GROQ_API_KEY",
              "env": {"FLOCK_JUDGE_PROVIDERS": "groq", "FLOCK_REVIEWER_PROVIDER": "offline",
                      "FLOCK_WRITER_PROVIDER": "offline", "FLOCK_MAPPER_PROVIDER": "offline"}},
@@ -295,6 +299,7 @@ def judge(name: str, prepared: dict[str, Any], env: dict[str, str], prices: dict
                        to_human=0, p50_s=None, p95_s=None, per_minute=None, cost_per_1000=None, fallbacks=0, models={})
             return row
         meter = Meter()
+        credits_before = llm.creao_credits()["credits"]
         latencies: list[float] = []
         judged: list[dict[str, Any]] = []
 
@@ -313,6 +318,7 @@ def judge(name: str, prepared: dict[str, Any], env: dict[str, str], prices: dict
                 judged = [one(f) for f in findings]
         wall = time.monotonic() - wall
         row["models"] = meter.models
+        row["credits"] = round(llm.creao_credits()["credits"] - credits_before, 4)  # CREAO only; 0 elsewhere
     fallbacks = sum(1 for f in judged for v in f.get("votes", []) if v.get("fallback"))
     live_votes = sum(len(f.get("votes", [])) for f in judged)
     s = scoreboard.score(_Memory(judged), verbose=False, runs_path=prepared["dir"] / "no_runs.jsonl",
@@ -330,6 +336,8 @@ def judge(name: str, prepared: dict[str, Any], env: dict[str, str], prices: dict
         row.update(status="unreachable", note="every vote fell back to the offline rules; the model never answered")
     elif fallbacks:
         row["note"] = f"{fallbacks} of {live_votes} votes fell back to the offline rules after an API error"
+    if row.get("credits"):
+        row["note"] = (row.get("note") + "; " if row.get("note") else "") + f"{row['credits']} CREAO credits"
     return row
 
 

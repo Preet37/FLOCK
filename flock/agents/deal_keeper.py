@@ -1,6 +1,6 @@
 """Deal Keeper (owner: Thabhelo). The contract manager: what deal was actually in effect, and says so with a quote.
 
-IN:  data/raw/contracts/*, data/raw/emails/*  (later: read by a local model on the GX10, see DOCUMENT_READER)
+IN:  data/raw/contracts/*, data/raw/emails/*  (PDF text and free-text emails go through the 'reader' model role)
 OUT: list of deal terms (CONTRACT.md "Deal term"), each with quote + authority
 
 Authority, strongest first: contract > amendment > auth_email > unauth_email > call_note.
@@ -66,7 +66,8 @@ Value meaning per term_type (what the checkers expect):
   tax_rule     "platform_remits" (platform collected the tax; merchant payout must not be cut for it) | "merchant_remits"
   error_window hours after delivery within which an error charge may be billed (proposed term_type; default 72)
 
-Files without structured fields (PDFs, free-text emails) go to DOCUMENT_READER (the GX10 local-model hook).
+Files without structured fields (PDFs, free-text emails) go to DOCUMENT_READER: the 'reader' model role
+(FLOCK_READER_PROVIDER: local on the GX10, creao, anthropic). Offline they are listed as unread, never guessed.
 """
 from __future__ import annotations
 
@@ -104,11 +105,42 @@ def resolve(claims: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[d
 
 
 # reading documents -----------------------------------------------------------
+READER_SYSTEM = (
+    "You read one restaurant delivery document (a platform contract, an amendment, a rep email or a call note) and "
+    "return the deal terms it states, as JSON. Never do arithmetic; copy numbers as written. Return "
+    '{"claims": [{"channel": "doordash|ubereats|grubhub|direct_app|all", "term_type": "commission|promo_split|fee|'
+    'tax_rule|error_window", "store_id": "S01 or all", "value": <number, fraction for percentages, or a string>, '
+    '"promo_code": "optional", "effective_from": "YYYY-MM-DD or null", "effective_to": "YYYY-MM-DD or null", '
+    '"quote": "the exact sentence from the document", "authority": "contract|amendment|auth_email|unauth_email|'
+    'call_note|unknown"}]}. authority: a signed contract is contract; a signed amendment is amendment; an email from '
+    "someone whose title gives them authority to change terms is auth_email; any other rep email is unauth_email; "
+    "a call note is call_note; if you cannot tell, unknown. If the document states no deal terms, return "
+    '{"claims": []}.'
+)
+VALID_AUTHORITY = set(AUTHORITY_RANK) | {"unknown"}
+TERM_TYPES = {"commission", "promo_split", "fee", "tax_rule", "error_window"}
+
+
 def read_with_local_model(path: Path, text: str) -> list[dict[str, Any]]:
-    """HOOK (GX10): read a contract/email the simple parser can't, return claims in the term shape
-    (term_type, store_id, value, effective_from, effective_to, quote, authority). The quote must be exact text
-    from the document. Not built yet: returns nothing, so unreadable files are listed by unread_files()."""
-    return []
+    """Read a contract/email the simple parser can't (PDF text, free-text email) with whichever model the "reader"
+    role points at (FLOCK_READER_PROVIDER: local on the GX10, creao, anthropic...). Returns claims in the term shape
+    (channel, term_type, store_id, value, effective_from, effective_to, quote, authority); the quote is the model's
+    exact excerpt. Offline, or when the model fails, returns nothing and the file is listed by unread_files()."""
+    from flock import llm  # here, not at the top: the deal keeper is otherwise model-free
+
+    r = llm.route("reader")
+    if not text.strip() or not llm.available(r):
+        return []
+    user = json.dumps({"file": path.name, "text": text[:60000]})
+    got, _err = llm.call_json(READER_SYSTEM, user, max_tokens=1500, r=r)
+    claims = (got or {}).get("claims") if isinstance(got, dict) else None
+    out = []
+    for c in claims or []:
+        if not isinstance(c, dict) or c.get("term_type") not in TERM_TYPES or "value" not in c:
+            continue
+        auth = c.get("authority")
+        out.append({**c, "authority": auth if auth in VALID_AUTHORITY and auth != "unknown" else None})
+    return out
 
 
 DOCUMENT_READER: Callable[[Path, str], list[dict[str, Any]]] = read_with_local_model
