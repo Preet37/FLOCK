@@ -1,0 +1,12 @@
+{
+  "kind": "email",
+  "from": "partner-manager@grubhub.example",
+  "sender_authorized": true,
+  "channel": "grubhub",
+  "sent_at": "2026-09-28T09:00:00",
+  "body": "Confirming: the order processing fee is waived for store S02 for all of October while the kitchen is remodeled.",
+  "claims": [
+    {"term_type": "fee", "store_id": "S02", "value": 0, "effective_from": "2026-10-01", "effective_to": "2026-10-31",
+     "quote": "the order processing fee is waived for store S02 for all of October"}
+  ]
+}

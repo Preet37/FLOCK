@@ -1,0 +1,5 @@
+error_charge_id,channel,store_id,platform_order_id,order_id,amount,reason,delivered_at,reported_at,payout_id,source_file,source_row
+E1,doordash,S01,DD-1002,ORD-2002,8.4,missing item,2026-10-02T19:00:00,2026-10-06T04:00:00,DD-PAY-W1,data/raw/test/std_error_charges.csv,2
+E2,doordash,S01,DD-1003,ORD-2003,6.0,cold food,2026-10-02T19:40:00,2026-10-02T21:00:00,DD-PAY-W1,data/raw/test/std_error_charges.csv,3
+E3,doordash,S01,DD-1003,,6.0,cold food,2026-10-02T19:40:00,2026-10-02T21:05:00,DD-PAY-W1,data/raw/test/std_error_charges.csv,4
+E4,doordash,S01,DD-1004,ORD-2004,11.2,wrong order handed to Dasher,2026-10-03T19:30:00,2026-10-03T21:30:00,DD-PAY-W1,data/raw/test/std_error_charges.csv,5

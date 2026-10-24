@@ -22,12 +22,25 @@ CHECKER = Actor(id="checkers", role="agent")
 DEMO_HUMAN = Actor(id="demo-controller", role="human")
 
 
-def detect() -> tuple[list[dict], str]:
-    tables = formatter.format_all()
+OPTIONAL_TABLES = ("error_charges", "refunds")  # extra std tables the checkers use when the formatter writes them
+
+
+def detect_real() -> list[dict]:
+    """Matcher + Deal Keeper + Checkers on data/std/ and data/raw/{contracts,emails}. Empty list if no data yet."""
+    tables = dict(formatter.format_all())
+    for name in OPTIONAL_TABLES:
+        p = formatter.STD / f"{name}.csv"
+        if p.exists():
+            tables[name] = p
     stories, match_findings = matcher.match(tables)
     terms = deal_keeper.extract_terms()
     found = [f.to_dict() for f in match_findings]
-    found += [f.to_dict() for f in checkers.run_all(stories, lambda s: {})] if stories and terms else []
+    found += [f.to_dict() for f in checkers.run_all(stories, lambda s: deal_keeper.terms_for(terms, s))]
+    return found
+
+
+def detect() -> tuple[list[dict], str]:
+    found = detect_real()
     if found:
         return found, "real data (data/std)"
     fixtures = json.loads(FIXTURES.read_text())

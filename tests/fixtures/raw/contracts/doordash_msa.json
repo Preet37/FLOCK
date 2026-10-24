@@ -1,0 +1,16 @@
+{
+  "doc_type": "contract",
+  "channel": "doordash",
+  "effective_from": "2026-01-01",
+  "effective_to": null,
+  "terms": [
+    {"term_type": "commission", "store_id": "all", "value": 0.20, "quote": "Marketplace commission: 20% of subtotal"},
+    {"term_type": "tax_rule", "store_id": "all", "value": "platform_remits",
+     "quote": "DoorDash collects and remits sales tax as the marketplace facilitator"},
+    {"term_type": "error_window", "store_id": "all", "value": 72,
+     "quote": "Errors reported 72 hours or more after delivery are not charged to the merchant"},
+    {"term_type": "promo_split", "store_id": "all", "value": 1.0, "promo_code": "SPICY20",
+     "effective_from": "2026-10-01", "effective_to": "2026-10-07",
+     "quote": "SPICY20 runs Oct 1 to Oct 7, funded 100% by Merchant"}
+  ]
+}
