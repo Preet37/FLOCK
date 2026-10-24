@@ -108,6 +108,21 @@ FLOCK_ATTENTION_BUDGET=1 python -m flock.pipeline --reset --demo-approve   # see
 
 Ledger: `data/state/market_ledger.jsonl` (append-only; balances are derived from it). Dashboard: the "Judge market" tab.
 
+## The flock (live agents, each with a job)
+
+Every agent writes spawn / working / done events to an append-only feed through the store
+(`store.agent_event()`, `data/state/agent_status.jsonl`; `flock/agents_live.py`): a **worker** per store (match +
+check), the deposit **checker**, a **judge** panel per finding, a **writer** per drafted dispute, **Clicky**, the
+**journal** drafter and the **learner**. An **investigator** sub-agent is spawned only when a finding can't be
+explained: a deposit or missing-order gap with a single source behind it (child of the store's worker), or a conflict
+sent to a human with no review memo (child of its judge). It gathers the payout's other lines, nearby bank deposits,
+the store's history for that check and every deal claim for the term (binding or not), and attaches a short
+`case_file` through the gatekeeper (`investigate`, an annotation that may only write `case_file`: it never changes an
+outcome or a dollar). Summary by the `writer` model route when configured, else a template. At most
+`FLOCK_INVESTIGATORS` (default 4) run at once. Past 150 agents of one role the rest are pooled into one counter, so a
+year of data stays a few hundred feed lines. Dashboard: the "Flock" tab (`GET /api/agents?since=<cursor>`), and the
+case file on a finding's page.
+
 ## Data (generator -> collector -> formatter)
 
 ```bash
@@ -227,6 +242,7 @@ flock/llm.py           model providers (local/vLLM/Ollama, Groq, NVIDIA, Claude)
 flock/pipeline.py      runs everything end to end
 flock/scan.py          year-scale detection: split std tables by store, match + check in parallel
 flock/progress.py      progress reporter: terminal bar + data/state/progress.json (dashboard progress bar)
+flock/agents_live.py   the live flock: agent status feed (spawn/working/done), tracker, pooling, /api/agents snapshot
 flock/demo.py          live seed demo: generate -> collect -> pipeline -> score, then restore
 profiles/              company profiles for the generator (default, ca_bagel_chain: simulated)
 flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into

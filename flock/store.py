@@ -18,13 +18,16 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from flock import agents_live
+
 ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = ROOT / "data" / "state"
 
 
 @runtime_checkable
 class Store(Protocol):
-    """The six methods every backend implements. Nothing else in Flock touches storage."""
+    """The six methods every backend implements, plus the live agent feed (two methods with no-op defaults, so a
+    backend without it still works: flock.agents_live also checks with getattr). Nothing else in Flock touches storage."""
 
     def get(self, finding_id: str) -> dict[str, Any]:
         """One finding by id. Raises KeyError if it doesn't exist."""
@@ -44,6 +47,15 @@ class Store(Protocol):
     def reset(self) -> None:
         """Wipe findings and the log (fresh demo run only)."""
 
+    # live agent feed (flock/agents_live.py) -----------------------------------------------------------------
+    def agent_event(self, event: dict[str, Any]) -> None:
+        """Append one agent status event (spawn / working / done / failed). Default: dropped."""
+        return None
+
+    def agents(self, since: int | None = None) -> list[dict[str, Any]]:
+        """Agent status events, oldest first, each with a `seq`; since=N skips the first N. Default: none."""
+        return []
+
 
 class JsonStore:
     def __init__(self, state_dir: Path = STATE_DIR):
@@ -56,6 +68,7 @@ class JsonStore:
         self._pending: list[str] = []
         self._flushed = 0.0
         self._every = 0.5
+        self.feed = agents_live.Feed(self.dir / agents_live.STATE_NAME)
 
     # batching (not part of the Store protocol: a speed-up for big runs) -----------------------------
     @contextmanager
@@ -68,12 +81,15 @@ class JsonStore:
             return
         with self._lock:
             self._cache, self._pending, self._every, self._flushed = self._read(), [], flush_every, time.monotonic()
+            self.feed.buffered, self.feed.every = True, flush_every
         try:
             yield self
         finally:
             with self._lock:
                 self._flush()
                 self._cache = None
+            self.feed.buffered = False
+            self.feed.flush()
 
     def _flush(self) -> None:
         if self._cache is not None:
@@ -155,6 +171,18 @@ class JsonStore:
         for p in (self.findings_path, self.log_path):
             if p.exists():
                 p.unlink()
+        self.feed.reset()
+
+    # live agent feed: agent_status.jsonl, buffered like the log inside batch() --------------------------------
+    def agent_event(self, event: dict[str, Any]) -> None:
+        self.feed.add(event)
+
+    def agents(self, since: int | None = None) -> list[dict[str, Any]]:
+        return self.feed.read(since)
+
+    def flush_agents(self) -> None:
+        """Write buffered agent events now (not part of the protocol: the tracker calls it after a burst)."""
+        self.feed.flush()
 
 
 class SpacetimeStore:
@@ -165,10 +193,12 @@ class SpacetimeStore:
         findings      finding_id (pk), state, channel, check_type, gap, outcome, ... plus the full row as JSON
         audit_log     id (auto-inc pk), at, actor, role, action, subject_id, allowed, before, after, diff,
                       reason, evidence. Insert-only: no reducer updates or deletes rows here.
-        agent_status  agent_id (pk), state (idle|running|done), current_finding, updated_at.
-                      Written by the pipeline so the live board can show which agent is working.
+        agent_status  seq (auto-inc pk), at, run, event (spawn|working|done|failed), agent_id, role, parent_id,
+                      subject, started, ended, summary (+ pooled, count, done, failed). Insert-only, written through
+                      agent_event(); agents(since) reads seq >= since. flock/agents_live.py folds it into the tree.
       Reducers
         put_new(finding)               insert into findings; state must be NEW
+        agent_event(event)             insert into agent_status (the live Flock view)
         commit(finding | null, entry)  upsert the finding (if allowed) and insert the log entry in ONE reducer
                                        call, so the change and its audit row land in the same transaction
         reset()                        demo only; clears findings + audit_log

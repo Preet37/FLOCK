@@ -226,7 +226,9 @@ def test_over_budget_escalations_are_deferred_never_decided(paths):
     assert f4["attention"]["status"] == "deferred"
     assert f3["state"] == "REJECTED"                                   # the human spent the one token
     assert (f4["state"], f4["outcome"]) == ("JUDGED", "conflict")      # still waiting for a human
-    assert [e["role"] for e in store.log("F-0004")] == ["agent", "agent"]  # check + judge only, nothing decided it
+    # check + judge (+ the investigator's case file, an annotation) only: nothing decided it
+    assert [(e["role"], e["action"]) for e in store.log("F-0004")] == [
+        ("agent", "check"), ("agent", "judge"), ("agent", "investigate")]
     assert len(market.open_bets(store, "F-0004")) == 3
 
 

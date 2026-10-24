@@ -6,10 +6,10 @@ import pytest
 from flock.models import Finding
 from flock.store import JsonStore, SpacetimeStore, Store, get_store
 
-METHODS = ["get", "all", "put_new", "commit", "log", "reset"]
+METHODS = ["get", "all", "put_new", "commit", "log", "reset", "agent_event", "agents"]
 
 
-def test_protocol_lists_the_six_methods():
+def test_protocol_lists_the_six_methods_plus_the_agent_feed():
     assert sorted(m for m in vars(Store) if not m.startswith("_")) == sorted(METHODS)
 
 

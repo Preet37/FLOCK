@@ -22,12 +22,20 @@ TRANSITIONS: dict[tuple[str, str], tuple[str, set[str]]] = {
     ("FILED", "recover"): ("RECOVERED", {"human", "gatekeeper"}),
 }
 
-# Actions that change fields but not state (e.g. ranker scoring, dispute writer drafting).
-# Still logged through transition(). (state, action) -> roles allowed.
+# Actions that change fields but not state (e.g. ranker scoring, dispute writer drafting, an investigator attaching
+# a case file). Still logged through transition(). (state, action) -> roles allowed.
 ANNOTATIONS: dict[tuple[str, str], set[str]] = {
+    ("CHECKED", "investigate"): {"agent"},
+    ("JUDGED", "investigate"): {"agent"},
     ("JUDGED", "rank"): {"agent"},
     ("JUDGED", "draft"): {"agent"},
     ("APPROVED", "draft"): {"agent"},
+}
+
+# Annotations that may only write certain fields. Anything else in the patch is denied (and logged): an
+# investigator adds evidence for the human, it can never touch outcome, gap or any money field.
+ANNOTATION_FIELDS: dict[str, set[str]] = {
+    "investigate": {"case_file"},
 }
 
 
@@ -82,6 +90,7 @@ class Machine:
     transitions: dict[tuple[str, str], tuple[str, set[str]]]
     annotations: dict[tuple[str, str], set[str]] = field(default_factory=dict)
     guard: Callable[[dict[str, Any], str], str | None] | None = None
+    fields: dict[str, set[str]] = field(default_factory=dict)   # action -> the only fields its patch may write
 
 
 def _je_guard(je: dict[str, Any], action: str) -> str | None:
@@ -95,5 +104,5 @@ def _je_guard(je: dict[str, Any], action: str) -> str | None:
     return None
 
 
-FINDING = Machine("finding", "finding_id", TRANSITIONS, ANNOTATIONS)
+FINDING = Machine("finding", "finding_id", TRANSITIONS, ANNOTATIONS, fields=ANNOTATION_FIELDS)
 JOURNAL = Machine("journal_entry", "je_id", JE_TRANSITIONS, guard=_je_guard)

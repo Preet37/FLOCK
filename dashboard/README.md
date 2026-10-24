@@ -27,7 +27,13 @@ Screens, in demo order:
    and clickable source rows, plus the entry's audit trail and "Try as an agent".
 5. **Scoreboard** (`#/score`): `scripts/score.py` (caught, missed, false alarms, dollars, each trap vs the answer key)
    plus human hand-offs by week from `data/state/runs.jsonl`.
-5. **Judge market** (`#/market`): judge balances with sparkline history and weight share, recent bets and settlements
+6. **Flock** (`#/flock`): every agent of the latest run with its job, colored by role: counts per role (active /
+   done / failed), who is working right now, and the tree of who spawned whom (worker per store, then a judge per
+   finding, then the writer or investigator under it; leaves shown as chips that link to the finding). Polls
+   `GET /api/agents?since=<cursor>` every second and redraws only when an agent changed. A finding's page shows its
+   investigator's **case file** (summary, facts, the payout, nearby deposits, every claim for the term) and the agents
+   that worked on it.
+7. **Judge market** (`#/market`): judge balances with sparkline history and weight share, recent bets and settlements
    from `data/state/market_ledger.jsonl`, attention budget used / remaining, and deferred escalations. Deferred
    conflicts also show (dashed) at the bottom of the Human queue; a FILED finding's page has "Mark recovered".
 
@@ -46,6 +52,7 @@ findings as the gatekeeper.
 | GET | `/api/queue` | JUDGED findings waiting on a person (conflicts first, by attention rank; deferred last) |
 | GET | `/api/findings/<id>` | finding, its log, the human decision, denied attempts, rule applied, portal entry |
 | POST | `/api/findings/<id>/approve`, `/reject` or `/recover` | body `{"actor": "ira", "reason": "...", "role": "human"}`. 403 + logged if denied. Allowed moves settle the judges' bets |
+| GET | `/api/agents?since=N` | the live flock: `counts` per role, `active`, `agents` changed since cursor N (all on a new run: `reset`), `cursor` |
 | GET | `/api/market` | judge leaderboard (balance, weight, history, record), recent ledger entries, attention budget + deferred |
 | POST | `/api/file-approved` | Clicky files APPROVED disputes (gatekeeper transition) |
 | GET | `/api/rules` | proposed + approved learned rules |
