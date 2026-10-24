@@ -1,0 +1,8 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+data/state/
+data/sandbox_portal/
+rules.json
+.pytest_cache/

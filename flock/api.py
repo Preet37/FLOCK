@@ -18,7 +18,8 @@ Write (humans only; every write still goes through the gatekeeper):
   POST /api/rules/<id>/approve        {"actor": "thabhelo"}
   POST /api/run                       {"reset": true, "forget": false, "demo_approve": false}
 
-Any origin may call it (CORS *). It is a localhost dev server for the dashboard, nothing more.
+Hosting: set FLOCK_API_TOKEN and every POST must carry "Authorization: Bearer <token>" (reads stay open).
+Set FLOCK_CORS_ORIGIN to the dashboard's origin to narrow CORS from "*". PORT and HOST are read from the env.
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -74,6 +76,8 @@ JUDGES = [
 ]
 
 PORTAL = ROOT / "data" / "sandbox_portal" / "disputes.jsonl"
+TOKEN = os.environ.get("FLOCK_API_TOKEN", "")
+CORS_ORIGIN = os.environ.get("FLOCK_CORS_ORIGIN", "*")
 
 
 def _jsonl(path: Path) -> list[dict[str, Any]]:
@@ -143,8 +147,9 @@ class Handler(BaseHTTPRequestHandler):
         data = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
+        self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -181,9 +186,16 @@ class Handler(BaseHTTPRequestHandler):
         except KeyError as e:
             self._send(404, {"error": f"not found: {e}"})
 
+    def _authorized(self) -> bool:
+        if not TOKEN:
+            return True
+        return self.headers.get("Authorization", "") == f"Bearer {TOKEN}"
+
     def do_POST(self) -> None:  # noqa: N802
         parts = [p for p in urlparse(self.path).path.split("/") if p]
         a = self.api
+        if not self._authorized():
+            return self._send(401, {"error": "This backend needs a token. Add it in the dashboard (Authorization: Bearer ...)."})
         try:
             body = self._body()
             if len(parts) == 4 and parts[:2] == ["api", "findings"] and parts[3] in ("approve", "reject"):
@@ -211,7 +223,7 @@ def serve(host: str = "127.0.0.1", port: int = 8787) -> None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8787")))
     a = ap.parse_args()
     serve(a.host, a.port)
