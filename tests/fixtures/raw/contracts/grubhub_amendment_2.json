@@ -1,0 +1,9 @@
+{
+  "doc_type": "amendment",
+  "channel": "grubhub",
+  "effective_from": "2026-09-01",
+  "terms": [
+    {"term_type": "promo_split", "store_id": "all", "value": 0.5, "promo_code": "BOGO",
+     "quote": "BOGO promotions funded 50/50 by Grubhub and Merchant"}
+  ]
+}

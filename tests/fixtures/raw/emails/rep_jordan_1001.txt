@@ -1,0 +1,12 @@
+From: jordan@ubereats.example
+Authorized: no
+Kind: email
+Channel: ubereats
+Term-Type: fee
+Store: all
+Value: 0
+Effective-From: 2026-10-01
+Effective-To: 2026-10-31
+
+No worries, we'll waive the tablet fee for October.
+Thanks for being a great partner!

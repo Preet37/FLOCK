@@ -1,0 +1,15 @@
+payout_line_id,channel,store_id,platform_order_id,order_id,gross,commission,promo_merchant_funded,error_charge,tax_withheld_by_platform,other_fees,net,payout_id,payout_date,placed_at,promo_code,promo_total,source_file,source_row
+L1,doordash,S01,DD-1001,ORD-2001,20.0,5.0,0,0,0,0,15.00,DD-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,2
+L2,doordash,S01,DD-1002,ORD-2002,25.0,5.0,0,8.4,0,0,11.60,DD-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,3
+L3,doordash,S01,DD-1003,ORD-2003,30.0,6.0,0,12.0,0,0,12.00,DD-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,4
+L4,doordash,S01,DD-1004,ORD-2004,10.0,2.0,0,11.2,0,0,-3.20,DD-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,5
+L5,doordash,S01,DD-1005,ORD-2005,40.0,8.0,0,0,3.5,0,28.50,DD-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,6
+L6,doordash,S01,DD-1006,ORD-2006,24.0,4.8,4.0,0,0,0,15.20,DD-PAY-W2,2026-10-16,,SPICY20,4.00,data/raw/test/std_payout_lines.csv,7
+L7,grubhub,S01,GH-1007,ORD-2007,28.0,4.2,14.0,0,0,1.5,8.30,GH-PAY-W1,2026-10-09,,BOGO,14.00,data/raw/test/std_payout_lines.csv,8
+L8,grubhub,S02,GH-1008,ORD-2008,18.0,2.7,0,0,0,1.5,13.80,GH-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,9
+L9,ubereats,S01,UE-1009,ORD-2009,20.0,5.0,0,0,0,2.0,13.00,UE-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,10
+L10,doordash,S01,DD-X99,,15.0,3.0,0,0,0,0,12.00,DD-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,11
+L11,direct_app,S01,DA-1011,ORD-2011,22.0,0,0,10.0,0,0,12.00,DA-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,12
+L12,doordash,S01,DD-1012,ORD-2012,19.99,4.01,0,0,0,0,15.98,DD-PAY-W1,2026-10-09,,,,data/raw/test/std_payout_lines.csv,13
+L13,doordash,S01,DD-7713,,16.0,3.2,0,0,0,0,12.80,DD-PAY-W1,2026-10-09,2026-10-03T12:20:00,,,data/raw/test/std_payout_lines.csv,14
+L14,doordash,S01,DD-1014,ORD-2014,30.0,6.0,0,0,0,0,24.00,DD-PAY-W2,2026-10-16,,,,data/raw/test/std_payout_lines.csv,15

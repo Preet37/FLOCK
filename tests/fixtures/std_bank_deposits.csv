@@ -1,0 +1,5 @@
+deposit_id,channel,amount,deposit_date,memo,source_file,source_row
+DEP-1,doordash,143.88,2026-10-17,DOORDASH PAYOUT,data/raw/test/std_bank_deposits.csv,2
+DEP-2,grubhub,17.10,2026-10-12,GRUBHUB INC,data/raw/test/std_bank_deposits.csv,3
+DEP-3,ubereats,13.00,2026-10-11,UBER EATS,data/raw/test/std_bank_deposits.csv,4
+DEP-4,direct_app,12.00,2026-10-10,STRIPE DA-PAY-W1,data/raw/test/std_bank_deposits.csv,5

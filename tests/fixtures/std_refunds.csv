@@ -1,0 +1,2 @@
+refund_id,channel,store_id,order_id,amount,status,money_moved,source_file,source_row
+R1,direct_app,S01,ORD-2011,10.0,initiated,,data/raw/test/std_refunds.csv,2

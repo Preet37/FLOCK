@@ -1,0 +1,9 @@
+{
+  "doc_type": "contract",
+  "channel": "ubereats",
+  "effective_from": "2026-01-01",
+  "terms": [
+    {"term_type": "commission", "store_id": "all", "value": 0.25, "quote": "Service fee: 25% of subtotal"},
+    {"term_type": "fee", "store_id": "all", "value": 2.00, "quote": "Tablet fee: $2.00 per order"}
+  ]
+}

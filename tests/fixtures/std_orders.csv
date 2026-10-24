@@ -1,0 +1,16 @@
+order_id,store_id,channel,placed_at,subtotal,tax,promo_code,source_file,source_row
+ORD-2001,S01,doordash,2026-10-01T18:00:00,20.0,1.8,,data/raw/test/std_orders.csv,2
+ORD-2002,S01,doordash,2026-10-02T18:30:00,25.0,2.25,,data/raw/test/std_orders.csv,3
+ORD-2003,S01,doordash,2026-10-02T19:00:00,30.0,2.7,,data/raw/test/std_orders.csv,4
+ORD-2004,S01,doordash,2026-10-03T19:00:00,10.0,1.2,,data/raw/test/std_orders.csv,5
+ORD-2005,S01,doordash,2026-10-04T12:00:00,40.0,3.5,,data/raw/test/std_orders.csv,6
+ORD-2006,S01,doordash,2026-10-10T12:00:00,24.0,2.16,SPICY20,data/raw/test/std_orders.csv,7
+ORD-2007,S01,grubhub,2026-10-05T13:00:00,28.0,2.52,BOGO,data/raw/test/std_orders.csv,8
+ORD-2008,S02,grubhub,2026-10-06T13:00:00,18.0,1.62,,data/raw/test/std_orders.csv,9
+ORD-2009,S01,ubereats,2026-10-06T20:00:00,20.0,1.8,,data/raw/test/std_orders.csv,10
+ORD-2010,S01,doordash,2026-10-05T17:00:00,18.75,1.69,,data/raw/test/std_orders.csv,11
+ORD-2011,S01,direct_app,2026-10-05T18:00:00,22.0,1.98,,data/raw/test/std_orders.csv,12
+ORD-2012,S01,doordash,2026-10-06T18:00:00,19.99,1.8,,data/raw/test/std_orders.csv,13
+ORD-2013,S01,doordash,2026-10-03T12:00:00,16.0,1.44,,data/raw/test/std_orders.csv,14
+ORD-2014,S01,doordash,2026-10-12T18:00:00,30.0,2.7,,data/raw/test/std_orders.csv,15
+ORD-2015,S01,instore,2026-10-05T12:00:00,12.0,1.08,,data/raw/test/std_orders.csv,16

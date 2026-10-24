@@ -1,0 +1,11 @@
+{
+  "doc_type": "contract",
+  "channel": "grubhub",
+  "effective_from": "2026-01-01",
+  "terms": [
+    {"term_type": "commission", "store_id": "all", "value": "15%", "quote": "Commission: 15% of food subtotal"},
+    {"term_type": "fee", "store_id": "all", "value": "$1.50", "quote": "Order processing fee: $1.50 per order"},
+    {"term_type": "promo_split", "store_id": "all", "value": 1.0, "promo_code": "BOGO",
+     "quote": "Merchant funds 100% of merchant-created promotions"}
+  ]
+}
