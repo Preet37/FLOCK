@@ -2,6 +2,8 @@
 
 Flock does the boring job a restaurant pays an accountant to do by hand: it takes the messy money reports from DoorDash, Uber Eats, Grubhub and the restaurant's own app, sorts them into one place, and checks them, faster and cheaper than a person can.
 
+> **Team: read [`docs/PLAN.md`](docs/PLAN.md) now.** It has the plan to submission (Sun Oct 25, 9 AM), the GX10 + benchmark plan, the 3-minute demo, and who's on what. Updated Saturday Oct 24.
+
 **The problem (Dave's Hot Chicken, dozens of franchise stores):**
 - **What:** Dave's gets paid by four food apps (DoorDash, Uber Eats, Grubhub, its own app), and each one sends money and reports in a different, messy way.
 - **Why:** Each app has its own deal with Dave's (commission tiers, promos, refund rules), and none of them talk to each other or to Dave's register, bank or contracts.
@@ -15,6 +17,7 @@ Flock does the boring job a restaurant pays an accountant to do by hand: it take
 | --- | --- |
 | `FLOCK_CONTEXT.md` | Everything: problem, money flow, research, numbers, pitch, agents, 17 edge cases, team prompts, demo plan, timeline. Paste it into Claude at the start of a session. |
 | `CONTRACT.md` | Shared data shapes (order row, payout line, bank deposit, deal term, finding) and the state machine. Build to this. |
+| `docs/PLAN.md` | **The plan:** what's next, the benchmark (trained model vs human vs frontier), timeline, demo script, who's on what. |
 | `docs/hyphenate-track.md` | What the Hyphenate judges want: criteria, workshop notes, the speaker's advice. |
 | `docs/sponsor-tracks.md` | Sponsor track rules, submission checklist, schedule. **Submit by Sun Oct 25, 9:00 AM.** |
 | `docs/pipeline-sketch.png` | The team's original hand-drawn pipeline. |
@@ -195,14 +198,14 @@ import CSV to `data/exports/`. Approve and post are gatekeeper transitions in th
 Until real data exists, the pipeline runs on `fixtures/fake_findings.json` (6 findings) scored against `data/answer_key.csv`.
 As soon as `data/std/` has real tables and the matcher/checkers return findings, the pipeline switches to real data automatically.
 
-## Who owns what, and where to start
+## Who owns what (updated Saturday Oct 24; details in `docs/PLAN.md`)
 
-| Who | Files | Your first step |
+| Who | Now working on | Owns |
 | --- | --- | --- |
-| **Maja** | `generator/generate.py`, `flock/agents/collector.py`, `flock/agents/formatter.py` | Generator for 1 store x 1 day with 3 traps. Write answer key rows to `data/answer_key.csv`. Then the Formatter writes `data/std/*.csv` |
-| **Thabhelo** | `flock/agents/matcher.py`, `deal_keeper.py`, `checkers.py` | `check_commission` is a working example; copy its pattern for promo, tax, error charge, deposit. `deal_keeper.resolve()` already does the authority ranking |
-| **Preet** | `flock/agents/panel.py`, `ranker.py`, `learner.py`, `dispute_writer.py`, `clicky.py` | All working on fixtures. Next: real fake-portal web page + browser automation for Clicky; tune judges with a real key |
-| **Ira** | `flock/gatekeeper.py`, `flock/store.py`, `dashboard/`, `scripts/score.py` | Gatekeeper + JSON store work. Next: dashboard (see `dashboard/README.md`), then swap `JsonStore` for SpacetimeDB with the same methods |
+| **Preet** | GX10 setup (vLLM, three local models), offline run, model providers, judge panel + market, merging into `main` | `flock/llm.py`, `panel.py`, `ranker.py`, `learner.py`, `dispute_writer.py`, `clicky.py`, `portal.py`, `market.py` |
+| **Thabhelo** | ML: anomaly detector, benchmark harness (`scripts/benchmark.py`), tuned local judge with held-out eval | `matcher.py`, `checkers.py`, `deal_keeper.py`, `flock/api.py`, new ML code |
+| **Himaja** | UI: the demo flow on the dashboard, including a benchmark tab | `dashboard/`; still owns `generator/`, `collector.py`, `formatter.py`, `profiles/` |
+| **Ira** | [confirm] SpacetimeDB backend, pitch, video, Figma/Notability process tracks | `flock/store.py` (SpacetimeStore), `gatekeeper.py`, `scripts/score.py` |
 
 ## Rules for everyone
 1. Build to `CONTRACT.md`. Changing it means telling the team.
