@@ -131,6 +131,32 @@ python generator/generate.py --profile ca_bagel_chain --weeks 52   # another (si
 - Column maps live in `mappings.json`. Unknown layouts get a proposed mapping (Claude, or a header-name heuristic offline) that a human confirms once; then it's saved and automatic. Run with `--mappings /tmp/m.json` if you want to rehearse the demo moment without touching the committed file.
 - `data/raw/` and `data/std/` are gitignored. To get back to a fixtures-only Quickstart: `rm -rf data/raw/*/ data/raw/manifest.csv data/std/*.csv`.
 
+## Benchmark (the proof table)
+
+`scripts/benchmark.py` runs every contestant on the SAME findings from held-out seeds and writes one results table.
+Prepare (generate, collect, format, match, check) is all code, cached per seed under `data/benchmarks/seeds/`; only the
+panel differs between contestants. A live contestant with no key is recorded as skipped, never silently run on the rules.
+
+```bash
+export FLOCK_OFFLINE=1
+python scripts/benchmark.py                                        # rules only, seeds 101-110, bagel chain, 2 weeks (~50s)
+python scripts/benchmark.py --contestants rules,claude,local       # Claude needs ANTHROPIC_API_KEY; local needs FLOCK_LOCAL_URL
+python scripts/benchmark.py --contestants local-tuned --tuned-model <id the server reports>
+python scripts/benchmark.py --human sheets/ira.csv --human-scope 101:S07:1 --human-minutes 95
+python scripts/benchmark.py --list
+```
+
+Metrics per contestant: traps caught, false alarms, correct dollars, sent to a human, p50 / p95 seconds per finding,
+findings per minute, estimated $ per 1,000 findings (tokens ~ chars / 4 at list prices, `--price model=in,out`),
+works offline, and for the human contestant minutes per store-week. Training seeds for a tuned judge must stay out of
+`--seeds`.
+
+Output for the dashboard's Benchmark tab: `data/benchmarks/results.json` with `current[<contestant>]` (latest aggregate
+per contestant: `label, status, note, caught, total, accuracy, false_alarms, correct_dollars, to_human, p50_s, p95_s,
+per_minute, cost_per_1000, offline, fallbacks, human_minutes_per_store_week, seeds, run_id, at, config`) and `runs[]`
+(every run ever, with `per_seed[<contestant>]` rows that carry each trap's `got` vs `expected_outcome`).
+`data/benchmarks/results.csv` has the same rows flat, one per contestant and seed plus a `seed=all` aggregate.
+
 ## Live seed demo (a judge picks the number)
 
 ```bash
