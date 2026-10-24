@@ -1,0 +1,55 @@
+{
+  "pos": {
+    "table": "orders",
+    "columns": {"Check #": "order_id", "Location": "store_id", "Order Source": "channel", "Opened": "placed_at", "Net Sales": "subtotal", "Tax": "tax", "Discount Code": "promo_code"},
+    "dates": {"placed_at": "%Y-%m-%d %H:%M:%S"}
+  },
+  "direct_app_orders": {
+    "table": "orders",
+    "columns": {"id": "order_id", "store": "store_id", "created": "placed_at", "items_total": "subtotal", "tax_amt": "tax", "coupon": "promo_code"},
+    "constants": {"channel": "direct_app"},
+    "dates": {"placed_at": "%d-%b-%Y %H:%M"}
+  },
+  "doordash": {
+    "table": "payout_lines",
+    "columns": {"Transaction ID": "payout_line_id", "Store ID": "store_id", "DoorDash Order ID": "platform_order_id", "Merchant Order Ref": "order_id", "Subtotal": "gross", "Commission": "commission", "Merchant Promo Contribution": "promo_merchant_funded", "Error Charge": "error_charge", "Tax Withheld": "tax_withheld_by_platform", "Other Fees": "other_fees", "Net Payout": "net", "Payout ID": "payout_id", "Payout Date": "payout_date", "Error Reason": "reason", "Delivered At": "delivered_at", "Reported At": "complaint_at", "Promo Code": "promo_code", "Promo Total": "promo_total", "Order Placed": "placed_at"},
+    "constants": {"channel": "doordash"},
+    "negate": ["commission", "promo_merchant_funded", "error_charge", "tax_withheld_by_platform", "other_fees"],
+    "dates": {"payout_date": "%Y-%m-%d", "placed_at": "%Y-%m-%dT%H:%M:%S", "delivered_at": "%Y-%m-%dT%H:%M:%S", "complaint_at": "%Y-%m-%dT%H:%M:%S"}
+  },
+  "ubereats": {
+    "table": "payout_lines",
+    "columns": {"Order UUID": "platform_order_id", "Merchant Ref": "order_id", "Restaurant": "store_id", "Food Sales": "gross", "Uber Service Fee": "commission", "Promotions on Items (Merchant)": "promo_merchant_funded", "Tax Withheld": "tax_withheld_by_platform", "Marketing Fee": "other_fees", "Adjustments": "error_charge", "Total Payout": "net", "Payout Reference": "payout_id", "Payout Date": "payout_date", "Promotion": "promo_code", "Promotion Value": "promo_total", "Date/Time": "placed_at"},
+    "constants": {"channel": "ubereats"},
+    "negate": ["commission", "promo_merchant_funded", "error_charge", "tax_withheld_by_platform", "other_fees"],
+    "dates": {"payout_date": "%m/%d/%Y", "placed_at": "%m/%d/%Y %I:%M %p"}
+  },
+  "grubhub_detail": {
+    "table": "payout_lines",
+    "columns": {"GH Order #": "platform_order_id", "Restaurant ID": "store_id", "POS Order No.": "order_id", "Subtotal": "gross", "Grubhub Commission": "commission", "Promo - Restaurant Funded": "promo_merchant_funded", "Sales Tax Withheld": "tax_withheld_by_platform", "Delivery Network Fee": "other_fees", "Adjustment": "error_charge", "Net": "net", "Payout ID": "payout_id", "Payout Date": "payout_date", "Promo Code": "promo_code", "Promo Total": "promo_total", "Order Date": "placed_at"},
+    "constants": {"channel": "grubhub"}
+  },
+  "grubhub_summary": {
+    "table": "payout_summaries",
+    "columns": {"Payout ID": "payout_id", "Period Start": "period_start", "Period End": "period_end", "Orders": "order_count", "Gross Sales": "gross", "Net Payout": "net", "Payout Date": "payout_date"},
+    "constants": {"channel": "grubhub"}
+  },
+  "direct_app_settlements": {
+    "table": "payout_lines",
+    "columns": {"settlement_line": "payout_line_id", "order": "order_id", "store": "store_id", "charge_amount": "gross", "processing_fee": "other_fees", "net": "net", "payout": "payout_id", "payout_date": "payout_date"},
+    "constants": {"channel": "direct_app"},
+    "dates": {"payout_date": "%Y-%m-%d"}
+  },
+  "direct_app_refund_log": {
+    "table": "refunds",
+    "columns": {"refund_id": "refund_id", "order_id": "order_id", "amount": "amount", "status": "status", "initiated_at": "initiated_at", "completed_at": "settled_at"},
+    "constants": {"channel": "direct_app"},
+    "dates": {"initiated_at": "%Y-%m-%d %H:%M", "settled_at": "%Y-%m-%d %H:%M"}
+  },
+  "bank": {
+    "table": "bank_deposits",
+    "columns": {"Reference": "deposit_id", "Amount": "amount", "Posting Date": "deposit_date", "Description": "memo"},
+    "channel_from": "Description",
+    "dates": {"deposit_date": "%m/%d/%y"}
+  }
+}
