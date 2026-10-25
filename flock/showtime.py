@@ -416,8 +416,11 @@ def cheat_sheet(info: dict[str, Any]) -> str:
                    "click **Reject** (accept the charge).")
         n += 1
     out += [f"{n}. **Scoreboard** tab: the month-over-month hand-offs above; **Judge market** tab: balances.",
-            f"{n + 1}. Follow-up (terminal): `python -m flock.agents.follow_up approve "
-            f"{fu['finding_id'] if fu else '<id>'} --actor <you> --send`",
+            f"{n + 1}. Follow-up: open **{fu['finding_id'] if fu else '<id>'}** ({DASHBOARD}/#/finding/"
+            f"{fu['finding_id'] if fu else '<id>'}), **Vendor follow-up** card: click **Approve**, then "
+            "**Send via Clicky** (toast: the portal reference). API: `POST /api/findings/<id>/follow_up/approve` "
+            "{\"actor\": \"<you>\"}, then `.../follow_up/send`. Terminal fallback: `python -m flock.agents.follow_up "
+            f"approve {fu['finding_id'] if fu else '<id>'} --actor <you> --send`",
             "", "API instead of the dashboard (approve also files via Clicky):",
             f"`curl -X POST {API}/api/findings/{hid}/approve -H 'Content-Type: application/json' "
             "-d '{\"actor\": \"<you>\", \"reason\": \"amendment says 20%\"}'`",

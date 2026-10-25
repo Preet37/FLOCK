@@ -81,12 +81,29 @@ on a person (a conflict, or a drafted dispute ready to approve): show the resolv
     "risk": 49,
     "risk_label": "med",
     "risk_factors": {"dollars": 0.422, "uncertainty": 0.3, "authority": 1.0, "attention": 0.241},
-    "needs_human": false
+    "needs_human": false,
+    "has_follow_up": false,
+    "orders_label": "ORD-11618, b155-4ff0-497a",
+    "order_count": 2
   }
 ]
 ```
 Expected vs actual for the detail pane: `expected`, `actual`, `gap` (+ `evidence` rows, `reason`, `votes`,
-`dispute_draft`, `case_file` when present).
+`dispute_draft`, `case_file`, `follow_up` when present).
+
+List-only fields: `has_follow_up` (a vendor follow-up exists; its state is in `follow_up.state`), `orders_label` (what
+to print in a title or queue line) and `order_count`.
+
+#### Rolled-up findings (`rollup`)
+A run with `rollup=True` (flock.showtime's demo month) writes **one finding per broken deal term per weekly payout**
+instead of one per order: e.g. DoorDash charging the old 25% at three stores is one finding covering 457 orders. Such a
+finding has `rollup = {payout_id, orders, stores, gross, by_store, parts}`; `expected` / `actual` / `gap` are the sums
+(per-order gaps in `parts`, per-store in `by_store`). Show it by count, never by id:
+`orders_label` = `"457 orders at S28, S38, S41"`. In the **list** its `order_ids` are cut to the first 10
+(`order_ids_truncated: true`) and `rollup.parts` is left out; `GET /api/findings/<id>` keeps every id and every part.
+In `/api/payouts` a rollup is one finding in one lump sum: its gap is counted once on its deduction line, its
+`findings_detail` row has `store_id` = `"S28, S38, S41"`, `orders`, `orders_label`, `rollup: true`, and
+`stores_detail[].open_gaps` splits it by `rollup.by_store` (so the store rows still add up to `open_gaps`).
 
 #### Risk score (on every finding)
 Defined in `flock/frontend.py` (`risk`, `RISK_FORMULA`); a pure function of the finding, computed on read.
@@ -106,7 +123,9 @@ label: low < 34 <= med < 67 <= high
 ### `GET /api/findings/<id>`
 ```json
 {
-  "finding": {"finding_id": "F-8b28ee81", "...": "same fields as the list, incl. risk", "needs_human": false},
+  "finding": {"finding_id": "F-8b28ee81", "...": "same fields as the list, incl. risk (every order id)",
+              "needs_human": false, "orders_label": "ORD-11618, b155-4ff0-497a"},
+  "follow_up": null,
   "log": [
     {"at": "2026-10-25T05:24:40+00:00", "actor": "checkers", "role": "agent", "action": "check",
      "subject_id": "F-8b28ee81", "subject_type": "finding", "allowed": true, "before": "NEW", "after": "CHECKED",
@@ -588,6 +607,33 @@ JUDGED finding can be approved / rejected); a refused move is logged and returns
 dispute. Response: `finding` (with risk), `filed` (portal refs), `proposed` (rules the Learner now proposes), `was`,
 `log_entry` (the audit-log line for this decision, so the log column can append it at once).
 
+### Vendor follow-ups: `POST /api/findings/<id>/follow_up`, `/follow_up/approve`, `/follow_up/reject`, `/follow_up/send`
+For a claim Flock **filed** (state `FILED`) that the platform hasn't paid: the follow-up agent drafts a reminder
+(claim reference, filing date, amount = |gap|, evidence summary; every number from code), a person approves or rejects
+it, and only the gatekeeper sends it, with Clicky putting it in the sandbox portal. Each step is a gatekeeper move on
+the finding (the finding stays `FILED`) and lands in the audit log, allowed or refused.
+
+| Route | Body | Who acts | `follow_up.state` |
+| --- | --- | --- | --- |
+| `POST /api/findings/<id>/follow_up` | none | agent `follow_up` drafts | none / REJECTED / SENT -> `DRAFT` |
+| `POST /api/findings/<id>/follow_up/approve` | `{"actor": "himaja", "reason": "...", "text": "edited wording (optional)"}` | the person | `DRAFT` -> `APPROVED` |
+| `POST /api/findings/<id>/follow_up/reject` | `{"actor": "himaja", "reason": "..."}` | the person | `DRAFT` -> `REJECTED` |
+| `POST /api/findings/<id>/follow_up/send` | none | gatekeeper, via Clicky | `APPROVED` -> `SENT` (+ `sent_ref`) |
+
+Response (every step): `{"finding": {...with risk}, "follow_up": {...}, "portal_ref": "SBX-..." (send only, else
+null), "log_entry": {...}}`. Out of order (approve before a draft, send before approval, reject after approval, draft a
+finding that isn't `FILED`, a second draft while one is open) -> `409`, logged as denied. An agent id as `actor`
+(e.g. `"follow_up"`) is sent to the gatekeeper as role `agent` and refused (`409`, logged). Unknown step -> `400`,
+unknown finding -> `404`, during a run -> `409` with `running`.
+```json
+"follow_up": {"state": "SENT", "claim_ref": "SBX-1A2B3C", "filed_on": "2026-08-29", "amount": 55.38,
+              "channel": "ubereats", "platform": "Uber Eats", "evidence_summary": "...",
+              "draft": "Hello Uber Eats merchant support, ...", "drafted_by": "follow_up", "drafted_at": "...",
+              "approved_by": "himaja", "approved_at": "...", "sent_ref": "SBX-9F8E7D", "sent_at": "...",
+              "sent_via": "clicky-file"}
+```
+Theater: each step is a `follow_up` event (`action`, `state`, `claim_ref`, `sent_ref`) in the agents lane.
+
 ### `POST /api/rules/<id>/approve`
 Body `{"actor": "himaja"}`.
 
@@ -670,8 +716,10 @@ token -> 401, and with `--run` the job and the transactions it wrote); exits 1 o
 ## The dashboard mirrors
 
 `python -m dashboard.app` serves the same read models: `/api/transactions`, `/api/payouts`, `/api/payouts/<id>`,
-`/api/stream`, `/api/stream/replay`, `/api/metrics`, `/api/agents/<agent_id>`, `/api/screens/...`, and risk on
-`/api/findings` and `/api/findings/<id>`. (Its own `/api/agents` is the live flock snapshot, not the roster.) It has no
+`/api/stream`, `/api/stream/replay`, `/api/metrics`, `/api/agents/<agent_id>`, `/api/screens/...`, risk (and the list
+fields `has_follow_up`, `orders_label`) on `/api/findings` and `/api/findings/<id>`, and the four follow-up routes
+(no token locally; `actor` required for approve / reject; a refusal is `403` with the denied `log_entry`). Its finding
+page has a **Vendor follow-up** card (draft text, Approve / Reject / Send via Clicky, state, portal reference). (Its own `/api/agents` is the live flock snapshot, not the roster.) It has no
 `/api/run`, jobs, health or SSE. Its **Lump sums** tab (`#/payouts`, `#/payout/<key>`: list, waterfall chart with
 statement vs contract bars, line-by-line table, stores, findings linked) and **Theater** tab (`#/theater`: three judge
 columns with votes and bets, a balance ticker, the human lane, a rule-learned banner; Live or "Replay last run" at

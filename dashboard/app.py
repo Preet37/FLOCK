@@ -33,6 +33,7 @@ from flask.json.provider import DefaultJSONProvider
 
 from flock import agents_live, frontend, llm, market, payouts, portal, theater, transactions, workflow
 from flock.agents import clicky, journal, learner, panel
+from flock.agents import follow_up as follow_ups
 from flock.gatekeeper import Denied, transition
 from flock.models import JE_TRANSITIONS, JOURNAL, TRANSITIONS, Actor
 from flock.progress import progress_path, read_progress
@@ -100,7 +101,8 @@ def detail(store: Store, finding_id: str) -> dict[str, Any]:
     rule_id = f["reason"].split()[3].rstrip(":") if f.get("reason", "").startswith("Applied approved rule") else None
     rule = next((r for r in learner.approved_rules() if r["rule_id"] == rule_id), None) if rule_id else None
     return {
-        "finding": frontend.with_risk(f),
+        "finding": {**frontend.with_risk(f), "orders_label": frontend.orders_label(f)},
+        "follow_up": f.get("follow_up"),
         "log": log,
         "decision": decided[-1] if decided else None,
         "denied": [e for e in log if not e["allowed"]],
@@ -228,7 +230,7 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
     @app.get("/api/findings")
     def api_findings():
         rows = sorted(st().all(), key=lambda f: f["finding_id"])
-        return jsonify([{**frontend.with_risk(f), "needs_human": needs_human(f)} for f in rows])
+        return jsonify([{**frontend.list_item(f), "needs_human": needs_human(f)} for f in rows])
 
     @app.get("/api/queue")
     def api_queue():
@@ -236,7 +238,8 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
         def order(f):
             att = f.get("attention") or {}
             return f.get("outcome") != "conflict", att.get("status") == "deferred", att.get("rank", 0), -abs(f["gap"])
-        return jsonify(sorted((f for f in st().all() if needs_human(f)), key=order))
+        return jsonify([{**f, "orders_label": frontend.orders_label(f)}
+                        for f in sorted((f for f in st().all() if needs_human(f)), key=order)])
 
     @app.get("/api/market")
     def api_market():
@@ -270,6 +273,38 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
             return jsonify(error=str(e), log_entry=st().log(finding_id)[-1]), 403
         learner.propose(st())  # every human decision is a precedent; refresh proposed rules
         return jsonify(finding=after, log_entry=st().log(finding_id)[-1])
+
+    @app.post("/api/findings/<finding_id>/follow_up")
+    @app.post("/api/findings/<finding_id>/follow_up/<step>")
+    def api_follow_up(finding_id: str, step: str = "draft"):
+        """Vendor follow-up on a filed, unpaid claim (flock/agents/follow_up.py): draft (the follow_up agent), approve /
+        reject (a person: 'actor' required, 'role' as for decisions), send (Clicky, via the gatekeeper). Each step is
+        a gatekeeper annotation; refusals are logged and return 403."""
+        if step not in ("draft", "approve", "reject", "send"):
+            return jsonify(error="follow_up steps: draft, approve, reject, send"), 400
+        b = body()
+        ref = None
+        try:
+            if step == "draft":
+                follow_ups.draft(st(), [finding_id])
+            elif step == "send":
+                ref = follow_ups.send(st(), finding_id)
+            else:
+                name = str(b.get("actor") or "").strip()
+                if not name:
+                    return jsonify(error="say who you are: 'actor' is required"), 400
+                actor = Actor(id=name, role=str(b.get("role") or "human"))
+                reason = str(b.get("reason") or "").strip() or "via the dashboard"
+                if step == "approve":
+                    follow_ups.approve(st(), finding_id, actor, text=b.get("text") or None, reason=reason)
+                else:
+                    follow_ups.reject(st(), finding_id, actor, reason=reason)
+        except KeyError:
+            return jsonify(error=f"no finding {finding_id}"), 404
+        except Denied as e:
+            return jsonify(error=str(e), log_entry=st().log(finding_id)[-1]), 403
+        f = st().get(finding_id)
+        return jsonify(finding=f, follow_up=f.get("follow_up"), portal_ref=ref, log_entry=st().log(finding_id)[-1])
 
     @app.post("/api/file-approved")
     def api_file():

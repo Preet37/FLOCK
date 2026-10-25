@@ -58,6 +58,9 @@ AGENTS: list[dict[str, Any]] = [
      "job": "The one door. Checks every move against the state machine and writes the audit log."},
     {"actor": "clicky", "name": "Clicky", "owner": "Preet", "role": "agent", "live": ["clicky"], "log": [],
      "job": "Files approved disputes in the sandbox portal. The gatekeeper records the filing."},
+    {"actor": "follow_up", "name": "Vendor Follow-up", "owner": "Preet", "role": "agent", "live": [],
+     "log": ["follow_up"], "job": "Drafts a reminder for a filed claim the platform hasn't paid. A human approves; "
+                                  "only the gatekeeper sends it."},
     {"actor": "journal", "name": "Journal Entry Drafter", "owner": "Preet", "role": "agent", "live": ["journal"],
      "log": ["journal"], "job": "Drafts one balanced journal entry per store x channel x payout for a human to approve."},
     {"actor": "learner", "name": "Learner", "owner": "Preet", "role": "agent", "live": ["learner"], "log": [],
@@ -140,6 +143,38 @@ def risk(f: dict[str, Any]) -> dict[str, Any]:
 
 def with_risk(f: dict[str, Any]) -> dict[str, Any]:
     return {**f, **risk(f)}
+
+
+SHOW_IDS = 5         # a title names at most this many order ids
+LIST_IDS = 10        # a list item carries at most this many ids of a rolled-up finding (the detail keeps them all)
+
+
+def orders_label(f: dict[str, Any]) -> str:
+    """The orders a finding covers, for a title or a queue line. A rolled-up finding (flock/rollup.py) can cover
+    hundreds of orders: "457 orders at S28, S38, S41" instead of every id."""
+    r = f.get("rollup")
+    if r:
+        stores = r.get("stores") or []
+        n = int(r.get("orders") or len(f.get("order_ids") or []))
+        return f"{n:,} order{'s' if n != 1 else ''}" + (f" at {', '.join(stores)}" if stores else "")
+    ids = [str(i) for i in f.get("order_ids") or []]
+    if len(ids) <= SHOW_IDS:
+        return ", ".join(ids)
+    return f"{', '.join(ids[:SHOW_IDS])} and {len(ids) - SHOW_IDS:,} more"
+
+
+def list_item(f: dict[str, Any]) -> dict[str, Any]:
+    """A finding for a list (GET /api/findings): risk, has_follow_up, orders_label, order_count. A rolled-up finding's
+    order_ids are cut to LIST_IDS (order_ids_truncated) and its per-order rollup.parts left out; GET /api/findings/<id>
+    has everything."""
+    ids = f.get("order_ids") or []
+    out = {**with_risk(f), "has_follow_up": bool(f.get("follow_up")), "orders_label": orders_label(f),
+           "order_count": len(ids)}
+    if f.get("rollup"):
+        out["order_ids"] = ids[:LIST_IDS]
+        out["order_ids_truncated"] = len(ids) > LIST_IDS
+        out["rollup"] = {k: v for k, v in f["rollup"].items() if k != "parts"}
+    return out
 
 
 # metrics -------------------------------------------------------------------------------------------------------------

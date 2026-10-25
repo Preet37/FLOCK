@@ -29,6 +29,10 @@ Read:
 Write (humans only; every write still goes through the gatekeeper):
   POST /api/findings/<id>/approve     {"actor": "thabhelo", "reason": "..."}  then Clicky files it
   POST /api/findings/<id>/reject      {"actor": "thabhelo", "reason": "..."}
+  POST /api/findings/<id>/follow_up   the follow-up agent drafts a reminder for a FILED, unpaid claim (returns it)
+  POST /api/findings/<id>/follow_up/approve   {"actor": "thabhelo", "reason": "...", "text": "edited (optional)"}
+  POST /api/findings/<id>/follow_up/reject    {"actor": "thabhelo", "reason": "..."}
+  POST /api/findings/<id>/follow_up/send      Clicky sends the approved follow-up to the sandbox portal (portal_ref)
   POST /api/rules/<id>/approve        {"actor": "thabhelo"}
   POST /api/run?wait=0                {"reset": true, "forget": false, "demo_approve": false}   fixtures, as a job
                                       (without ?wait=0: synchronous, for old callers; hosted, use the job)
@@ -60,6 +64,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from flock import frontend, payouts, pipeline, theater, transactions
 from flock.agents import clicky, learner
+from flock.agents import follow_up as follow_ups
 from flock.frontend import AGENTS, JUDGES  # noqa: F401  (the roster lives in flock/frontend.py now)
 from flock.gatekeeper import Denied, transition
 from flock.models import TRANSITIONS, Actor
@@ -277,7 +282,7 @@ class Api:
 
     def findings(self, q: dict[str, list[str]] | None = None) -> list[dict[str, Any]]:
         q = q or {}
-        rows = [{**frontend.with_risk(f), "needs_human": _needs_human(f)} for f in self.store.all()]
+        rows = [{**frontend.list_item(f), "needs_human": _needs_human(f)} for f in self.store.all()]
         for name in ("state", "outcome", "channel", "check_type"):
             want = _arg(q, name)
             if want:
@@ -291,8 +296,9 @@ class Api:
 
     def finding(self, fid: str) -> dict[str, Any]:
         f = self.store.get(fid)
-        return {"finding": {**frontend.with_risk(f), "needs_human": _needs_human(f)}, "log": self.store.log(fid),
-                "risk_formula": frontend.RISK_FORMULA}
+        return {"finding": {**frontend.with_risk(f), "needs_human": _needs_human(f),
+                            "orders_label": frontend.orders_label(f)},
+                "follow_up": f.get("follow_up"), "log": self.store.log(fid), "risk_formula": frontend.RISK_FORMULA}
 
     def transactions(self, q: dict[str, list[str]]) -> dict[str, Any]:
         return transactions.query(transactions.load(self.dir), self.store.all(), channel=_arg(q, "channel"),
@@ -351,6 +357,28 @@ class Api:
             proposed = learner.propose(self.store)
             return {"finding": frontend.with_risk(self.store.get(fid)), "filed": filed, "proposed": proposed,
                     "was": after["state"], "log_entry": entry}
+
+    def follow_up(self, fid: str, step: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Vendor follow-up on a FILED, unpaid claim: draft (the follow_up agent), approve / reject (a human), send
+        (the gatekeeper, via Clicky). Every step is a gatekeeper annotation; refusals are logged and raise Denied."""
+        self._not_running()
+        with self.write_lock:
+            ref = None
+            if step == "draft":
+                follow_ups.draft(self.store, [fid])
+            elif step == "send":
+                ref = follow_ups.send(self.store, fid, self.portal)
+            else:
+                actor = _human(body)
+                reason = str(body.get("reason") or "")
+                if step == "approve":
+                    follow_ups.approve(self.store, fid, actor, text=body.get("text") or None,
+                                       reason=reason or "Follow-up approved from the dashboard")
+                else:
+                    follow_ups.reject(self.store, fid, actor, reason=reason or "Follow-up rejected from the dashboard")
+            f = self.store.get(fid)
+            return {"finding": frontend.with_risk(f), "follow_up": f.get("follow_up"), "portal_ref": ref,
+                    "log_entry": self.store.log(fid)[-1]}
 
     def approve_rule(self, rid: str, body: dict[str, Any]) -> dict[str, Any]:
         self._not_running()
@@ -464,6 +492,15 @@ def default_order(f: dict[str, Any]) -> tuple:
     """needs_human first, then state (JUDGED, APPROVED, FILED, CHECKED, NEW, RECOVERED, REJECTED), then risk
     (highest first), then finding_id so ties are stable."""
     return (not f.get("needs_human"), STATE_PRIORITY.get(f.get("state"), 9), -f.get("risk", 0), f["finding_id"])
+
+
+AGENT_IDS = {a["actor"] for a in AGENTS if a["role"] != "human"}
+
+
+def _human(body: dict[str, Any]) -> Actor:
+    """The person deciding. An agent's own id is not a person: it goes to the gatekeeper as role agent (refused, logged)."""
+    name = str(body.get("actor") or "human")
+    return Actor(id=name, role="agent" if name in AGENT_IDS else "human")
 
 
 def _needs_human(f: dict[str, Any]) -> bool:
@@ -641,6 +678,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if len(parts) == 4 and parts[:2] == ["api", "findings"] and parts[3] in ("approve", "reject"):
                 return self._send(200, a.decide(parts[2], parts[3], body))
+            if len(parts) in (4, 5) and parts[:2] == ["api", "findings"] and parts[3] == "follow_up":
+                step = parts[4] if len(parts) == 5 else "draft"
+                if step not in ("draft", "approve", "reject", "send"):
+                    raise BadRequest("follow_up steps: POST .../follow_up (draft), /approve, /reject, /send")
+                return self._send(200, a.follow_up(parts[2], step, body))
             if len(parts) == 4 and parts[:2] == ["api", "rules"] and parts[3] == "approve":
                 return self._send(200, a.approve_rule(parts[2], body))
             if parts == ["api", "run"]:

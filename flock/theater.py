@@ -26,6 +26,8 @@ learn), actor, text (one human-readable sentence), plus structured fields per ty
   dispute_drafted   finding_id, gap, channel
   human_decision    finding_id, decision (approve | reject | recover), human, reason
   filed             finding_id, portal_ref
+  follow_up         finding_id, action (follow_up | approve_follow_up | reject_follow_up | send_follow_up), state,
+                    claim_ref, sent_ref (a vendor follow-up on a filed, unpaid claim)
   denied            finding_id, attempted, by, role, reason (the gatekeeper refused a move)
   rule_proposed     rule_id, description, evidence_count, precedents
   rule_approved     rule_id, human, description
@@ -76,7 +78,8 @@ LANE = {"run_started": "agents", "agent_spawned": "agents", "agent_working": "ag
         "judged_bulk": "judges", "rule_applied": "learn",
         "bet_staked": "market", "bet_settled": "market", "bets_bulk": "market", "settled_bulk": "market",
         "escalation": "human", "human_decision": "human", "decided_bulk": "human", "denied": "human",
-        "filed": "agents", "filed_bulk": "agents", "rule_proposed": "learn", "rule_approved": "learn", "other": "agents"}
+        "filed": "agents", "filed_bulk": "agents", "rule_proposed": "learn", "rule_approved": "learn", "other": "agents",
+        "follow_up": "agents"}
 
 # pipeline stage of each kind of line, to order lines that share a second (the audit log keeps whole seconds)
 PHASE = {"run": -1, "agent:worker": 0, "agent:checker": 0, "check": 1, "investigate:CHECKED": 2, "judge": 3,
@@ -118,6 +121,14 @@ def _pct(c: Any) -> str:
         return f"{float(c):.0%}"
     except (TypeError, ValueError):
         return "?"
+
+
+def _covers(f: dict[str, Any] | None) -> str:
+    """' (457 orders at S28, S38, S41)' for a rolled-up finding (flock/rollup.py), '' otherwise: never every id."""
+    if not f or not f.get("rollup"):
+        return ""
+    from flock.frontend import orders_label   # late import: flock.frontend imports this module's neighbours
+    return f" ({orders_label(f)})"
 
 
 def _after(diff: dict[str, Any], key: str) -> Any:
@@ -447,7 +458,7 @@ class Theater:
                 self._emit({"type": "dispute_drafted", "at": at, "actor": r.get("actor"), "finding_id": fid,
                             "gap": gap, "channel": f.get("channel"),
                             "text": f"Writer drafted a {_usd(abs(float(gap or 0)))} dispute to {f.get('channel')} "
-                                    f"for {fid}; it waits for a human"})
+                                    f"for {fid}{_covers(f)}; it waits for a human"})
             else:
                 self._add("drafted_bulk", at, gap_total=abs(float(gap or 0)))
             return
@@ -477,9 +488,18 @@ class Theater:
             if fid in self.highlighted or self._one("file", self.cap):
                 self._emit({"type": "filed", "at": at, "actor": "clicky", "finding_id": fid, "portal_ref": ref,
                             "gap": f.get("gap"),
-                            "text": f"Clicky filed {fid} in the sandbox portal: {ref}"})
+                            "text": f"Clicky filed {fid}{_covers(f)} in the sandbox portal: {ref}"})
             else:
                 self._add("filed_bulk", at, refs=[ref] if ref else [])
+            return
+        if a in FOLLOW_UP_TEXT and r.get("allowed", True):
+            fu = _after(diff, "follow_up") or f.get("follow_up") or {}
+            self._emit({"type": "follow_up", "at": at, "actor": r.get("actor"), "finding_id": fid, "action": a,
+                        "state": fu.get("state"), "claim_ref": fu.get("claim_ref"), "sent_ref": fu.get("sent_ref"),
+                        "gap": f.get("gap"),
+                        "text": FOLLOW_UP_TEXT[a].format(actor=r.get("actor"), fid=fid, covers=_covers(f),
+                                                         claim=fu.get("claim_ref"), sent=fu.get("sent_ref"),
+                                                         amount=_usd(fu.get("amount")))})
             return
         if self._one("other", self.cap):
             self._emit({"type": "other", "at": at, "actor": r.get("actor"), "finding_id": fid, "action": a,
@@ -555,15 +575,17 @@ class Theater:
             self._emit({"type": "memo", "at": at, "actor": "reviewer", "finding_id": fid, "memo": memo,
                         "text": f"Reviewer wrote a memo for the human on {fid}"})
         if att:
-            self._escalation(fid, at, att, gap, ct, ch)
+            self._escalation(fid, at, att, gap, ct, ch, f)
         self._stakes(fid)
 
-    def _escalation(self, fid: str, at: Any, att: dict[str, Any], gap: Any, ct: Any, ch: Any) -> None:
+    def _escalation(self, fid: str, at: Any, att: dict[str, Any], gap: Any, ct: Any, ch: Any,
+                    f: dict[str, Any] | None = None) -> None:
         q = att.get("status") != "deferred"
         self._emit({"type": "escalation", "at": at, "actor": "panel", "finding_id": fid, "rank": att.get("rank"),
                     "budget": att.get("budget"), "value": att.get("value"), "status": att.get("status"),
                     "gap": gap, "check_type": ct, "channel": ch,
-                    "text": (f"{fid} ({ch} {str(ct or '').replace('_', ' ')} {_usd(gap)}) escalated to a human: "
+                    "text": (f"{fid} ({ch} {str(ct or '').replace('_', ' ')} {_usd(gap)}){_covers(f)} escalated "
+                             "to a human: "
                              f"attention #{att.get('rank')} of {att.get('budget')} (worth {_usd(att.get('value'))} of "
                              "a look)") if q else
                     f"{fid} is over this week's attention budget: deferred, still waiting for a human"})
@@ -649,6 +671,15 @@ class Theater:
             return {"run": self.run, "cursor": last, "first_cursor": self.first, "latest": self.cursor,
                     "reset": reset, "more": more, "events": picked, "balances": self._balances(),
                     "count": len(self.events), "poll_ms": 1000}
+
+
+FOLLOW_UP_TEXT = {
+    "follow_up": "Follow-up agent drafted a {amount} reminder on unpaid claim {claim} ({fid}){covers}; "
+                 "it waits for a human",
+    "approve_follow_up": "{actor} approved the follow-up on claim {claim} ({fid})",
+    "reject_follow_up": "{actor} rejected the follow-up on claim {claim} ({fid}): not sent",
+    "send_follow_up": "Clicky sent the follow-up on claim {claim} ({fid}) to the sandbox portal: {sent}",
+}
 
 
 def _bulk(kind: str, a: dict[str, Any], balances: dict[str, float]) -> dict[str, Any]:
