@@ -55,7 +55,7 @@
     const S = {
         api: '', mode: 'idle', queue: [], playing: false, pace: { ...DEFAULT_PACE }, speed: 6, cursor: 0, es: null, pollTimer: null,
         stage: {}, money: 0, shownMoney: 0, findings: new Set(), humans: 0, filed: 0,
-        judges: {}, cases: {}, show: Promise.resolve(), pendingShows: 0, clicky: Promise.resolve(), pendingClicky: 0, screens: null,
+        judges: {}, judgeModel: {}, cases: {}, job: null, lastEventAt: 0, show: Promise.resolve(), pendingShows: 0, clicky: Promise.resolve(), pendingClicky: 0, screens: null,
     };
 
     // ---- API ----------------------------------------------------------------------------------------------------
@@ -227,7 +227,7 @@
                     <svg class="jring" viewBox="0 0 78 78"><circle cx="39" cy="39" r="35" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="5"/>
                     <circle data-r cx="39" cy="39" r="35" fill="none" stroke="#97E2FF" stroke-width="5" stroke-linecap="round" stroke-dasharray="220" stroke-dashoffset="220" style="transition:stroke-dashoffset .7s ease-out"/></svg>
                     <span class="thumb" data-t></span></div>
-                <div class="jn">${esc(n)}</div><div class="jm">${esc(modelTag(c.models[n]))}</div>`);
+                <div class="jn">${esc(n)}</div><div class="jm">${esc(modelTag(c.models[n] || S.judgeModel[n]))}</div>`);
             const to = { x: jc.x + (i - (names.length - 1) / 2) * spread, y: jc.y - 140 };
             return { n, v, el, to };
         });
@@ -355,11 +355,13 @@
                 col.innerHTML = `<div class="text-sm font-extrabold" style="color:#d97706" data-b></div>
                     <div class="stack"><div class="coins" data-c style="height:0"></div></div>
                     <div class="w-12 h-12 rounded-full grid place-items-center text-white" style="background:${JUDGE_COLOR[n] || '#0084FF'}"><i data-lucide="bot" class="w-6 h-6"></i></div>
-                    <div class="text-xs font-bold capitalize text-gray-500">${esc(n)}</div>`;
+                    <div class="text-xs font-bold capitalize text-gray-500">${esc(n)}</div>
+                    <div class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-lightCardBg text-purpleAccent" data-p></div>`;
                 $('wallets').appendChild(col); icons();
             }
             const bal = S.judges[n].balance;
             col.querySelector('[data-b]').textContent = bal == null ? '' : Math.round(bal);
+            col.querySelector('[data-p]').textContent = S.judgeModel[n] ? modelTag(S.judgeModel[n]) : '';
             col.querySelector('[data-c]').style.height = `${Math.max(6, ((bal || 0) / max) * 190)}px`;
         });
     }
@@ -512,7 +514,7 @@
         }, 1500);
     }
 
-    // ---- run a new month live -----------------------------------------------------------------------------------
+    // ---- run a new month live, and follow any running job ----------------------------------------------------
     async function runLive() {
         const tk = token();
         if (!tk) { $('tokenBox').classList.remove('hidden'); $('tokenInput').focus(); return; }
@@ -524,23 +526,179 @@
             });
             const body = await r.json().catch(() => ({}));
             if (r.status === 401) { save('flock.token', ''); $('tokenBox').classList.remove('hidden'); $('tokenInput').focus(); return; }
+            const busy = r.status === 409 && (body.running || (String(body.error || '').match(/JOB-[0-9a-f]+/) || [])[0]);
+            if (busy) { follow(busy); return; }   // one is already running: watch it
             if (!r.ok) { caption(body.error ? `Run refused: ${body.error}`.slice(0, 90) : `Run refused (${r.status})`); return; }
             const id = body.job_id || (body.job && body.job.job_id) || body.id;
-            S.queue = []; setMode('running'); startLive();
-            caption('Generating a fresh month of deposits…');
-            if (id) watchJob(id);
+            if (id) follow(id, true);
         } catch (e) { caption(`Could not start a run: ${e.message}`); } finally { $('liveBtn').disabled = false; }
     }
-    async function watchJob(id) {
-        for (;;) {
-            await sleep(2500);
-            let j; try { j = await get(`/api/jobs/${id}`); } catch { continue; }
-            if (j.status !== 'running' && j.status !== 'queued') {
-                await S.show; await S.clicky; setMode('live');
-                if (j.status === 'done') { finishAll(); caption('Month reconciled'); } else caption(`Run ${j.status}`);
-                return;
-            }
+
+    // the job's progress stages (flock/progress.py) -> the agent doing that work
+    function stageFor(name) {
+        const n = String(name || '').toLowerCase();
+        if (/generat|collect|ingest|prepare|month/.test(n)) return 'collector';
+        if (/format/.test(n)) return 'formatter';
+        if (/split|match/.test(n)) return 'matcher';
+        if (/deal|contract|term/.test(n)) return 'deal_keeper';
+        if (/log findings|check|anomal/.test(n)) return 'checkers';
+        if (/judge|investigat|review|panel/.test(n)) return 'judges';
+        if (/rank/.test(n)) return 'ranker';
+        if (/writ|draft|dispute/.test(n)) return 'writer';
+        if (/file|clicky|portal/.test(n)) return 'clicky';
+        if (/journal/.test(n)) return 'journal';
+        if (/learn|rule/.test(n)) return 'learner';
+        return null;
+    }
+    const STAGE_LABEL = { collector: 'Collecting', formatter: 'Formatting', matcher: 'Matching orders', deal_keeper: 'Reading deals',
+        checkers: 'Checking the money', judges: 'Judging', ranker: 'Ranking', writer: 'Drafting disputes', clicky: 'Filing',
+        journal: 'Journal entries', learner: 'Learning' };
+
+    function ring(show, pct, label, sub) {
+        let el = $('jobRing');
+        if (!el) {
+            el = document.createElement('div'); el.id = 'jobRing';
+            el.style.cssText = 'position:absolute;left:20px;top:20px;display:flex;align-items:center;gap:14px;z-index:12;padding:10px 18px 10px 10px;border-radius:999px;background:rgba(1,47,138,.55);border:1px solid #0159C4;transition:opacity .3s';
+            el.innerHTML = `<svg width="64" height="64" viewBox="0 0 64 64" style="transform:rotate(-90deg)"><circle cx="32" cy="32" r="27" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="6"/>
+                <circle data-arc cx="32" cy="32" r="27" fill="none" stroke="#61CDFF" stroke-width="6" stroke-linecap="round" stroke-dasharray="170" stroke-dashoffset="170" style="transition:stroke-dashoffset .8s ease"/></svg>
+                <div><div data-l style="font-weight:800;font-size:18px;color:#fff;white-space:nowrap"></div><div data-s style="font-size:12px;font-weight:700;color:#97E2FF;white-space:nowrap"></div></div>`;
+            stage().appendChild(el);
         }
+        el.style.opacity = show ? 1 : 0;
+        if (!show) return;
+        el.querySelector('[data-arc]').style.strokeDashoffset = String(170 * (1 - Math.max(0, Math.min(1, pct))));
+        el.querySelector('[data-l]').textContent = label;
+        el.querySelector('[data-s]').textContent = sub;
+    }
+
+    let idleSpawnAt = 0;
+    async function idleSpawn() {   // judging with no per-finding events yet: show the panel spawning (no votes shown)
+        const jc = center(discOf('judges')), W = stage().clientWidth, spread = Math.min(130, W / 9);
+        const els = ['strict', 'operator', 'skeptic'].map((n, i) => {
+            const el = spawnEl('judge', `<div class="jd" style="background:${JUDGE_COLOR[n]};width:48px;height:48px"><i data-lucide="bot" class="w-6 h-6"></i></div>
+                <div class="jm">${esc(modelTag(S.judgeModel[n]))}</div>`);
+            return { el, to: { x: jc.x + (i - 1) * spread, y: jc.y - 110 } };
+        });
+        icons();
+        await Promise.all(els.map((o, i) => sleep(i * 80).then(() => fly(o.el, jc, o.to, 450, { s0: 0.2, o0: 0, ease: 'cubic-bezier(.2,1.5,.4,1)' }))));
+        await sleep(900);
+        await Promise.all(els.map((o) => fly(o.el, o.to, jc, 400, { s1: 0.2, o1: 0 })));
+        els.forEach((o) => o.el.remove());
+    }
+
+    function follow(id, fresh) {
+        if (S.job === id) return;
+        S.job = id; S.jobStarted = performance.now();
+        stopLive(); S.queue = [];
+        if (fresh) reset();
+        setMode('running');
+        caption(fresh ? 'Generating a fresh month of deposits…' : 'Following the running job');
+        $('summary') && $('summary').remove();
+        pollStream();
+        watchJob(id);
+    }
+    async function pollStream() {   // 1 s polling while a job runs: works behind proxies that buffer SSE
+        while (S.mode === 'running') {
+            try {
+                const page = await get(`/api/stream?since=${S.cursor}&limit=500`);
+                const evs = (page.events || []).filter((e) => e.cursor > S.cursor);
+                S.cursor = Math.max(S.cursor, page.cursor || 0);
+                if (evs.length) { S.lastEventAt = performance.now(); enqueue(evs, true); }
+            } catch { /* a blip */ }
+            await sleep(1000);
+        }
+    }
+    async function watchJob(id) {
+        let seen = null;
+        for (;;) {
+            let j; try { j = await get(`/api/jobs/${id}`); } catch { await sleep(1000); continue; }
+            const p = j.progress || {};
+            for (const st of p.stages || []) setStage(stageFor(st.name), 'done');
+            const cur = stageFor(p.stage);
+            if (cur && j.status === 'running') {
+                setStage(cur, 'working');
+                if (cur !== seen) {
+                    seen = cur;
+                    if (cur === 'matcher') swarm('matcher', 'checkers', 56);
+                    caption(`${STAGE_LABEL[cur] || p.stage}…`);
+                }
+                if (cur === 'judges' && performance.now() - S.lastEventAt > 4000 && performance.now() - idleSpawnAt > 3500 && !S.pendingShows) {
+                    idleSpawnAt = performance.now(); idleSpawn();
+                }
+            }
+            const t0 = Date.parse(j.started_at || j.created_at || '');   // the job's clock, not the (throttled) progress file
+            const elapsed = Math.max(0, Math.round(isNaN(t0) ? (performance.now() - S.jobStarted) / 1000 : (Date.now() - t0) / 1000));
+            const frac = p.total ? (p.done || 0) / p.total : 0;
+            const unit = p.total ? ` · ${Number(p.done || 0).toLocaleString()}/${Number(p.total).toLocaleString()} ${p.unit || ''}` : '';
+            if (j.status === 'running' || j.status === 'queued') {
+                ring(true, frac, STAGE_LABEL[cur] || p.stage || 'Starting', `${elapsed}s${unit}`);
+                await sleep(1000);
+                continue;
+            }
+            ring(false);
+            S.mode = 'finishing';
+            await S.show; await S.clicky;
+            if (j.status === 'done') { finishAll(); await payoff(j); } else caption(`Run ${j.status}${j.error ? ': ' + String(j.error).slice(0, 60) : ''}`);
+            S.job = null; setMode('live'); startLive();
+            return;
+        }
+    }
+
+    // ---- the payoff: the biggest findings get their judge burst, then the summary ------------------------------
+    function lastVotes(f) {
+        const out = {}, models = {};
+        for (const v of f.votes || []) {
+            const j = short(v.judge);
+            if (!j || j === 'reviewer') continue;
+            out[j] = { outcome: v.outcome, confidence: v.confidence };
+            if (v.model) models[j] = v.model;
+        }
+        return { votes: out, models };
+    }
+    async function loadFindings() {
+        try { const d = await get('/api/findings'); return Array.isArray(d) ? d : (d.findings || []); } catch { return []; }
+    }
+    function learnModels(fs) {
+        for (const f of fs) for (const v of f.votes || []) {
+            const j = short(v.judge);
+            if (!j || j === 'reviewer') continue;
+            if (v.model) S.judgeModel[j] = v.model;   // a live model beats rules
+            else if (!(j in S.judgeModel)) S.judgeModel[j] = '';
+        }
+        drawWallets();
+    }
+    async function payoff(job) {
+        const fs = await loadFindings();
+        learnModels(fs);
+        const open = fs.filter((f) => f.outcome !== 'correct');
+        S.money = open.reduce((a, f) => a + (Number(f.gap) || 0), 0); tickMoney();
+        fs.forEach((f) => S.findings.add(f.finding_id));
+        const need = fs.filter((f) => f.needs_human).length;
+        S.humans = Math.max(S.humans, need); bell(S.humans); counters();
+        const top = open.slice().sort((a, b) => (Number(b.gap) || 0) - (Number(a.gap) || 0)).slice(0, 8);
+        for (const f of top) {
+            const { votes, models } = lastVotes(f);
+            const c = { fid: f.finding_id, votes, models, shown: false,
+                verdict: { channel: f.channel, gap: f.gap, outcome: f.outcome, confidence: f.confidence } };
+            S.pendingShows += 1;
+            S.show = S.show.then(() => judgeShow(c, false)).catch(() => {}).then(() => { S.pendingShows -= 1; });
+        }
+        await S.show;
+        const secs = job.seconds != null ? Math.round(job.seconds) : Math.round((performance.now() - S.jobStarted) / 1000);
+        summary(secs, S.money, need);
+    }
+    function summary(secs, found, need) {
+        $('summary') && $('summary').remove();
+        const el = document.createElement('div'); el.id = 'summary';
+        el.style.cssText = 'position:absolute;left:50%;top:40px;transform:translateX(-50%);z-index:30;background:#fff;color:#111;border-radius:24px;padding:18px 22px;box-shadow:0 20px 60px rgba(0,0,0,.45);display:flex;align-items:center;gap:18px;white-space:nowrap';
+        el.innerHTML = `<div class="w-11 h-11 rounded-full grid place-items-center" style="background:#34d399;color:#06281b"><i data-lucide="check" class="w-6 h-6"></i></div>
+            <div><div style="font-weight:800;font-size:18px">Done in ${secs}s · ${money0(found)} found · ${need} need you</div>
+            <div style="font-size:12px;font-weight:600;color:#6b7280">Every number checked in code; the judges only saw the gaps</div></div>
+            <a href="./#/?filter=review" class="rounded-full bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm px-4 h-10 flex items-center gap-1.5">Review cases<i data-lucide="arrow-right" class="w-4 h-4"></i></a>
+            <button aria-label="Close" style="color:#9ca3af;font-size:20px;line-height:1">×</button>`;
+        el.querySelector('button').onclick = () => el.remove();
+        stage().appendChild(el); icons();
+        caption(`${money0(found)} found · ${need} need you`);
     }
 
     // ---- boot ---------------------------------------------------------------------------------------------------
@@ -564,6 +722,13 @@
         } catch { /* no market yet */ }
         drawWallets();
     }
+    async function watchForJobs() {   // a run started from the console (or anywhere) takes over the stage
+        for (;;) {
+            await sleep(4000);
+            if (S.job || S.mode === 'finishing') continue;
+            try { const h = await get('/api/health'); if (h.running_job) follow(h.running_job, true); } catch { /* offline */ }
+        }
+    }
     async function boot() {
         buildRow(); icons();
         window.addEventListener('resize', () => requestAnimationFrame(wires));
@@ -572,18 +737,26 @@
         $('tokenSave').onclick = () => { const v = $('tokenInput').value.trim(); if (!v) return; save('flock.token', v); $('tokenBox').classList.add('hidden'); runLive(); };
         $('tokenInput').onkeydown = (e) => e.key === 'Enter' && $('tokenSave').click();
         if (params.get('speed')) S.speed = Number(params.get('speed')) || S.speed;
+        const startRun = params.get('run') === '1';
+        if (startRun) {   // opened by the console's "Run a new month live": start once, not on every refresh
+            params.delete('run');
+            history.replaceState(null, '', location.pathname + (params.toString() ? `?${params}` : '') + location.hash);
+        }
         S.api = await detectBase();
         whoAmI();
         await loadMarket();
+        loadFindings().then(learnModels);
         let running = null;
         try { running = (await get('/api/health')).running_job; } catch { /* offline */ }
         if (running) {
             const page = await get('/api/stream?since=0&limit=5000').catch(() => null);
-            setMode('running');
-            if (page) { enqueue(page.events || [], true); S.cursor = page.cursor || 0; }
-            startLive(); watchJob(running);
-        } else if (params.get('autoplay') !== '0') replay();
+            if (page) S.cursor = page.cursor || 0;
+            follow(running, true);
+            if (page) enqueue((page.events || []).filter((e) => e.type !== 'run_started'), true);
+        } else if (startRun) runLive();
+        else if (params.get('autoplay') !== '0') replay();
         else startLive();
+        watchForJobs();
     }
     boot();
 })();
