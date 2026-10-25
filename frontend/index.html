@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flock — Automated Finance for Multi-Unit Restaurants</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml"
+        href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%23222226%22%2F%3E%3Cpath%20d%3D%22M8%2023.5V11.5l7%207.5%208.6-10.4%22%20fill%3D%22none%22%20stroke%3D%22%23cbf841%22%20stroke-width%3D%223.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%228.2%22%20r%3D%222.7%22%20fill%3D%22%23cbf841%22%2F%3E%3C%2Fsvg%3E">
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <!-- ========================================== -->
+    <!-- 1. NAVIGATION BAR                          -->
+    <!-- ========================================== -->
+    <nav>
+        <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
+                <rect width="32" height="32" rx="8" fill="#222226" />
+                <path d="M8 23.5V11.5l7 7.5 8.6-10.4" fill="none" stroke="#cbf841" stroke-width="3.2"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="24" cy="8.2" r="2.7" fill="#cbf841" />
+            </svg>
+            Flock
+        </div>
+        <div class="nav-links">
+            <a href="#about">What is it?</a>
+            <a href="#why">Why it exists</a>
+            <a href="#when">When & Where</a>
+            <a href="#matter">Why it matters</a>
+        </div>
+        <a class="btn btn-lime" href="dashboard.html">Get Started&nbsp;→</a>
+    </nav>
+
+    <!-- ========================================== -->
+    <!-- 2. SLIDE 1 · HERO                          -->
+    <!-- ========================================== -->
+    <section class="slide s-dark" id="top">
+        <div class="hero-grid">
+            <div>
+                <div class="pill-tag">CalHacks 13.0</div>
+                <h1 class="rv">Flock does the boring job an accountant does by hand.</h1>
+                <p class="sub rv d1">Flock takes the messy money reports from DoorDash, Uber Eats, and Grubhub, sorts
+                    them all into one place, and checks them — faster and cheaper than a person can.</p>
+                <a class="hero-more rv d2" href="#about">See how it works <span class="arr">↓</span></a>
+            </div>
+            <div class="stage" id="stage">
+                <!-- Floating Card Light: Integration Feeds -->
+                <div class="app-card card-light" data-depth="12">
+                    <h4>Reconciled Platform Feeds</h4>
+                    <div class="platform-rows">
+                        <div class="platform-row">
+                            <div class="platform-icon doordash">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff"
+                                    stroke-width="2">
+                                    <path d="M4 15l4-8h12l-4 8H4z" />
+                                </svg>
+                            </div>
+                            <div class="platform-info">
+                                <b>DoorDash</b>
+                                <small>32 stores · weekly payout</small>
+                            </div>
+                            <div class="platform-val text-green">$18,718.00</div>
+                        </div>
+
+                        <div class="platform-row">
+                            <div class="platform-icon ubereats">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff"
+                                    stroke-width="2">
+                                    <rect x="4" y="4" width="16" height="16" rx="4" />
+                                    <path d="M9 12h6" />
+                                </svg>
+                            </div>
+                            <div class="platform-info">
+                                <b>Uber Eats</b>
+                                <small>32 stores · weekly payout</small>
+                            </div>
+                            <div class="platform-val text-green">$14,511.00</div>
+                        </div>
+
+                        <div class="platform-row">
+                            <div class="platform-icon grubhub">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="8" />
+                                    <path d="M12 8v8M8 12h8" />
+                                </svg>
+                            </div>
+                            <div class="platform-info">
+                                <b>Grubhub</b>
+                                <small>32 stores · weekly payout</small>
+                            </div>
+                            <div class="platform-val text-green">$8,240.00</div>
+                        </div>
+
+                        <div class="platform-row">
+                            <div class="platform-icon noahpos">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff"
+                                    stroke-width="2">
+                                    <path d="M3 6h18v12H3z" />
+                                    <path d="M8 12h8" />
+                                </svg>
+                            </div>
+                            <div class="platform-info">
+                                <b>Noah's POS Register</b>
+                                <small>Total register sales</small>
+                            </div>
+                            <div class="platform-val text-muted">$42,880.00</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Card Dark: Automatic Discrepancy Matching -->
+                <div class="app-card card-dark" data-depth="22">
+                    <div class="card-header-row">
+                        <h4>Noah's Bagels Franchise</h4>
+                        <div class="badge-lime">Auto-Matched</div>
+                    </div>
+                    <div class="balance-disp">$860,513</div>
+                    <div class="balance-label">Overall balance reconciled</div>
+
+                    <div class="mini mini-lime-soft">
+                        <div class="mini-row">
+                            <span>Discrepancy Detected</span>
+                            <b class="text-coral">−$1,411.00</b>
+                        </div>
+                        <div class="mini-row">
+                            <small>Uber Eats promo mismatch (Store #14)</small>
+                            <span class="badge-black">Flagged & Saved</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 3. SLIDE 2 · WHAT IS IT?                   -->
+    <!-- ========================================== -->
+    <section class="slide s-card-dark" id="about">
+        <div class="kick rv">01 · What is it?</div>
+        <h2 class="rv">Dozens of stores.<br>Four platforms.<br>Messy reports.</h2>
+        <div class="cards2">
+            <div class="feature rv d1">
+                <h3>The Franchise Reality</h3>
+                <p>A Noah's Bagels franchise group with dozens of stores gets paid by DoorDash, Uber Eats, Grubhub, and
+                    its own app.</p>
+            </div>
+            <div class="feature rv d2">
+                <h3>The Data Mess</h3>
+                <p>Every single app sends money and reports in a completely different, messy format under different
+                    deals, terms, and rules.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 4. SLIDE 3 · WHY DOES IT EXIST?            -->
+    <!-- ========================================== -->
+    <section class="slide s-paper" id="why">
+        <div class="adv">
+            <div>
+                <div class="kick rv">02 · Why does it exist?</div>
+                <h2 class="rv">Apps don't talk to each other or your register.</h2>
+                <p class="sub rv d1">Each app is a separate company with its own contract, commission tiers, promos, and
+                    refund rules.</p>
+            </div>
+            <div class="adv-grid rv d1">
+                <div class="adv-cell">
+                    <div class="adv-ic">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#222226" stroke-width="2">
+                            <path d="M4 15l4-8h12l-4 8H4z" />
+                        </svg>
+                    </div>
+                    <h4>DoorDash</h4>
+                    <p>Separate commission rates, marketing promo rules, and delivery fee withholdings.</p>
+                </div>
+                <div class="adv-cell">
+                    <div class="adv-ic">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#222226" stroke-width="2">
+                            <rect x="4" y="4" width="16" height="16" rx="4" />
+                            <path d="M9 12h6" />
+                        </svg>
+                    </div>
+                    <h4>Uber Eats</h4>
+                    <p>Different refund clawbacks, merchant fees, and custom payout scheduling.</p>
+                </div>
+                <div class="adv-cell">
+                    <div class="adv-ic">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#222226" stroke-width="2">
+                            <circle cx="12" cy="12" r="8" />
+                            <path d="M12 8v8M8 12h8" />
+                        </svg>
+                    </div>
+                    <h4>Grubhub</h4>
+                    <p>Unique invoice structures, store placement fees, and regional order terms.</p>
+                </div>
+                <div class="adv-cell">
+                    <div class="adv-ic">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#222226" stroke-width="2">
+                            <path d="M3 6h18v12H3z" />
+                            <path d="M8 12h8" />
+                        </svg>
+                    </div>
+                    <h4>Noah's Register</h4>
+                    <p>None of the delivery systems automatically talk to Noah's Bagels register or bank.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 5. SLIDE 4 · WHEN & WHERE                  -->
+    <!-- ========================================== -->
+    <section class="slide s-dark" id="when">
+        <div class="model-grid">
+            <div>
+                <div class="kick rv">03 · When & Where</div>
+                <h2 class="rv">Lump sums land weekly.<br>Spread across spreadsheets.</h2>
+                <p class="sub rv d1"><b>When does it come into play?</b> Every week, when the payouts land in Noah's
+                    Bagels bank as lump sums that never match what the register says the stores sold.</p>
+                <p class="sub rv d2" style="margin-top:16px;"><b>Where does it live?</b> In Noah's Bagels accounting
+                    team, on a staff accountant’s desk, spread across four app portals, the register, the bank account,
+                    the contracts, and a pile of spreadsheets.</p>
+            </div>
+            <div class="stat-card rv d1">
+                <div class="k">weekly payout gap</div>
+                <div class="v">Lump Sum Mismatch</div>
+                <div class="text-lime" style="margin-top:6px;font-weight:600;">Bank deposit ≠ Register total</div>
+                <div class="stat-inner">
+                    <div class="k">Manual Overhead</div>
+                    <div class="v">4 Portals + Spreadsheets</div>
+                    <p style="font-size:12px;color:#a0a0a6;margin-top:8px;">Flock replaces this entire manual nightmare
+                        with automated agent sorting and checking.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 6. SLIDE 5 · WHY IT MATTERS                -->
+    <!-- ========================================== -->
+    <section class="slide s-paper" id="matter">
+        <div class="bench">
+            <div>
+                <div class="kick rv">04 · Why does it matter?</div>
+                <h2 class="rv">Mistakes slip through.<br>Noah's Bagels loses money.</h2>
+                <p class="sub rv d1">Someone gets paid to sort and check all of it by hand, which is slow and expensive.
+                </p>
+                <p class="sub rv d2" style="margin-top:16px;">Because it’s slow and manual, mistakes slip through every
+                    single week — and Noah's Bagels quietly loses money it already earned.</p>
+            </div>
+            <div class="rv d1">
+                <div class="comparison-card">
+                    <h4>Manual Accountant vs Flock</h4>
+                    <div class="comp-row">
+                        <span>Checking Speed</span>
+                        <span class="comp-val bad">Days of manual work</span>
+                        <span class="comp-val good">Seconds (Instant)</span>
+                    </div>
+                    <div class="comp-row">
+                        <span>Human Errors & Mistakes</span>
+                        <span class="comp-val bad">Frequent leaks</span>
+                        <span class="comp-val good">0.0% Error Rate</span>
+                    </div>
+                    <div class="comp-row">
+                        <span>Operating Cost</span>
+                        <span class="comp-val bad">High salary expense</span>
+                        <span class="comp-val good">Fraction of the cost</span>
+                    </div>
+                    <div class="comp-row">
+                        <span>Missing Revenue Saved</span>
+                        <span class="comp-val bad">Quietly lost</span>
+                        <span class="comp-val good">Fully Recovered</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 7. SLIDE 6 · FINAL CTA                     -->
+    <!-- ========================================== -->
+    <section class="slide s-dark final" id="demo">
+        <div style="flex:1;display:flex;flex-direction:column;justify-content:center">
+            <h2 class="rv">Stop losing money you already earned.</h2>
+            <p class="sub rv d1">Let Flock sort and check your DoorDash, Uber Eats, and Grubhub payouts automatically.
+            </p>
+            <div class="rv d2"><a class="btn btn-lime" style="font-size:17px;padding:16px 32px;" href="#top">Get Started
+                    with Flock</a></div>
+        </div>
+        <div class="final-foot rv">
+            <div>
+                <h5>Flock AI</h5>
+                <p class="tiny" style="max-width:320px;margin-top:6px;">Automated finance and reconciliation for
+                    multi-unit restaurant franchises. Built for CalHacks 13.0.</p>
+            </div>
+            <div class="tiny">© 2026 Flock AI (CalHacks 13.0)</div>
+        </div>
+    </section>
+
+    <!-- External Script -->
+    <script src="script.js"></script>
+</body>
+
+</html>
+
+
+
