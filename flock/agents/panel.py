@@ -45,7 +45,8 @@ THRESHOLD = 0.75
 TOLERANCE = 0.05
 DEFAULT_AUDIT_RATE = 0.1
 
-TERM_CHECKS = {"commission", "promo", "tax", "error_charge"}   # need a deal document behind them
+TERM_CHECKS = {"commission", "promo", "tax", "error_charge", "fee"}   # need a deal document behind them (a fee or
+# fee waiver is a deal term: one backed only by an unauthorized rep must go to a human, not count as two sources)
 DEAL_AUTHORITY = {"contract", "amendment", "auth_email"}       # documents that can set a deal term
 WEAK_AUTHORITY = {"unauth_email", "call_note"}
 OUTCOMES = ("correct", "recoverable", "conflict")

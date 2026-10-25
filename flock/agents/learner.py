@@ -111,12 +111,19 @@ def approve(rule_id: str, approver: Actor = CLI_HUMAN, store: Store | None = Non
     same = next((r for r in rules if _key(r) == _key(rule) and r.get("approved_by")), None)
     if same:  # approving twice must not create a duplicate rule
         return same
-    rule = {**rule, "rule_id": f"R-{len(rules) + 1:03d}", "approved_by": approver.id,
+    taken = {r.get("rule_id") for r in rules}
+    new_id, n = rule_id, len(rules) + 1
+    while new_id in taken:  # proposals restart at R-001 each run; only renumber when that id is already approved
+        new_id, n = f"R-{n:03d}", n + 1
+    rule = {**rule, "rule_id": new_id, "approved_by": approver.id,
             "approved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if new_id != rule_id:
+        rule["proposed_as"] = rule_id
     rules_path.write_text(json.dumps(rules + [rule], indent=2))
     if store is not None:
         store.commit(None, {
             "at": rule["approved_at"], "actor": approver.id, "role": approver.role, "action": "approve_rule",
+            "subject_type": "rule",
             "subject_id": rule["rule_id"], "allowed": True, "before": "PROPOSED", "after": "APPROVED",
             "diff": {}, "reason": rule["description"], "evidence": rule["precedents"],
         })

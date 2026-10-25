@@ -12,6 +12,8 @@ from flock.models import Actor, money
 
 WIN_PROBABILITY = {  # [need: replace with real history once we have resolved disputes]
     "commission": 0.9, "promo": 0.8, "tax": 0.85, "error_charge": 0.75, "deposit": 0.7, "missing_order": 0.8,
+    "fee": 0.8,       # a fee the contract (or an authorized waiver) says shouldn't be there: a quoted term, like promo
+    "anomaly": 0.4,   # learned baseline, no deal term to quote: the platform can argue the pattern; worth less
 }
 EFFORT_COST = 1.00                       # dollars of staff time per dispute (assumption)
 DISPUTE_LIMIT = {"doordash": 20, "ubereats": 20, "grubhub": 20, "direct_app": 999}  # per period (assumption)

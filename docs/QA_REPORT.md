@@ -7,13 +7,13 @@ Machine: MacBook (darwin), Python 3.14, the worktree's own `.venv`.
 
 | | |
 | --- | --- |
-| Test suite (default, `pytest`) | **491 passed, 7 skipped, 16 s** (was 472 + 2 skipped before this branch) |
-| Everything (`FLOCK_SLOW=1 FLOCK_TEST_BROWSER=1 pytest`) | **498 passed, 0 skipped, 57 s**, including both real-browser Clicky tests (Playwright Chromium 156) |
+| Test suite (default, `pytest`) | **496 passed, 7 skipped, 16 s** (was 472 + 2 skipped before this branch) |
+| Everything (`FLOCK_SLOW=1 FLOCK_TEST_BROWSER=1 pytest`) | **503 passed, 0 skipped, 48 s**, including both real-browser Clicky tests (Playwright Chromium 156) |
 | Quickstart | Output unchanged: 6/6 caught, Week 1: 2 to a human, Week 2: 0 |
 | Live seed demos | 15 runs over 3 profiles/source mixes: **every trap caught, 0 false alarms** |
 | Full year, bagel chain 56 x 52 weeks | 1,257,013 orders, **9,669/9,669 traps, 0 false alarms, 118 s** |
-| Hosted API (Railway) | All read routes up and returning valid JSON, but **the hosted state is empty** (no findings, no log). Run it before judging (checklist step 7) |
-| Bugs fixed | 6 (below), each with a test |
+| Hosted API (Railway) | All read routes up and returning valid JSON, empty at first; 30 min later 6 judged findings, 6/6 caught. Check it is filled before judging (checklist step 7) |
+| Bugs fixed | 11 (below), each with a test |
 | Bugs open | 7 in `flock/api.py` / `dashboard/app.py` (not mine to edit) + 2 design notes |
 
 ## What was tested
@@ -55,7 +55,7 @@ FLOCK_TEST_BROWSER=1 pytest tests/test_clicky.py tests/test_clicky_learn.py   # 
 | `flock.demo --seed 4821 --weeks 52` (12 x 52) | 9.7 s | 477/477 |
 | `flock.demo --seed 4821 --profile ca_bagel_chain --weeks 52` (56 x 52, slack/email/notes on) | **118 s** | 9,669/9,669, all 22 trap types |
 | `scripts/benchmark.py` (rules, seeds 101-110, bagel 2 weeks) | 41 s | 3,676/3,676, 0 false alarms |
-| Default `pytest` / everything | 16 s / 57 s | all pass |
+| Default `pytest` / everything | 16 s / 48 s | all pass |
 
 Every demo run above: 0 false alarms. The README says 84 s for the full year; on this laptop it is 118 s with the
 Slack/email/notes sources on. Budget two minutes for that on stage, or show the 2-week run live.
@@ -70,6 +70,17 @@ Slack/email/notes sources on. Budget two minutes for that on stage, or show the 
 | B4 | `scripts/score.py` | `score(store)` read the repo's run history whatever store it was given | Defaults to the history next to the store (`runs_for()`) | `test_fix_score_reads_the_history_next_to_the_store` |
 | B5 | `flock/portal.py` | `read_filings` crashed with `JSONDecodeError` when Clicky (another process) was halfway through appending a line, which takes down the portal's "My disputes" page | A last line without its newline is left for the next read (same rule as `store.log()`) | `test_portal_page_survives_a_half_written_filing` |
 | B6 | `flock/agents/learner.py`, `flock/market.py` | `learner --approve R-999` (a typo) and `market --recover F-xxxx` on a finding that isn't FILED printed a full traceback (on stage, in front of judges) | One-line message, exit 1; the gatekeeper still logs the denied recover | `test_fix_stage_clis_fail_with_a_sentence_not_a_traceback` |
+
+| B7 | `flock/agents/learner.py` | `approve()` renamed the approved rule to `R-<count of rules.json + 1>`, which could differ from the proposed `R-00N` the human typed, and its log line had no `subject_type` | Keeps the proposed id; renumbers only when that id is already approved (proposals restart at R-001 every run) and then records `proposed_as`; log entry has `subject_type: "rule"` | `test_fix_approved_rule_keeps_its_proposed_id_and_logs_as_a_rule` |
+| B8 | `flock/agents/deal_keeper.py` | `_claim()` dropped `read_by`, so claims the reader model extracted lost that tag | `read_by` is copied with the other locator fields | `test_fix_reader_model_claims_keep_their_read_by_tag` |
+| B9 | `flock/agents/checkers.py` | Refund checks read `money_moved`, a column the Formatter's refunds table doesn't have, so evidence always said "money moved 0.0" | `money_moved(r)`: an explicit value wins, else 0 with no `settled_at`, else the amount; used for the stuck test and the evidence. Seed sweep unchanged (every trap, 0 false alarms) | `test_fix_refund_money_moved_is_derived_not_always_zero` |
+| B10 | `flock/agents/ranker.py` | `WIN_PROBABILITY` had no `fee` or `anomaly` entry (silently 0.5) | `fee` 0.8 (a quoted term, like promo), `anomaly` 0.4 (no term to quote), documented | `test_fix_ranker_has_win_odds_for_every_check_type` |
+| B11 | `flock/agents/panel.py` | `fee` wasn't in `TERM_CHECKS`, so a fee finding backed only by an unauthorized rep's email (payout line + that email = two items) passed the weak-evidence guardrail. Offline votes got it right anyway; a live model saying "recoverable" would not have been stopped | `fee` added to `TERM_CHECKS`: a fee finding needs a contract, amendment or authorized source, or it goes to a human | `test_fix_fee_backed_only_by_an_unauthorized_rep_is_weak_evidence` |
+
+Also fixed: stale "Dave's" wording in the `flock/agents/checkers.py` docstring.
+
+B7 to B11 came from the docs agent's review. Seed sweep (15 runs) and slow + browser suite re-run after them: same
+results.
 
 Also: `tests/conftest.py` registers a `slow` marker; slow tests are skipped unless `FLOCK_SLOW=1` or `-m slow`.
 
@@ -92,7 +103,7 @@ curl -s $URL/api/findings | python3 -c '...'   # ok
 ```
 
 So: pipe curl straight into the parser (or use `print -r` / `printf '%s'`), never `echo "$json"` in zsh. Browsers'
-`fetch().json()` are fine. Right now the hosted `/api/findings` is `[]`, so there's nothing to break anyway.
+`fetch().json()` are fine. The hosted bodies were valid at both checks.
 
 Two real API bugs that also end in a `JSONDecodeError` on the client are A1 and A2 below.
 
@@ -182,8 +193,14 @@ this branch).
 | `/api/meta`, `/api/airgap` | 404 | `{"error": "no such route"}` | those routes are on `dashboard.app`, not `flock.api` |
 
 All bodies: strict-valid JSON, `Content-Type: application/json`, CORS `*` (set `FLOCK_CORS_ORIGIN` to narrow it).
-The empty state means either no `POST /api/run` since the last redeploy or the volume isn't mounted at
-`/app/data/state` (docs/DEPLOY.md). A judge opening it now sees an empty board and "1/6".
+The empty state meant no `POST /api/run` since the last redeploy (or no volume at `/app/data/state`, see
+docs/DEPLOY.md).
+
+**Re-check about 30 minutes later:** someone had run it (with CREAO judges, per COORDINATION.md). `/api/findings`
+had 6 findings, all JUDGED (14.6 KB), `/api/log` 21.5 KB, `/api/score` said `caught 6/6 traps | missed 0 | false
+alarms 0`, `/api/portal` `[]` (no human approvals yet). Every body was still strict-valid JSON with no raw control
+characters. While a run is in progress, findings sitting in CHECKED is expected. If the board is empty again before
+judging, the state isn't persisting across deploys: check the volume.
 
 ## Demo-day checklist (in order)
 
@@ -218,7 +235,7 @@ python -m flock.demo --seed 4821 --profile ca_bagel_chain --weeks 52 --confirm
 python -m flock.pipeline --reset --forget --demo-approve
 python -m dashboard.app                                    # http://127.0.0.1:5050
 
-# 7. hosted API: fill it (it is EMPTY right now), then check reads
+# 7. hosted API: if /api/findings is [], fill it; then check reads
 curl -X POST -H "Authorization: Bearer $FLOCK_API_TOKEN" -H "Content-Type: application/json" \
      -d '{"reset": true, "forget": true, "demo_approve": true}' https://web-production-812b4.up.railway.app/api/run
 curl -s https://web-production-812b4.up.railway.app/api/score | python3 -c 'import json,sys; print(json.load(sys.stdin)["text"])'

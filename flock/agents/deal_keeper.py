@@ -263,7 +263,7 @@ def _claim(raw: dict[str, Any], doc: dict[str, Any], authority: str | None, path
         c["promo_code"] = raw.get("promo_code") or doc.get("promo_code")
     if doc.get("from"):
         c["sender"] = doc["from"]
-    for k in ("locator", "medium", "authority_basis", "edited", "slack_channel", "subject"):
+    for k in ("locator", "medium", "authority_basis", "edited", "slack_channel", "subject", "read_by"):
         if raw.get(k) or doc.get(k):
             c[k] = raw.get(k) or doc.get(k)
     return c

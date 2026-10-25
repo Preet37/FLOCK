@@ -6,7 +6,7 @@ OUT: findings (CONTRACT.md "Finding"), state NEW, each with expected, actual, ga
 One checker per rule. They run independently (in parallel across orders = the "flock").
 Edge cases each should catch are listed in FLOCK_CONTEXT.md section 13.
 
-Gap sign: positive = Dave's is owed money (platform took too much, or the bank got less than the statement).
+Gap sign: positive = the restaurant is owed money (platform took too much, or the bank got less than the statement).
 Each term in `terms` may carry "conflicts": claims a human should see (e.g. an unauthorized rep email, edge case 15).
 If the payout matches the winning term but a conflicting claim says otherwise, the checker still emits a finding
 against that claim, with both quotes in the evidence, so the panel sends it to a human instead of deciding silently.
@@ -184,9 +184,17 @@ def _reported(c: dict[str, Any]) -> Any:
     return c.get("reported_at") or c.get("complaint_at")  # the generator names it complaint_at
 
 
+def money_moved(r: dict[str, Any]) -> float:
+    """What a refund actually paid out. The Formatter's refunds table has no money_moved column, so it's derived:
+    an explicit money_moved wins; otherwise a refund with no settled_at moved nothing, a settled one moved its amount."""
+    if r.get("money_moved") not in (None, ""):
+        return money(r["money_moved"])
+    return money(r["amount"]) if str(r.get("settled_at") or "").strip() else 0.0
+
+
 def _stuck_refunds(story: dict[str, Any]) -> list[dict[str, Any]]:
     return [r for r in story.get("refunds", [])
-            if str(r.get("status", "")).lower() in STUCK_REFUND and (r.get("money_moved") or 0.0) <= TOLERANCE]
+            if str(r.get("status", "")).lower() in STUCK_REFUND and money_moved(r) <= TOLERANCE]
 
 
 def check_error_charge(story: dict[str, Any], terms: dict[str, Any]) -> Finding | None:
@@ -239,7 +247,7 @@ def _unsettled_refund(story: dict[str, Any], stuck: list[dict[str, Any]]) -> Fin
     if not stuck:
         return None
     owed = money(sum(r["amount"] for r in stuck))
-    moved = money(sum(r.get("money_moved") or 0.0 for r in stuck))
+    moved = money(sum(money_moved(r) for r in stuck))
     return Finding(
         order_ids=[story["order_id"]], channel=story["channel"], check_type="error_charge",
         expected=owed, actual=moved, gap=money(owed - moved),
@@ -263,7 +271,7 @@ def check_refund(story: dict[str, Any], terms: dict[str, Any]) -> Finding | None
     for r, c in hits:
         evidence.append({"source_file": r["source_file"], "row": r["source_row"],
                          "what": f"refund {r.get('refund_id')} of {r['amount']} status '{r['status']}', "
-                                 f"money moved {r.get('money_moved') or 0.0}"})
+                                 f"money moved {money_moved(r)}"})
         evidence.append({"source_file": c["source_file"], "row": c["source_row"], "what": f"store charged {c['amount']}"})
     return Finding(
         order_ids=[story["order_id"]], channel=story["channel"], check_type="error_charge",

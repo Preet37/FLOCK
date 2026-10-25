@@ -691,3 +691,73 @@ def test_fix_model_draft_with_only_known_amounts_is_kept(monkeypatch):
     monkeypatch.setattr(llm, "ask_text", lambda *a, **k: reply)
     assert dispute_writer.draft(f) == reply
     assert dispute_writer.foreign_amounts(reply, f) == []
+
+
+# --- fixes from the docs agent's review -----------------------------------------------------------------------------
+
+def _proposal(tmp_path, rid="R-001", channel="ubereats"):
+    store = JsonStore(tmp_path / "s")
+    (tmp_path / "s" / "proposed_rules.json").write_text(json.dumps([{
+        "rule_id": rid, "channel": channel, "check_type": "promo", "authority": ["contract", "unauth_email"],
+        "outcome": "correct", "evidence_count": 2, "precedents": ["F-1", "F-2"], "description": "d"}]))
+    return store
+
+
+def test_fix_approved_rule_keeps_its_proposed_id_and_logs_as_a_rule(tmp_path):
+    from flock.agents import learner
+
+    rules = tmp_path / "rules.json"
+    rules.write_text(json.dumps([{"rule_id": "R-001", "channel": "x", "check_type": "y", "authority": [],
+                                  "outcome": "correct", "approved_by": "a"}]))
+    store = _proposal(tmp_path, rid="R-005")
+    got = learner.approve("R-005", Actor("preet", "human"), store=store, rules_path=rules)
+    assert got["rule_id"] == "R-005" and "proposed_as" not in got  # used to become R-002 (count of rules.json + 1)
+    [entry] = store.log()
+    assert entry["subject_type"] == "rule" and entry["subject_id"] == "R-005" and entry["action"] == "approve_rule"
+    # a later week proposes R-001 again for a different rule: R-001 is taken, so it is renumbered and says so
+    store = _proposal(tmp_path, rid="R-001", channel="doordash")
+    got = learner.approve("R-001", Actor("preet", "human"), store=store, rules_path=rules)
+    assert got["rule_id"] == "R-003" and got["proposed_as"] == "R-001"
+    assert [r["rule_id"] for r in json.loads(rules.read_text())] == ["R-001", "R-005", "R-003"]
+
+
+def test_fix_reader_model_claims_keep_their_read_by_tag(tmp_path):
+    from flock.agents import deal_keeper
+
+    raw = {"term_type": "commission", "value": 0.2, "quote": "20%", "read_by": "reader model", "channel": "doordash"}
+    c = deal_keeper._claim(raw, {"channel": "doordash"}, "unauth_email", tmp_path / "note.md")
+    assert c["read_by"] == "reader model"
+    assert "read_by" not in deal_keeper._claim({**raw, "read_by": None}, {}, "contract", tmp_path / "c.json")
+
+
+def test_fix_refund_money_moved_is_derived_not_always_zero():
+    from flock.agents import checkers
+
+    assert checkers.money_moved({"amount": 4.25, "status": "initiated", "settled_at": None}) == 0.0
+    assert checkers.money_moved({"amount": 4.25, "status": "completed", "settled_at": "2026-03-01T10:00:00"}) == 4.25
+    assert checkers.money_moved({"amount": 4.25, "money_moved": 1.5}) == 1.5
+    story = {"order_id": "O-1", "channel": "direct_app", "payout_lines": [], "error_charges": [],
+             "refunds": [{"refund_id": "RF-1", "amount": 4.25, "status": "initiated", "settled_at": None,
+                          "source_file": "r.csv", "source_row": 2},
+                         {"refund_id": "RF-2", "amount": 3.0, "status": "initiated", "settled_at": "2026-03-01",
+                          "source_file": "r.csv", "source_row": 3}]}
+    assert [r["refund_id"] for r in checkers._stuck_refunds(story)] == ["RF-1"]  # RF-2 settled: money moved
+
+
+def test_fix_ranker_has_win_odds_for_every_check_type():
+    from flock.agents import ranker
+    from flock.models import CHECK_TYPES
+
+    assert set(CHECK_TYPES) <= set(ranker.WIN_PROBABILITY)
+    assert ranker.WIN_PROBABILITY["anomaly"] < ranker.WIN_PROBABILITY["fee"]
+
+
+def test_fix_fee_backed_only_by_an_unauthorized_rep_is_weak_evidence():
+    from flock.agents import panel
+
+    line = {"source_file": "data/raw/doordash/doordash_payouts.csv", "row": 9, "what": "fees 1.00 charged"}
+    unauth = {"check_type": "fee", "evidence": [line, {"source_file": "e.eml", "quote": "we'll waive it",
+                                                       "authority": "unauth_email"}]}
+    auth = {"check_type": "fee", "evidence": [line, {"source_file": "e.eml", "quote": "fee waived",
+                                                     "authority": "auth_email"}]}
+    assert panel.weak_evidence(unauth) and not panel.weak_evidence(auth)
