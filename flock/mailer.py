@@ -76,9 +76,12 @@ def _resend(to: str, subject: str, body: str) -> str | None:
                                  data=json.dumps({"from": sender(), "to": [to], "subject": subject,
                                                   "text": body}).encode(),
                                  headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
-                                          "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return (json.loads(r.read() or b"{}") or {}).get("id")
+                                          "Content-Type": "application/json", "User-Agent": "flock-mailer/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return (json.loads(r.read() or b"{}") or {}).get("id")
+    except urllib.error.HTTPError as e:   # keep Resend's reason (unverified recipient, bad from, ...) for the outbox row
+        raise RuntimeError(f"HTTP {e.code}: {e.read()[:300].decode(errors='replace')}") from None
 
 
 def _keep(state_dir: Path, row: dict[str, Any]) -> None:
