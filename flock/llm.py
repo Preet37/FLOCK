@@ -680,6 +680,22 @@ def _creaoapp_request(method: str, path: str, body: dict[str, Any] | None = None
         raise CreaoHTTPError(e.code, str(code), retry_after) from None
 
 
+def _creaoapp_answer(result: dict[str, Any]) -> str:
+    """agent.creao.ai returns two things: result.text, a compact object (outcome, confidence, echoed fields, often
+    no reason), and result.chatText, the narration that ends with the FLOCK_ANSWER line carrying the full reason.
+    Take the marked object when either has one and lay it over the compact object, so nothing is lost."""
+    text, chat = str(result.get("text") or ""), str(result.get("chatText") or "")
+    base = _creao_answer([], {"text": text}) if text else ""
+    marked = _marked_json(chat) or _marked_json(text)
+    if not marked:
+        return base or chat
+    try:
+        base_obj = json.loads(base) if base.startswith("{") else {}
+    except ValueError:
+        base_obj = {}
+    return json.dumps({**base_obj, **json.loads(marked)})
+
+
 def _creaoapp_run(app_id: str, system: str, user: str, max_tokens: int) -> tuple[str, str]:
     """Run an agent built on agent.creao.ai: POST /api/v1/apps/{appId}/runs {inputs}, poll until completed, read
     result.text (or chatText). Same instructions/request contract and the same FLOCK_ANSWER extraction."""
@@ -712,7 +728,7 @@ def _creaoapp_run(app_id: str, system: str, user: str, max_tokens: int) -> tuple
         state = st.get("status")
         if state == "completed":
             result = st.get("result") if isinstance(st.get("result"), dict) else {"text": st.get("result")}
-            text = _creao_answer([], {"text": result.get("text") or result.get("chatText") or ""})
+            text = _creaoapp_answer(result)
             with _stats_lock:
                 _usage.setdefault(f"app:{app_id}", Counter())["calls"] += 1
             return text, f"creaoapp:{st.get('appName') or app_id}"
