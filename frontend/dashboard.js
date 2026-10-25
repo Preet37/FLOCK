@@ -31,7 +31,12 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (n) => (n == null || isNaN(n)) ? '—' : `${Number(n) < 0 ? '−' : ''}$${Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Cards: no cents once it's in the thousands ($41,233); tables keep cents
+const moneyCard = (n) => (n == null || isNaN(n)) ? '—' : Math.abs(Number(n)) >= 1000 ? money(Math.round(Number(n))).replace(/\.00$/, '') : money(n);
 const num = (n) => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString();
+// Accuracy never rounds up: 1,944/1,945 is 99.9%, not 100%
+const accPct = (n) => (n == null || isNaN(n)) ? '—' : `${(Math.floor(Number(n) * 1000) / 10).toFixed(Number(n) >= 1 ? 0 : 1)}%`;
+const usd2 = (n) => (n == null || isNaN(n)) ? '—' : Number(n) > 0 && Number(n) < 0.01 ? '<$0.01' : money(n);
 const pct = (n) => (n == null || isNaN(n)) ? '—' : `${Math.round(Number(n) * 100)}%`;
 const icons = () => window.lucide && lucide.createIcons();
 const label = (s) => String(s ?? '').replace(/_/g, ' ');
@@ -130,8 +135,6 @@ async function detectBase() {
             if (h && h.status === 'ok') return [location.origin, 'this page is served by the Flock API'];
         } catch { /* not served by the API: fall through */ }
     }
-    const saved = store('flock.api');
-    if (saved) return [saved.replace(/\/$/, ''), 'saved in settings'];
     return [DEFAULT_API, 'the hosted default'];
 }
 
@@ -186,10 +189,10 @@ async function pollSlow() {
 
 // Plain words for the people in the room: what each check means, what each verdict asks of you
 const CHECK_HELP = {
-    commission: 'Commission: app charged a higher % than the contract',
+    commission: 'Commission: the platform charged a higher % than the contract',
     deposit: "Deposit: payout lump sum doesn't match the orders inside it",
     fee: "Fee: a fee the contract waived or doesn't allow",
-    promo: "Promo: the store was charged for a promotion the deal says the app pays for",
+    promo: "Promo: the store was charged for a promotion the deal says the platform pays for",
 };
 const checkHelp = (c) => CHECK_HELP[c] || CHECK_HELP[String(c || '').split('_')[0]] || CHECK_HELP[Object.keys(CHECK_HELP).find((k) => String(c || '').includes(k))] || '';
 const VERDICT = { recoverable: ['Claim it', 'money we can claim back'], conflict: ['Needs you', 'documents disagree; a human decides'] };
@@ -217,7 +220,7 @@ const PAY_STATUS = {
 };
 const CHANNEL = {
     doordash: ['DoorDash', '#EB1700', 'DD'], ubereats: ['Uber Eats', '#06C167', 'UE'], grubhub: ['Grubhub', '#FF8000', 'GH'],
-    direct_app: ['Direct app', '#0084FF', 'D'],
+    direct_app: ['Your website', '#0084FF', 'W'],
 };
 const AUTH_PILL = (a) => /^(contract|amendment|auth_email)$/.test(a) ? 'bg-emerald-100 text-emerald-800'
     : /unauth/.test(a) ? 'bg-red-100 text-red-700' : /call/.test(a) ? 'bg-amber-100 text-amber-800' : 'bg-gray-200 text-gray-700';
@@ -270,7 +273,7 @@ function route() {
 
 const TITLES = {
     overview: ['Welcome back!', 'Dashboard'],
-    lumpsums: ['Lump sums', 'Do the apps owe you money?'],
+    lumpsums: ['Lump sums', 'Do the delivery platforms owe you money?'],
     payout: ['Lump sum', 'What it should have been vs what arrived'],
     theater: ['Judge theater', 'Judges vote, bet and debate; people decide; Clicky files'],
     sources: ['Sources / Inbox', 'Slack and email batches the connectors brought in, judged against the contracts'],
@@ -366,7 +369,7 @@ function renderOverviewShell() {
                     <div class="flex flex-col min-h-0 overflow-x-auto">
                         <div class="min-w-[640px]">
                             <div class="grid grid-cols-12 px-3 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                                <div class="col-span-2">ID</div><div class="col-span-3">App</div><div class="col-span-2">Check</div>
+                                <div class="col-span-2">ID</div><div class="col-span-3">Platform</div><div class="col-span-2">Check</div>
                                 <div class="col-span-1 text-right">Expected</div><div class="col-span-1 text-right">Actual</div><div class="col-span-1 text-right">Gap</div><div class="col-span-2 text-right">Status</div>
                             </div>
                             <div id="findingRows" class="overflow-y-auto custom-scroll pr-1 flex flex-col max-h-96 min-h-0 divide-y divide-gray-50"></div>
@@ -427,8 +430,13 @@ function moneyPeriod(kind) {
     const card = (m.cards || []).find((c) => c.id === 'money_saved')?.value || {};
     const src = m.money?.[kind] || (kind === 'month' ? card.month : card.ytd);
     if (src && typeof src === 'object') {
-        return { usd: src.usd ?? src.total, months: src.months ?? src.by_month?.length, annual: src.annualized ?? src.annualized_projection,
-            run_rate: src.run_rate_annual ?? src.run_rate ?? src.annualized, by_month: src.by_month };
+        return { usd: src.found ?? src.usd ?? src.total, months: src.months ?? src.by_month?.length,
+            annual: kind === 'month' ? (card.annualized_projection ?? src.annualized) : null,
+            annual_display: kind === 'month' ? card.annual_display : null,
+            run_rate: kind === 'ytd' ? (m.money?.annualized_run_rate ?? src.run_rate_annual ?? src.run_rate) : null,
+            cost: src.cost_usd ?? src.cost ?? (Array.isArray(src.by_month) && src.by_month.length && src.by_month.every((x) => x.cost_usd != null)
+                ? src.by_month.reduce((t, x) => t + x.cost_usd, 0) : null),
+            by_month: src.by_month };
     }
     if (kind === 'month') return { usd: card.monthly ?? card.usd, annual: card.annualized ?? card.annualized_projection };
     const runs = state.score?.runs || [];
@@ -451,20 +459,23 @@ function metricCards(m) {
             <span class="inline-flex rounded-full bg-white/10 p-0.5 text-[10px] font-bold">${[['month', 'Month'], ['ytd', 'YTD']].map(([k, t]) => `
                 <button data-saved="${k}" class="px-2 py-0.5 rounded-full ${(savedPeriod === k && (k === 'month' || ytd)) ? 'bg-purpleAccent text-white' : 'text-gray-400 hover:text-white'}">${t}</button>`).join('')}</span></span>`;
         const short = (n) => money(n).replace(/\.\d\d$/, '');
-        out.push({ id: 'money_saved', label: 'Total Saved', labelHtml: toggle, icon: 'wallet', dark: true, value: money(cur?.usd),
+        out.push({ id: 'money_saved', label: 'Total Saved', labelHtml: toggle, icon: 'wallet', dark: true, value: moneyCard(cur?.usd),
             sub: cur === ytd ? `${num(ytd.months)} month${ytd.months === 1 ? '' : 's'}${ytd.run_rate != null ? ` · ≈ ${short(ytd.run_rate)}/yr run rate` : ''}`
-                : cur?.annual != null ? `≈ ${short(cur.annual)} / year` : '' });
+                : cur?.annual_display ? cur.annual_display.replace(/^~/, '≈ ') : cur?.annual != null ? `≈ ${short(cur.annual)} / year` : '' });
     }
     if (c) {
+        // Same period as the Total Saved toggle: YTD cost when the API has it, else the latest month's
         const v = c.value || {};
         const est = v.usd != null ? null : (v.usd_estimate != null ? { usd: v.usd_estimate } : tokenEstimate(c.inputs));
-        const usd = v.usd != null ? v.usd : est?.usd;
-        const fmt = (n) => n === 0 ? '$0' : n != null && n < 1 ? `$${Number(n).toFixed(3)}` : money(n);
-        out.push({ id: 'cost', label: 'Agent Cost', icon: 'cpu', value: fmt(usd), sub: est ? 'estimated from tokens' : '' });
+        const monthUsd = v.usd != null ? v.usd : est?.usd;
+        const ytd = moneyPeriod('ytd');
+        const useYtd = savedPeriod === 'ytd' && ytd?.cost != null;
+        out.push({ id: 'cost', label: 'Agent Cost', icon: 'cpu', value: usd2(useYtd ? ytd.cost : monthUsd),
+            sub: useYtd ? `${num(ytd.months)} month${ytd.months === 1 ? '' : 's'}` : savedPeriod === 'ytd' ? 'latest month' : 'this month' });
     }
     if (a) {
         const v = a.value || {};
-        out.push({ id: 'accuracy', label: 'Accuracy', icon: 'target', value: pct(v.accuracy), sub: `${num(v.caught)}/${num(v.total)} caught` });
+        out.push({ id: 'accuracy', label: 'Accuracy', icon: 'target', value: accPct(v.accuracy ?? (v.total ? v.caught / v.total : null)), sub: `${num(v.caught)}/${num(v.total)} caught` });
     }
     return out;
 }
@@ -541,13 +552,20 @@ function renderCurve(id, tall = false) {
 let hoursYear = null;
 function hoursRows() {
     const bm = state.metrics?.money?.ytd?.by_month;
+    const est = hoursFromRuns();
     if (Array.isArray(bm) && bm.length) {
         return bm.map((r, i) => {
             const lbl = r.label || r.month || r.period || '';
+            const e = est.find((x) => x.label === lbl) || {};
+            const agent = r.agent_hours ?? (r.agent_seconds != null ? r.agent_seconds / 3600 : null);
             return { label: lbl, year: (String(lbl).match(/\d{4}/) || [String(r.at || '').slice(0, 4)])[0] || String(new Date().getFullYear()),
-                agent: r.agent_hours ?? null, approx: false, human: r.human_hours_est ?? r.human_hours ?? null, last: i === bm.length - 1 };
+                agent: agent ?? e.agent ?? null, approx: agent == null && !!e.approx,
+                human: r.human_hours_est ?? r.human_hours ?? e.human ?? null, last: i === bm.length - 1 };
         });
     }
+    return est;
+}
+function hoursFromRuns() {
     const runs = state.score?.runs || [];
     const inputs = (state.metrics?.cards || []).find((c) => c.id === 'agent_time')?.inputs || {};
     const minPer = inputs.minutes_per_store_week || 60;
@@ -772,6 +790,7 @@ function agentStatus(ag) {
     return st;
 }
 function agentStatusText(ag, st) {
+    if (ag.status_text) return ag.status_text;
     if (st === 'working') return ag.doing || ag.message || 'working…';
     if (st === 'done') return ag.actions ? `done · ${num(ag.actions)}` : 'done';
     if (st === 'error') return 'error';
@@ -810,11 +829,12 @@ function renderLumpSums() {
     const statusCounts = Object.entries(s.by_status || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${PAY_STATUS[k]?.[1] || label(k)}`).join(' · ');
     el.innerHTML = `
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
-            ${statCard({ label: 'Apps owe you', value: money(s.owed), icon: 'wallet', dark: true })}
-            ${statCard({ label: 'Should have been paid', value: money(s.expected_net), icon: 'file-text' })}
-            ${statCard({ label: 'Actually paid', value: money(s.received), icon: 'landmark' })}
+            ${statCard({ label: 'Delivery platforms owe you', value: moneyCard(s.owed), sub: 'DoorDash, Uber Eats, Grubhub', icon: 'wallet', dark: true })}
+            ${statCard({ label: 'Should have been paid', value: moneyCard(s.expected_net), icon: 'file-text' })}
+            ${statCard({ label: 'Actually paid', value: moneyCard(s.received), icon: 'landmark' })}
             ${statCard({ label: 'Deposits', value: num(s.payouts), icon: 'banknote' })}
-            ${statCard({ label: 'Needs your call', value: money(s.in_question), icon: 'scale' })}
+            <button data-bell class="text-left">${statCard({ label: 'Waiting on you', value: `${num(approvalItems().length)} case${approvalItems().length === 1 ? '' : 's'}`,
+                sub: `${moneyCard(state.approvals?.total_usd ?? approvalItems().reduce((t, it) => t + (Number(it.gap ?? it.amount) || 0), 0))} in question`, icon: 'scale', cls: 'h-full hover:ring-2 hover:ring-purpleAccent/40 transition' })}</button>
         </div>
         ${whiteCard(`${cardHead('Deposits')}
             ${rows.length ? `<div class="overflow-x-auto"><div class="min-w-[860px]">
@@ -914,6 +934,19 @@ function gapCallouts(p) {
     }).join('')}</div>`;
 }
 
+// Short basis text: a pill when no contract sets the line, never a list of store IDs
+function basisCell(st) {
+    if (st.computable === false) return `<span title="The contract doesn't set this fee, so there's nothing to check it against.">${pill('bg-gray-100 text-gray-600', 'not in contract · not checked')}</span>`;
+    let t = String(st.basis || st.note || '');
+    if (t === 'nothing charged') return '';
+    t = t.replace(/\b(S\d{2,3})(?:\s*,\s*(?:and\s+)?S\d{2,3}){3,}(?:,?\s*(?:and|…|\.\.\.)?\s*S\d{2,3})*/g, (m) => `${m.match(/S\d{2,3}/g).length} stores`)
+        .replace(/\s*\((?:contract|amendment)[^)]*\.json\)/g, '').replace(/contracts\/\S+\.json/g, 'contract')
+        .replace(/^commission rate ([\d.]+)$/, (m, x) => `contract: ${+(x * 100).toFixed(2)}% commission`)
+        .replace(/^promo split \[?'?([\d.]+)'?\]?$/, (m, x) => `contract: store pays ${+(x * 100).toFixed(0)}% of promos`)
+        .replace(/^fee ([\d.]+)$/, (m, x) => `contract: $${Number(x).toFixed(2)} per order`);
+    return esc(t.length > 80 ? `${t.slice(0, 77)}…` : t);
+}
+
 function renderPayout() {
     const el = $('payout');
     const p = state.payout;
@@ -921,31 +954,34 @@ function renderPayout() {
     const ob = p.owed_breakdown || {};
     $('pageTitle').textContent = `${p.platform || chanName(p.channel)} ${p.payout_id}`;
     $('pageSub').textContent = `${p.deposit_id || 'no deposit'}${p.deposit_date ? ` on ${p.deposit_date}` : ''} · ${num(p.stores)} stores · ${num(p.orders)} orders in one deposit`;
-    const steps = (p.waterfall || []);
+    const isZero = (st) => st.kind === 'deduction' && !Number(st.amount) && !Number(st.expected) && !Number(st.gap);
+    const steps = (p.waterfall || []).filter((st) => !isZero(st));
+    const zeroLines = (p.waterfall || []).filter(isZero).length;
     el.innerHTML = `
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 mb-3"><a href="#/lumpsums" class="flex items-center gap-1 hover:text-gray-900"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> Lump sums</a>
             <span>/</span><span class="font-mono">${esc(p.payout_id)}</span> ${payPill(p.status)}</div>
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
-            ${statCard({ label: 'Sales', value: money(p.gross), icon: 'banknote' })}
-            ${statCard({ label: 'Should have been paid', value: money(p.expected_net), icon: 'file-text' })}
-            ${statCard({ label: 'Actually paid', value: money(p.received), icon: 'landmark' })}
+            ${statCard({ label: 'Sales', value: moneyCard(p.gross), icon: 'banknote' })}
+            ${statCard({ label: 'Should have been paid', value: moneyCard(p.expected_net), icon: 'file-text' })}
+            ${statCard({ label: 'Actually paid', value: moneyCard(p.received), icon: 'landmark' })}
             ${statCard({ label: 'Missing', value: `<span class="${p.shortfall > 0.05 ? 'text-red-600' : ''}">${money(p.shortfall)}</span>`, icon: 'triangle-alert' })}
-            ${statCard({ label: 'Apps owe you', value: money(ob.total), icon: 'wallet', dark: true })}
+            ${statCard({ label: 'Platform owes you', value: moneyCard(ob.total), icon: 'wallet', dark: true })}
         </div>
-        ${whiteCard(`${cardHead('Waterfall', 'Gross → each deduction (statement vs contract) → statement net → expected net → deposit → shortfall')}
+        ${whiteCard(`${cardHead('Where the money went', 'sales → fees → what should have arrived → what did')}
             <div id="waterfall">${waterfallSvg(steps)}</div>
             ${gapCallouts(p)}
             <div class="overflow-x-auto mt-4"><table class="w-full text-left text-xs sm:text-sm min-w-[640px]">
                 <thead class="text-gray-400 text-[11px] uppercase tracking-wider"><tr class="border-b border-gray-100">
-                    <th class="py-2 pr-3">Step</th><th class="py-2 pr-3 text-right">Statement</th><th class="py-2 pr-3 text-right">Contract</th><th class="py-2 pr-3 text-right">Gap</th><th class="py-2">Basis / findings</th></tr></thead>
+                    <th class="py-2 pr-3">Step</th><th class="py-2 pr-3 text-right">Statement</th><th class="py-2 pr-3 text-right">Contract</th><th class="py-2 pr-3 text-right">Gap</th><th class="py-2">Why</th></tr></thead>
                 <tbody class="divide-y divide-gray-50">${steps.map((s) => `<tr data-step="${esc(s.key)}">
                     <td class="py-2 pr-3 font-bold text-gray-900">${esc(s.label)}</td>
                     <td class="py-2 pr-3 text-right font-mono tabular-nums">${s.key === 'expected_net' || s.key === 'shortfall' ? '' : money(s.amount)}</td>
                     <td class="py-2 pr-3 text-right font-mono tabular-nums">${s.kind === 'deduction' ? (s.computable === false ? '<span class="text-gray-400">no deal term</span>' : money(s.expected)) : s.key === 'expected_net' ? money(s.amount) : ''}</td>
                     <td class="py-2 pr-3 text-right font-mono font-bold tabular-nums ${s.gap > 0 || (s.key === 'shortfall' && s.amount > 0.05) ? 'text-red-600' : 'text-gray-300'}">${s.kind === 'deduction' ? (s.gap ? money(s.gap) : '') : s.key === 'shortfall' ? money(s.amount) : ''}</td>
-                    <td class="py-2 text-xs text-gray-500">${esc(s.basis || s.note || '')} ${(s.finding_ids || []).map((f) => `<a href="#/finding/${encodeURIComponent(f)}" class="font-mono font-bold text-purpleAccent hover:underline">${esc(f)}</a>`).join(' ')}</td>
+                    <td class="py-2 text-xs text-gray-500">${basisCell(s)} ${(s.finding_ids || []).map((f) => `<a href="#/finding/${encodeURIComponent(f)}" class="font-mono font-bold text-purpleAccent hover:underline">${esc(f)}</a>`).join(' ')}</td>
                 </tr>`).join('')}</tbody></table></div>
-            <div class="mt-4 rounded-2xl bg-lightCardBg p-3 text-xs text-gray-600"><b class="text-gray-900">Apps owe you ${money(ob.total)}</b> = ${money(ob.open_gaps)} open recoverable gaps + ${money(ob.deposit_shortfall)} deposit shortfall. ${esc(ob.formula || '')}</div>`, 'mb-4 lg:mb-5')}
+            ${zeroLines ? `<p class="text-xs text-gray-400 mt-2">${zeroLines} line${zeroLines === 1 ? '' : 's'} with nothing charged</p>` : ''}
+            <div class="mt-4 rounded-2xl bg-lightCardBg p-3 text-sm"><b class="text-gray-900">Platform owes you ${money(ob.total)}</b></div>`, 'mb-4 lg:mb-5')}
         ${whiteCard(`${cardHead('Findings inside this lump sum', `${(p.findings_detail || []).length} · click one for the case file`)}
             ${(p.findings_detail || []).length ? `<div class="flex flex-col divide-y divide-gray-50">${p.findings_detail.map((f) => `
                 <div data-finding="${esc(f.finding_id)}" class="grid grid-cols-12 items-center gap-2 px-3 py-3 hover:bg-gray-50/80 cursor-pointer text-xs sm:text-sm">
@@ -1232,14 +1268,19 @@ async function refreshDrawer() {
 
 // Evidence references open agent E's cell-level viewer (frontend/evidence.js) when it is loaded
 const evRef = (ev) => ev.source_file ? `${ev.source_file}${ev.row != null ? `:${ev.row}` : ''}` : '';
-function evidenceRef(ev) {
+function evidenceRef(ev, i) {
     const ref = evRef(ev);
-    const text = `${esc(ref)}${ev.locator ? ` (${esc(ev.locator)})` : ''}`;
-    return ref ? `<button data-ev-ref="${esc(ref)}" class="truncate font-mono text-left text-purpleAccent hover:underline" title="Open the source cell">${text}</button>` : `<span class="truncate font-mono">${text}</span>`;
+    const text = `${esc(ref)}${ev.column ? ` · ${esc(ev.column)}` : ''}${ev.locator ? ` (${esc(ev.locator)})` : ''}`;
+    return ref ? `<button data-ev-ref="${esc(ref)}" data-ev-idx="${i}" class="truncate font-mono text-left text-purpleAccent hover:underline" title="Open the source cell">${text}</button>` : `<span class="truncate font-mono">${text}</span>`;
 }
-function openEvidence(ref) {
-    if (window.FlockEvidence && typeof window.FlockEvidence.open === 'function') window.FlockEvidence.open(ref);
+function openEvidence(ref, idx) {
+    const ev = idx != null ? state.drawerEvidence?.[idx] : null;
+    if (window.FlockEvidence && typeof window.FlockEvidence.open === 'function') window.FlockEvidence.open(ev || ref, state.base);
     else toast(`Source: ${ref}`, '');
+}
+function openFindingEvidence(fid) {
+    if (window.FlockEvidence && typeof window.FlockEvidence.openFinding === 'function') window.FlockEvidence.openFinding(fid, state.base);
+    else toast('The evidence viewer is not loaded.', 'error');
 }
 
 const card = (title, body, extra = '') => `<section class="bg-white rounded-3xl p-4 sm:p-5 card-shadow border border-gray-100 ${extra}"><h4 class="font-bold text-gray-900 text-sm mb-3">${title}</h4>${body}</section>`;
@@ -1268,6 +1309,14 @@ function refusalCard() {
 const filedFindings = () => state.findings.filter((f) => f.portal_ref || f.state === 'FILED' || f.state === 'RECOVERED');
 const screenUrl = (id) => `${state.base}/api/filings/${encodeURIComponent(id)}/screen`;
 
+const agentScreenUrl = (f) => `agent-screen.html?finding=${encodeURIComponent(fidOf(f))}${state.base && state.base !== location.origin ? `&api=${encodeURIComponent(state.base)}` : ''}`;
+function watchClickyCard(f) {
+    if (f.state !== 'APPROVED') return '';
+    return card('<span class="flex items-center gap-2"><i data-lucide="mouse-pointer-click" class="w-4 h-4 text-orange-600"></i> Approved: Clicky files it next</span>', `
+        <a href="${agentScreenUrl(f)}" target="_blank" rel="noopener"
+           class="inline-flex rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm px-4 py-2.5 items-center gap-1.5"><i data-lucide="monitor-play" class="w-4 h-4"></i> Watch Clicky file it</a>`);
+}
+
 function clickyCard(f, data) {
     const filing = data.filing || f.filing || null;
     if (!f.portal_ref && !filing && !['FILED', 'RECOVERED'].includes(f.state)) return '';
@@ -1275,7 +1324,10 @@ function clickyCard(f, data) {
     return card('<span class="flex items-center gap-2"><i data-lucide="mouse-pointer-click" class="w-4 h-4 text-orange-600"></i> Clicky filed it</span>', `
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <p class="text-sm text-gray-700">Claim ${ref ? `<span class="font-mono font-bold text-gray-900">${esc(ref)}</span>` : ''} in the ${esc(chanName(f.channel))} portal${filing?.filed_at ? ` at ${esc(clock(filing.filed_at))}` : ''}.</p>
-            <button data-screen="${esc(fidOf(f))}" class="rounded-2xl bg-cardDark hover:bg-black text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5 shrink-0"><i data-lucide="monitor" class="w-4 h-4"></i> See Clicky's screen</button>
+            <span class="flex gap-2 shrink-0">
+                <a href="${agentScreenUrl(f)}" target="_blank" rel="noopener" class="rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="monitor-play" class="w-4 h-4"></i> Watch Clicky file it</a>
+                <button data-screen="${esc(fidOf(f))}" class="rounded-2xl bg-cardDark hover:bg-black text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="monitor" class="w-4 h-4"></i> Confirmation</button>
+            </span>
         </div>`);
 }
 
@@ -1328,6 +1380,7 @@ function renderFindingDetail(data) {
     const log = data.log || [];
     const fu = data.follow_up || f.follow_up || null;
     $('drawerTitle').textContent = `${fidOf(f)} · ${label(f.check_type)} on ${chanName(f.channel)}`;
+    state.drawerEvidence = f.evidence || [];
 
     const rounds = {};
     (f.votes || []).forEach((v) => (rounds[v.round || 1] ||= []).push(v));
@@ -1368,6 +1421,7 @@ function renderFindingDetail(data) {
                 <button data-decide="reject" class="flex-1 rounded-2xl bg-cardDark hover:bg-black text-white font-bold text-sm py-2.5 flex items-center justify-center gap-1.5"><i data-lucide="x" class="w-4 h-4"></i> Reject</button>
             </div>
             <p class="text-[11px] text-gray-400 mt-2">Deciding as <b>${esc(settings.actor)}</b>.</p>`, 'ring-2 ring-purpleAccent/30') : '',
+        watchClickyCard(f),
         clickyCard(f, data),
         emailCard(f, data, fu),
         followUpCard(f, fu),
@@ -1378,10 +1432,10 @@ function renderFindingDetail(data) {
             <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700">${(cf.facts || []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
             ${cf.next_step ? `<p class="text-sm text-gray-900 font-semibold mt-3">Next: ${esc(cf.next_step)}</p>` : ''}
             ${(cf.claims || []).length ? `<div class="mt-3 space-y-2">${cf.claims.map((c) => `<div class="rounded-2xl bg-lightCardBg p-2.5 text-xs flex flex-wrap items-center gap-2">${pill(AUTH_PILL(c.authority), label(c.authority))}${c.binding != null ? (c.binding ? pill('bg-emerald-100 text-emerald-800', 'binding') : pill('bg-red-100 text-red-700', 'not binding')) : ''}<span class="text-gray-700">says ${esc(c.value)}</span>${c.sender ? `<span class="text-gray-500">${esc(c.sender)}</span>` : ''}</div>`).join('')}</div>` : ''}`) : '',
-        card('Evidence', (f.evidence || []).map((ev) => `
+        card(`<span class="flex items-center justify-between gap-2">Evidence${(f.evidence || []).length ? `<button data-ev-finding="${esc(fidOf(f))}" class="text-xs font-bold text-purpleAccent hover:underline flex items-center gap-1"><i data-lucide="table" class="w-3.5 h-3.5"></i> Show the cells</button>` : ''}</span>`, (f.evidence || []).map((ev, i) => `
             <div class="rounded-2xl bg-lightCardBg p-3 mb-2 last:mb-0" data-evidence>
                 <div class="flex items-center justify-between gap-2 text-[11px] font-semibold text-gray-500">
-                    ${evidenceRef(ev)}
+                    ${evidenceRef(ev, i)}
                     <span class="flex gap-1 shrink-0">${ev.conflict ? pill('bg-amber-100 text-amber-800', 'conflicts') : ''}${ev.authority ? pill(AUTH_PILL(ev.authority), label(ev.authority)) : ''}</span>
                 </div>
                 <p class="text-sm text-gray-800 mt-1">${ev.quote ? `“${esc(ev.quote)}”` : esc(ev.what)}</p>
@@ -1420,6 +1474,7 @@ function renderAgentDetail(id, { data, log }) {
     const shots = data ? collectImages(data.screens || data.screenshots || []) : [];
     $('drawerBody').innerHTML = [
         card('What it does', `<p class="text-sm text-gray-700">${esc(ag.job || data?.job || '')}</p>
+            ${ag.status_text ? `<p class="text-sm font-semibold text-gray-900 mt-2">${esc(ag.status_text)}</p>` : ''}
             <p class="text-xs text-gray-500 mt-2">Owner: ${esc(ag.owner || data?.owner || '—')} · ${num(ag.actions ?? entries.length)} actions · last ${esc(ago(ag.last_at))}</p>`),
         id === 'clicky' ? card("Clicky's screens", filedFindings().length ? `<div class="flex flex-col gap-2">${filedFindings().slice(0, 20).map((f) => `
             <div class="flex items-center justify-between gap-3 rounded-2xl bg-lightCardBg p-3 text-sm">
@@ -1439,7 +1494,7 @@ async function decide(id, action) {
     try {
         const out = await post(`/api/findings/${encodeURIComponent(id)}/${action}`, { actor: settings.actor, reason });
         state.refusal = null;
-        state.lastDecision = { action, actor: settings.actor, filed: out.filed || [], email: out.email || out.vendor_email || null };
+        state.lastDecision = { action, actor: out.actor || settings.actor, filed: out.filed || [], email: out.email || out.vendor_email || null, screen: out.screen || null };
         const em = state.lastDecision.email;
         toast(action === 'approve'
             ? `${id} approved.${out.filed?.length ? ` Clicky filed it: ${out.filed.join(', ')}.` : ''}${em ? ` Email ${/sent/i.test(em.status || '') ? 'sent' : 'queued'} to ${em.to || em.recipient}.` : ''}`
@@ -1527,7 +1582,8 @@ async function pollJob() {
         if (d.status !== 'running') {
             j.finished = true;
             Object.keys(state.cache).forEach((k) => { if (k !== 'bannerHtml') state.cache[k] = null; });
-            toast(d.status === 'done' ? `Live run finished in ${duration(d.seconds)}. ${approvalItems().length ? 'Approvals are waiting.' : ''}` : `Live run ${d.status}: ${d.error || ''}`, d.status === 'done' ? 'ok' : 'error');
+            const res = d.result || {};
+            toast(d.status === 'done' ? `${res.month || 'New month'} done in ${duration(d.seconds)}: ${num(res.findings)} findings, ${num(res.approvals ?? res.to_human)} need you.` : `Live run ${d.status}: ${d.error || ''}`, d.status === 'done' ? 'ok' : 'error');
             setTimeout(() => { if (state.job === j) { state.job = null; renderJob(); } }, 20000);
         }
     } catch (e) {
@@ -1585,6 +1641,11 @@ async function loadBenchmarks() {
 
 // Accepts a list (contestants / rows) or benchmark.py's results.json ({current: {name: aggregate}})
 function benchRows(d) {
+    if (d.benchmark?.rows) {
+        const total = d.benchmark.total;
+        return d.benchmark.rows.map((r) => ({ ...r, name: r.contestant, total: r.total ?? total,
+            accuracy: total ? r.caught / total : null, p50: r.p50_s, cost: r.usd_per_1000 }));
+    }
     const list = d.contestants || d.rows || d.results;
     const rows = Array.isArray(list) ? list : Object.entries(d.current || list || {}).map(([name, r]) => ({ name, ...r }));
     return rows.map((r) => {
@@ -1605,8 +1666,10 @@ function renderBenchmarks() {
         return icons();
     }
     const rows = benchRows(d).sort((a, b) => (b.accuracy ?? -1) - (a.accuracy ?? -1));
-    const g = d.gx10 || {}, tr = d.training || {};
-    const best = rows.find((r) => /tuned|flock-judge-v1/i.test(r.name)) || rows[0];
+    const head = d.speed?.headline || {};
+    const g = d.gx10 || { ...(d.machine || {}), ...(head.speedup ? { speedup: head.speedup, mac_p50_s: head.mac_p50_s, gx10_p50_s: head.gx10_p50_s } : {}) };
+    const tr = d.training || {};
+    const best = rows.find((r) => r.kind === 'tuned' || /tuned|flock-judge-v1/i.test(r.name)) || rows[0];
     const bar = (r) => {
         const w = Math.round(100 * (r.accuracy || 0));
         const tuned = /tuned|flock-judge-v1/i.test(r.name), rules = /^rules/i.test(r.name);
@@ -1620,25 +1683,24 @@ function renderBenchmarks() {
     el.innerHTML = `
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
             ${best ? statCard({ label: 'Best model judge', value: esc(best.caught != null ? `${num(best.caught)}/${num(best.total)}` : pct(best.accuracy)), sub: esc(best.name), icon: 'trophy', dark: true }) : ''}
-            ${statCard({ label: 'Contestants', value: num(rows.length), sub: esc(d.seeds ? `held-out seeds ${d.seeds}` : 'same findings for each'), icon: 'users' })}
+            ${statCard({ label: 'Contestants', value: num(rows.length), sub: esc(d.seeds ? `held-out seeds ${d.seeds}` : d.benchmark?.findings ? `${num(d.benchmark.findings)} findings each` : 'same findings for each'), icon: 'users' })}
             ${statCard({ label: 'False alarms (all contestants)', value: num(rows.reduce((t, r) => t + (r.false_alarms || 0), 0)), sub: 'flagged when the answer key says fine', icon: 'shield-check' })}
-            ${g.speedup || g.speedup_vs_mac ? statCard({ label: 'GX10 vs a laptop', value: `${esc(g.speedup || g.speedup_vs_mac)}×`, sub: esc(g.speedup_note || 'lower p50 per finding'), icon: 'cpu' }) : ''}
+            ${g.speedup || g.speedup_vs_mac ? statCard({ label: 'GX10 vs a laptop', value: `${esc(g.speedup || g.speedup_vs_mac)}×`, sub: g.mac_p50_s ? `${g.gx10_p50_s} s vs ${g.mac_p50_s} s per finding` : 'faster per finding', icon: 'cpu' }) : ''}
         </div>
-        ${whiteCard(`${cardHead('Traps caught by contestant', esc(d.note || d.source || 'Answer-key traps caught on held-out seeds'))}<div class="flex flex-col gap-2.5">${rows.map(bar).join('') || empty('No results yet.')}</div>`, 'mb-4 lg:mb-5')}
+        ${whiteCard(`${cardHead('Traps caught by contestant', 'held-out seeds, same findings for every contestant')}<div class="flex flex-col gap-2.5">${rows.map(bar).join('') || empty('No results yet.')}</div>`, 'mb-4 lg:mb-5')}
         ${whiteCard(`${cardHead('Results', 'Every contestant judged the same findings')}
-            <div class="overflow-x-auto"><table class="w-full text-left text-xs sm:text-sm min-w-[720px]">
+            <div class="overflow-x-auto"><table class="w-full text-left text-xs sm:text-sm min-w-[640px]">
                 <thead class="text-gray-400 text-[11px] uppercase tracking-wider"><tr class="border-b border-gray-100">
                     <th class="py-2 pr-3">Contestant</th><th class="py-2 pr-3 text-right">Accuracy</th><th class="py-2 pr-3 text-right">Caught</th><th class="py-2 pr-3 text-right">False alarms</th>
-                    <th class="py-2 pr-3 text-right">To a human</th><th class="py-2 pr-3 text-right">p50 s/finding</th><th class="py-2 pr-3 text-right">$ / 1k findings</th><th class="py-2 text-right">Runs offline</th></tr></thead>
+                    <th class="py-2 pr-3 text-right">To a human</th><th class="py-2 pr-3 text-right">p50 s/finding</th><th class="py-2 text-right">$ / 1k findings</th></tr></thead>
                 <tbody class="divide-y divide-gray-50">${rows.map((r) => `<tr class="${/tuned|flock-judge-v1/i.test(r.name) ? 'bg-limeAccent/15' : ''}">
                     <td class="py-2 pr-3 font-bold text-gray-900">${esc(r.name)}${r.status && r.status !== 'ok' ? ` ${pill('bg-gray-100 text-gray-600', r.status)}` : ''}</td>
-                    <td class="py-2 pr-3 text-right tabular-nums">${r.accuracy != null ? `${(r.accuracy * 100).toFixed(1)}%` : '—'}</td>
+                    <td class="py-2 pr-3 text-right tabular-nums">${accPct(r.accuracy)}</td>
                     <td class="py-2 pr-3 text-right font-mono tabular-nums">${r.caught != null ? `${num(r.caught)}/${num(r.total)}` : '—'}</td>
                     <td class="py-2 pr-3 text-right tabular-nums">${num(r.false_alarms)}</td>
                     <td class="py-2 pr-3 text-right tabular-nums">${num(r.to_human)}</td>
                     <td class="py-2 pr-3 text-right tabular-nums">${r.p50 != null ? Number(r.p50).toFixed(r.p50 < 0.01 ? 3 : 1) : '—'}</td>
-                    <td class="py-2 pr-3 text-right tabular-nums">${r.cost != null ? money(r.cost) : '—'}</td>
-                    <td class="py-2 text-right">${r.offline == null ? '—' : r.offline ? pill('bg-emerald-100 text-emerald-800', 'yes') : pill('bg-gray-100 text-gray-600', 'no')}</td></tr>`).join('')}</tbody></table></div>`, 'mb-4 lg:mb-5')}
+                    <td class="py-2 text-right tabular-nums">${r.cost != null ? money(r.cost) : '—'}</td></tr>`).join('')}</tbody></table></div>`, 'mb-4 lg:mb-5')}
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-5">
             <section class="bg-cardDark text-white rounded-3xl p-5 sm:p-6 shadow-md">
                 <h3 class="font-extrabold text-lg flex items-center gap-2"><i data-lucide="cpu" class="w-5 h-5 text-limeAccent"></i> The GX10</h3>
@@ -1675,7 +1737,7 @@ function setUser(user) {
     settings.user = user || null;
     settings.actor = user?.name || user?.username || 'Preet';
     renderActor();
-    const org = user?.org || "Noah's Bagels";
+    const org = String(user?.org || 'Ringtide Bagels').replace(/\s*\(simulated\)\s*/i, '').trim() || 'Ringtide Bagels';
     $('orgName').textContent = org;
     $('orgLogo').textContent = org.replace(/['’]s\b/g, '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
     if (route().name === 'overview') setWelcome();
@@ -1705,7 +1767,7 @@ async function login(username, password) {
         const res = await fetch(state.base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
         const data = await res.json().catch(() => ({}));
         if (res.status === 404) { settings.auth = 'token'; $('loginScreen').classList.replace('flex', 'hidden'); return finishToken(null); }
-        if (!res.ok || !data.token) return showLogin(data.error || 'That username and password did not match.');
+        if (!res.ok || !data.token) return showLogin(res.status === 429 ? 'Too many tries. Wait a few minutes.' : 'That email and password did not match.');
         settings.token = data.token;
         save('flock.token', data.token);
         $('loginPass').value = '';
@@ -1733,21 +1795,13 @@ function toggleUserMenu(force) {
     m.classList.toggle('hidden', !open);
     if (open) {
         $('userName').textContent = settings.actor;
-        $('userOrg').textContent = settings.user ? [settings.user.role, settings.user.org].filter(Boolean).join(' · ') : (settings.token ? 'presenter token set' : 'not signed in');
+        const role = settings.user?.role ? settings.user.role.replace(/^./, (c) => c.toUpperCase()) : '';
+        $('userOrg').textContent = settings.user ? role : (settings.token ? 'Presenter' : 'Not signed in');
         icons();
     }
 }
 
 /* ---------------- settings, modal, toast ---------------- */
-
-function openSettings() {
-    toggleUserMenu(false);
-    $('apiInput').value = store('flock.api');
-    $('apiHint').textContent = `Now using ${settings.api} (${settings.apiSource}). ?api=<url> in the address overrides; when this page is served by a Flock API it uses that API.`;
-    $('settingsModal').classList.replace('hidden', 'flex');
-    setTimeout(() => $('apiInput').focus(), 0);
-}
-function closeSettings() { $('settingsModal').classList.replace('flex', 'hidden'); }
 
 function openModal(title, html) {
     $('modalTitle').textContent = title;
@@ -1793,12 +1847,12 @@ document.addEventListener('click', (e) => {
     if (t.closest('[data-token-cancel]')) return finishToken(null);
     if (t.closest('[data-close-screen]') || t.id === 'screenModal') return closeScreen();
     const evb = t.closest('[data-ev-ref]');
-    if (evb) return openEvidence(evb.dataset.evRef);
+    if (evb) return openEvidence(evb.dataset.evRef, evb.dataset.evIdx);
+    const evf = t.closest('[data-ev-finding]');
+    if (evf) return openFindingEvidence(evf.dataset.evFinding);
     const scr = t.closest('[data-screen]');
     if (scr) return openScreen(scr.dataset.screen);
     if (t.closest('[data-close-drawer]')) return closeDrawer();
-    if (t.closest('[data-open-settings]')) return openSettings();
-    if (t.closest('[data-close-settings]')) return closeSettings();
     if (t.closest('[data-close-modal]') || t.id === 'actionModal') return closeModal();
     const how = t.closest('[data-how]');
     if (how) return showHow(how.dataset.how);
@@ -1825,23 +1879,12 @@ document.addEventListener('click', (e) => {
     const a = t.closest('[data-agent]');
     if (a) return openDrawer('agent', a.dataset.agent);
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeScreen(); toggleBell(false); closeDrawer(); closeSettings(); closeModal(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeScreen(); toggleBell(false); closeDrawer(); closeModal(); } });
 window.addEventListener('hashchange', onRoute);
 document.addEventListener('change', (e) => { if (e.target.id === 'hoursYear') { hoursYear = e.target.value; renderHours(); } });
 
 $('loginForm').onsubmit = (e) => { e.preventDefault(); login($('loginUser').value.trim(), $('loginPass').value); };
 $('tokenForm').onsubmit = (e) => { e.preventDefault(); finishToken($('tokenOnce').value.trim() || null); };
-
-$('settingsForm').onsubmit = (e) => {
-    e.preventDefault();
-    const api = $('apiInput').value.trim().replace(/\/$/, '');
-    const apiChanged = api !== store('flock.api');
-    save('flock.api', api);
-    closeSettings();
-    renderActor();
-    if (apiChanged) location.reload();
-    else { toast('Saved.', 'ok'); state.cache.drawer = null; refreshDrawer(); }
-};
 
 (async function init() {
     // ?token=<t> once: keep it, then take it out of the address bar
