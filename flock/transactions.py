@@ -9,6 +9,13 @@ through a file (it never re-matches anything). Year scale is ~12k rows (56 store
             Plus one "order" row per sold-never-paid order (a register order in no payout at all).
   data      volume of the run: stores, days, weeks, store_weeks, orders, payout lines, deposits, period. GET /api/metrics
             prices human time from store_weeks.
+  payouts   one record per lump sum (platform x payout_id), summed from the rows: stores, orders, gross, deductions by
+            type, statement net, the deposit and this payout's share of it, the deal terms in effect per deduction type,
+            and the store rows behind it. GET /api/payouts (flock/payouts.py) adds the findings' current state on read.
+
+Each payout row also carries orders (distinct order ids on its lines) and terms: the deal terms the checkers applied to
+that store's orders that period (deal_keeper.terms_for on the period's first order), one brief per deduction type, or
+nothing when no deal document sets that term. That is how GET /api/payouts says which expected figures it can't compute.
 
 How the pieces are found (plain Python, cents, no model):
   - payout totals: one streaming pass over std/payout_lines.csv, summed per (channel, payout_id, store_id).
@@ -35,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flock.agents import journal
+from flock.agents import deal_keeper, journal
 from flock.agents.matcher import parse_ts
 from flock.models import money
 
@@ -45,6 +52,9 @@ DEDUCTION_COLS = [("commission", "commission"), ("promo_merchant_funded", "promo
                   ("tax_withheld_by_platform", "tax_withheld"), ("other_fees", "other_fees")]
 STATUS_ORDER = ["sold_never_paid", "missing_deposit", "short", "over", "disputed", "needs_review", "recovered", "matched"]
 MAX_LIMIT = 500
+# deduction type -> the deal term the checkers compare it with (flock/agents/checkers.py)
+TERM_OF = {"commission": "commission", "promo": "promo_split", "error_charges": "error_window",
+           "tax_withheld": "tax_rule", "other_fees": "fee"}
 
 
 def _cents(v: Any) -> int:
@@ -76,9 +86,45 @@ def _rows_of(src: Any):
         yield from src
 
 
+def _short(path: Any) -> Any:
+    """A deal document's path as people say it: from the raw folder down (a generated run's raw folder is a temp dir)."""
+    s = str(path or "")
+    return s.split("/raw/", 1)[1] if "/raw/" in s else (path or None)
+
+
+def _term_brief(t: dict[str, Any]) -> dict[str, Any]:
+    out = {"value": t.get("value"), "authority": t.get("authority"), "source_file": _short(t.get("source_file")),
+           "quote": (t.get("quote") or "")[:200] or None}
+    if t.get("conflicts"):
+        out["conflicts"] = len(t["conflicts"])
+    if t.get("unresolved"):
+        out["unresolved"] = True
+    return out
+
+
+def row_terms(index: deal_keeper.TermIndex | None, channel: Any, store: Any, on: Any) -> dict[str, Any]:
+    """The deal terms in effect for one store's orders on one channel that period, one brief per deduction type."""
+    if index is None:
+        return {}
+    try:
+        t = index({"channel": channel, "store_id": store, "placed_at": on})
+        promos = [c for c in index.subset(channel, store) if c.get("term_type") == "promo_split"
+                  and c.get("authority") in deal_keeper.BINDING]
+    except (KeyError, TypeError, ValueError):   # odd term data: say nothing rather than guess
+        return {}
+    out = {name: _term_brief(t[tt]) for name, tt in TERM_OF.items() if name != "promo" and tt in t}
+    if promos:
+        out["promo"] = {"value": sorted({str(c.get("value")) for c in promos}),
+                        "codes": sorted({str(c.get("promo_code")) for c in promos if c.get("promo_code")}),
+                        "authority": promos[0].get("authority"), "source_file": _short(promos[0].get("source_file")),
+                        "quote": (promos[0].get("quote") or "")[:200] or None}
+    return out
+
+
 def build(tables: dict[str, Any], deposit_stories: list[dict[str, Any]], findings: list[dict[str, Any]],
-          source: str = "") -> dict[str, Any]:
-    """The transactions document for one run. tables: std table name -> CSV path (or rows)."""
+          source: str = "", terms: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The transactions document for one run. tables: std table name -> CSV path (or rows). terms: the run's deal terms
+    (deal_keeper.extract_terms) for each row's terms and the payouts' expected figures; None leaves them out."""
     want = {o for f in findings for o in f.get("order_ids") or []}
     groups: dict[tuple, dict[str, Any]] = {}
     where: dict[tuple, tuple] = {}            # (channel, order / platform id) -> group key, only for ids in findings
@@ -89,12 +135,18 @@ def build(tables: dict[str, Any], deposit_stories: list[dict[str, Any]], finding
         g = groups.get(key)
         if g is None:
             g = groups[key] = {"payout_date": ln.get("payout_date"), "gross": 0, "net": 0, "lines": 0, "files": {},
-                               **{name: 0 for _, name in DEDUCTION_COLS}}
+                               "orders": set(), "first": None, **{name: 0 for _, name in DEDUCTION_COLS}}
         g["gross"] += _cents(ln.get("gross"))
         g["net"] += _cents(ln.get("net"))
         for col, name in DEDUCTION_COLS:
             g[name] += _cents(ln.get(col))
         g["lines"] += 1
+        oid = ln.get("order_id") or ln.get("platform_order_id")
+        if oid:
+            g["orders"].add(oid)
+        placed = ln.get("placed_at")
+        if placed and (g["first"] is None or str(placed) < g["first"]):
+            g["first"] = str(placed)
         sf = ln.get("source_file")
         if sf:
             try:
@@ -152,10 +204,12 @@ def build(tables: dict[str, Any], deposit_stories: list[dict[str, Any]], finding
         for k in {where[(f["channel"], i)] for i in ids if (f["channel"], i) in where}:
             linked[k].append(f["finding_id"])
 
+    index = deal_keeper.TermIndex(terms) if terms else None
     rows = []
     for k in sorted(groups, key=lambda k: (str(k[0]), str(k[1]), str(k[2]))):
         channel, pid, store = k
         g = groups[k]
+        n_orders_row, g["orders"] = len(g["orders"]), None   # free the id set as we go
         ds = deposit_of.get((channel, pid))
         dep = (ds or {}).get("deposit")
         if dep:
@@ -174,7 +228,8 @@ def build(tables: dict[str, Any], deposit_stories: list[dict[str, Any]], finding
             "platform": journal.CHANNEL_NAME.get(channel, channel), "store_id": store, "payout_id": pid,
             "payout_date": _day(g["payout_date"]), "gross": _dollars(g["gross"]), "deductions": ded,
             "net": _dollars(g["net"]), "deposit": deposit, "deposit_gap": _dollars(gap), "deposit_status": status,
-            "finding_ids": linked[k],
+            "finding_ids": linked[k], "orders": n_orders_row,
+            "terms": row_terms(index, channel, store, g["first"] or g["payout_date"]),
             "source": {"lines": g["lines"], "files": [{"file": f, "first_row": a, "last_row": b}
                                                       for f, (a, b) in sorted(g["files"].items())]},
         })
@@ -199,7 +254,55 @@ def build(tables: dict[str, Any], deposit_stories: list[dict[str, Any]], finding
             "period_start": first.date().isoformat() if first else None,
             "period_end": last.date().isoformat() if last else None}
     return {"built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": source, "data": data,
-            "rows": rows}
+            "rows": rows, "payouts": payouts_of(rows, terms_known=terms is not None)}
+
+
+def payout_key(channel: Any, payout_id: Any) -> str:
+    return f"{channel}:{payout_id if payout_id is not None else '-'}"
+
+
+def payouts_of(rows: list[dict[str, Any]], terms_known: bool = True) -> list[dict[str, Any]]:
+    """One record per lump sum (channel x payout_id), summed from its store rows in cents. Static: what the findings'
+    state does to it is added on read (flock/payouts.py). no_terms: per deduction type, the stores charged for it with
+    no deal term behind the charge (their expected figure can't be computed)."""
+    acc: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r["kind"] != "payout":
+            continue
+        key = payout_key(r["channel"], r["payout_id"])
+        p = acc.get(key)
+        if p is None:
+            p = acc[key] = {"payout_key": key, "payout_id": r["payout_id"], "channel": r["channel"],
+                            "platform": r["platform"], "payout_date": r["payout_date"], "stores": [], "txn_ids": [],
+                            "orders": 0, "lines": 0, "gross": 0, "net": 0, "received": 0, "deposit": None,
+                            "deductions": {name: 0 for _, name in DEDUCTION_COLS},
+                            "terms": {name: [] for _, name in DEDUCTION_COLS},
+                            "no_terms": {name: [] for _, name in DEDUCTION_COLS}, "finding_ids": []}
+        p["stores"].append(r["store_id"])
+        p["txn_ids"].append(r["txn_id"])
+        p["orders"] += r.get("orders") or 0
+        p["lines"] += (r.get("source") or {}).get("lines") or 0
+        p["gross"] += _cents(r["gross"])
+        p["net"] += _cents(r["net"])
+        for _, name in DEDUCTION_COLS:
+            p["deductions"][name] += _cents(r["deductions"][name])
+            if terms_known and _cents(r["deductions"][name]) and name not in (r.get("terms") or {}):
+                p["no_terms"][name].append(r["store_id"])
+        for name, t in (r.get("terms") or {}).items():
+            if name in p["terms"] and t not in p["terms"][name]:
+                p["terms"][name].append(t)
+        dep = r.get("deposit")
+        if dep:
+            p["received"] += _cents(dep["store_share"])
+            p["deposit"] = p["deposit"] or {k: dep.get(k) for k in ("deposit_id", "amount", "date", "covers_payouts",
+                                                                    "match_confidence", "source_file", "source_row")}
+        for fid in r["finding_ids"]:
+            if fid not in p["finding_ids"]:
+                p["finding_ids"].append(fid)
+    return [{**p, "n_stores": len(p["stores"]), "gross": _dollars(p["gross"]), "net": _dollars(p["net"]),
+             "received": _dollars(p["received"]), "deductions": {k: _dollars(v) for k, v in p["deductions"].items()},
+             "terms_known": terms_known}
+            for p in sorted(acc.values(), key=lambda p: (p["payout_date"] or "", str(p["channel"]), str(p["payout_id"])))]
 
 
 def _int(v: Any) -> int | None:
@@ -211,7 +314,7 @@ def _int(v: Any) -> int | None:
 
 def empty(source: str, note: str) -> dict[str, Any]:
     return {"built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": source, "data": None,
-            "rows": [], "note": note}
+            "rows": [], "payouts": [], "note": note}
 
 
 def save(doc: dict[str, Any], state_dir: Path) -> Path:

@@ -10,6 +10,13 @@ Read:
   GET  /api/findings                  every finding with its risk score (?state= &outcome= &risk= &sort=risk)
   GET  /api/findings/<id>             one finding (with risk) plus its audit trail
   GET  /api/transactions              one row per payout per store (?channel= &store= &status= &limit= &offset=)
+  GET  /api/payouts                   one row per lump sum (platform x payout): gross, deductions, net, expected net
+                                      per contract, deposit, shortfall, owed, status (?channel= &status=)
+  GET  /api/payouts/<payout_id>       one lump sum: waterfall, per-store contribution, the findings in it, what's owed
+  GET  /api/stream?since=<cursor>     agent theater: ordered events (votes, bets, escalations, decisions, filings,
+                                      rules) with a monotonically increasing cursor (&limit=)
+  GET  /api/stream/sse?since=<cursor> the same as Server-Sent Events (&replay=1&speed=N streams the replay)
+  GET  /api/stream/replay?run=last&speed=N   the last run's events with stage pacing (&since= &start=, or &all=1)
   GET  /api/metrics                   agent vs human hours, accuracy, cost, money saved (value, formula, sources)
   GET  /api/log                       the whole audit log, including denied attempts
   GET  /api/rules                     approved rules plus the Learner's proposals
@@ -49,9 +56,9 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from flock import frontend, pipeline, transactions
+from flock import frontend, payouts, pipeline, theater, transactions
 from flock.agents import clicky, learner
 from flock.frontend import AGENTS, JUDGES  # noqa: F401  (the roster lives in flock/frontend.py now)
 from flock.gatekeeper import Denied, transition
@@ -67,7 +74,8 @@ TOKEN = os.environ.get("FLOCK_API_TOKEN", "")
 CORS_ORIGIN = os.environ.get("FLOCK_CORS_ORIGIN", "*")
 MAX_STORES = int(os.environ.get("FLOCK_HOSTED_MAX_STORES", "56"))   # caps for POST /api/run {"dataset": "demo"}
 MAX_WEEKS = int(os.environ.get("FLOCK_HOSTED_MAX_WEEKS", "8"))
-OUTPUT_LINES = 400        # a job keeps this many output lines; GET /api/jobs/<id> shows the tail
+SSE_POLL, SSE_HEARTBEAT, SSE_MAX = 0.5, 15.0, 600.0   # seconds, for GET /api/stream/sse
+OUTPUT_LINES = 400       # a job keeps this many output lines; GET /api/jobs/<id> shows the tail
 TAIL = 40
 
 
@@ -209,6 +217,19 @@ def _int(q: dict[str, list[str]], name: str, default: int) -> int:
         raise BadRequest(f"{name} must be a whole number") from None
 
 
+def _float(q: dict[str, list[str]], name: str, default: float | None) -> float | None:
+    v = (q.get(name) or [""])[0].strip()
+    if not v:
+        return default
+    try:
+        x = float(v)
+    except ValueError:
+        raise BadRequest(f"{name} must be a number") from None
+    if x != x or x in (float("inf"), float("-inf")):
+        raise BadRequest(f"{name} must be a finite number")
+    return x
+
+
 def _arg(q: dict[str, list[str]], name: str) -> str | None:
     v = (q.get(name) or [""])[0].strip()
     return v or None
@@ -277,6 +298,24 @@ class Api:
         return transactions.query(transactions.load(self.dir), self.store.all(), channel=_arg(q, "channel"),
                                   store=_arg(q, "store"), status=_arg(q, "status"), limit=_int(q, "limit", 50),
                                   offset=_int(q, "offset", 0))
+
+    def payouts(self, q: dict[str, list[str]]) -> dict[str, Any]:
+        return payouts.listing(transactions.load(self.dir), self.store.all(), channel=_arg(q, "channel"),
+                               status=_arg(q, "status"))
+
+    def payout(self, key: str) -> dict[str, Any]:
+        return payouts.detail(transactions.load(self.dir), self.store.all(), key)
+
+    def stream(self, q: dict[str, list[str]]) -> dict[str, Any]:
+        return theater.for_store(self.store).read(since=_int(q, "since", 0), limit=_int(q, "limit", 200))
+
+    def replay(self, q: dict[str, list[str]], now_ms: float | None = None) -> dict[str, Any]:
+        run = _arg(q, "run") or "last"
+        if run != "last":
+            raise BadRequest("run must be 'last' (the theater replays the run in this server's state)")
+        return theater.replay(self.store, speed=_float(q, "speed", 1.0), since=_int(q, "since", 0),
+                              start_ms=_float(q, "start", None), now_ms=now_ms,
+                              everything=_arg(q, "all") in ("1", "true", "yes"), limit=_int(q, "limit", 200))
 
     def metrics(self) -> dict[str, Any]:
         return frontend.metrics(self.store, get_journal_store(self.store))
@@ -491,6 +530,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, a.finding(parts[2]))
             if parts == ["api", "transactions"]:
                 return self._send(200, a.transactions(q))
+            if parts == ["api", "payouts"]:
+                return self._send(200, a.payouts(q))
+            if len(parts) == 3 and parts[:2] == ["api", "payouts"]:
+                return self._send(200, a.payout(unquote(parts[2])))
+            if parts == ["api", "stream"]:
+                return self._send(200, a.stream(q))
+            if parts == ["api", "stream", "replay"]:
+                return self._send(200, a.replay(q))
+            if parts == ["api", "stream", "sse"]:
+                return self._sse(q)
             if parts == ["api", "metrics"]:
                 return self._send(200, a.metrics())
             if parts == ["api", "log"]:
@@ -522,6 +571,57 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": f"not found: {e}"})
         except Exception as e:  # never an HTML traceback: tell the UI what broke
             self._send(500, {"error": f"{type(e).__name__}: {e}"})
+
+    def _sse(self, q: dict[str, list[str]]) -> None:
+        """GET /api/stream/sse: the theater as Server-Sent Events (id = cursor, event = type, data = the event). Live by
+        default: checks the files every SSE_POLL seconds, a comment every SSE_HEARTBEAT seconds keeps proxies open, and
+        it closes after SSE_MAX seconds (EventSource reconnects with Last-Event-ID). &replay=1 plays the last run at
+        &speed=N, then sends "done" and closes. A proxy that buffers defeats SSE: then poll GET /api/stream."""
+        a = self.api
+        replay = _arg(q, "replay") in ("1", "true", "yes")
+        since = _int(q, "since", 0) or _int({"h": [self.headers.get("Last-Event-ID") or ""]}, "h", 0)
+        speed = _float(q, "speed", 1.0)
+        self.send_response(200)
+        for k, v in (("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("Connection", "close"),
+                     ("X-Accel-Buffering", "no"), ("Access-Control-Allow-Origin", CORS_ORIGIN), ("Vary", "Origin")):
+            self.send_header(k, v)
+        self.end_headers()
+        sys.stderr.write(f"api  GET {self.path}  200  sse\n")
+        self.close_connection = True
+
+        def send(name: str, payload: Any, cursor: int | None = None) -> None:
+            head = (f"id: {cursor}\n" if cursor is not None else "") + f"event: {name}\ndata: "
+            self.wfile.write(head.encode() + dumps(payload) + b"\n\n")
+            self.wfile.flush()
+
+        try:
+            if replay:
+                t0 = time.monotonic()
+                for ev in a.replay({"all": ["1"], "speed": [str(speed)]})["events"]:
+                    if ev["cursor"] <= since:
+                        continue
+                    wait = ev["t_ms"] / 1000 - (time.monotonic() - t0)
+                    if wait > 0:
+                        time.sleep(wait)
+                    send(ev["type"], ev, ev["cursor"])
+                send("done", {"mode": "replay"})
+                return
+            end, beat = time.monotonic() + SSE_MAX, time.monotonic()
+            while time.monotonic() < end:
+                page = a.stream({"since": [str(since)], "limit": ["500"]})
+                if page["reset"] and page["events"]:
+                    send("reset", {"run": page["run"], "first_cursor": page["first_cursor"]})
+                for ev in page["events"]:
+                    send(ev["type"], ev, ev["cursor"])
+                since = page["cursor"]
+                if time.monotonic() - beat > SSE_HEARTBEAT:
+                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+                    beat = time.monotonic()
+                if not page["more"]:
+                    time.sleep(SSE_POLL)
+        except (BrokenPipeError, ConnectionResetError):
+            return   # the viewer left
 
     def _authorized(self) -> bool:
         if not TOKEN:

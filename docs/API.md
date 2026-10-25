@@ -30,6 +30,8 @@ Every example below is a real response captured from a local run (`POST /api/run
 | (4) Agent chain across the top; click -> activity / live screen | `GET /api/agents` (the chain, in pipeline order), `GET /api/agents/<agent_id>`, `GET /api/screens/<file>` (Clicky only) | 5 s |
 | (5) Bottom metrics row | `GET /api/metrics` (four cards) | after each run |
 | Run button / status | `POST /api/run?wait=0` (fixtures) or `POST /api/run` with `dataset: "demo"` (always a job), then poll `GET /api/jobs/<id>`; `GET /api/health` | 1-2 s while running |
+| (6) Lump sums: list of deposits; click -> waterfall, stores, findings inside | `GET /api/payouts`, `GET /api/payouts/<payout_id>` | after each run / decision |
+| (7) Agent theater: judge columns, balance ticker, human lane, rule banner | `GET /api/stream?since=<cursor>` (live) or `GET /api/stream/replay?run=last&speed=N` (stage) | 1 s live; replay: `next_in_ms` |
 
 ## Reads
 
@@ -189,6 +191,264 @@ A sold-never-paid row:
 ```
 After a fixtures run (the default `POST /api/run`) there are no payout tables, so `total` is 0 and `note` says so.
 Year scale is ~12k payout rows; at the hosted cap (56 stores x 8 weeks) about 1,800.
+
+Each payout row also carries `orders` (distinct order ids on its lines) and `terms`: the deal terms in effect for that
+store and period, one brief per deduction type (`{"value", "authority", "source_file", "quote"}`), absent when no deal
+document sets that term. `GET /api/payouts` uses them to say which expected figures it can't compute.
+
+### `GET /api/payouts`
+Feeds **(6) Lump sums**. One row per **lump sum that hit the bank**: platform x payout period (`channel:payout_id`).
+Built from the run's own files (`transactions.json` "payouts", written once per real-data run by
+`flock/transactions.py`; the findings' current state is applied on read by `flock/payouts.py`). All math in cents, no
+model, no invented numbers.
+
+Query: `channel`, `status` (matches any of the row's `flags`). Sorted newest first. After a fixtures run (hand-made
+findings, no payout tables) the list is empty and `note` says why.
+
+| field | means |
+| --- | --- |
+| `deposit_amount`, `deposit_date`, `deposit_id` | the bank deposit (the whole deposit; `covers_payouts` lists every payout it pays) |
+| `received` | this payout's share of that deposit (one deposit covering two payouts is split by statement net, exactly); 0 if none |
+| `stores`, `orders`, `payout_lines` | how many stores, orders and statement lines are in it |
+| `gross`, `deductions {commission, promo, error_charges, tax_withheld, other_fees}`, `deductions_total`, `net` | the statement's figures; `adjustments` = net - (gross - deductions) (anything else on the statement) |
+| `expected_net` | **per contract**: gross - expected deductions + adjustments + other gaps owed. A line's expected = statement figure - the gaps owed back on it (findings recoverable or human-approved; each gap computed in code by a checker from the deal term). `expected_net_computable` is false when a store was charged for a line with no deal term behind it (`not_computable` lists those lines) |
+| `shortfall` | `expected_net - received` |
+| `deposit_shortfall` | `net - received` |
+| `owed` | `open_gaps` (counted, not yet recovered) + `deposit_owed` (deposit shortfall over $0.05 whose deposit finding is neither rejected nor recovered) |
+| `in_question` | gaps on conflicts still waiting for a human: shown, not counted until a human approves |
+| `findings`, `findings_by_counts_as` | finding ids linked to it, by how each counts: `owed`, `recovered`, `in_question`, `contract_stands` (a human rejected it), `fair`, `deposit` |
+| `status` / `flags` | `missing_deposit > short_deposit > owed > needs_review > recovered > matched` |
+
+```json
+{"total": 8,
+ "summary": {"payouts": 8, "gross": 123014.1, "deductions": 21511.26, "net": 101502.84, "expected_net": 101595.85,
+             "received": 101465.96, "shortfall": 129.89, "owed": 129.89, "open_gaps": 93.01, "deposit_owed": 36.88,
+             "recovered": 0.0, "in_question": 12.1,
+             "by_status": {"missing_deposit": 0, "short_deposit": 1, "owed": 6, "needs_review": 0, "recovered": 0,
+                           "matched": 1},
+             "by_channel": {"direct_app": 2, "doordash": 2, "grubhub": 2, "ubereats": 2}},
+ "unpaid_orders": {"count": 1, "gross": 17.95, "note": "orders in the register that are in no payout at all ..."},
+ "source": "generated: ca_bagel_chain seed 2025, 8 stores x 2 weeks", "built_at": "2026-10-25T08:01:04+00:00",
+ "payouts": [
+  {"payout_id": "UE-PO-20260209", "payout_key": "ubereats:UE-PO-20260209", "channel": "ubereats",
+   "platform": "Uber Eats", "payout_date": "2026-02-17", "deposit_id": "BNK-9362204", "deposit_date": "2026-02-18",
+   "deposit_amount": 9938.53, "covers_payouts": ["UE-PO-20260209"], "received": 9938.53,
+   "stores": 8, "orders": 803, "payout_lines": 803, "gross": 13574.35,
+   "deductions": {"commission": 2714.87, "promo": 281.82, "error_charges": 0.0, "tax_withheld": 0.0,
+                  "other_fees": 602.25},
+   "deductions_total": 3598.94, "adjustments": 0.0, "net": 9975.41,
+   "expected_net": 9984.41, "expected_net_computable": true, "shortfall": 45.88, "deposit_shortfall": 36.88,
+   "open_gaps": 9.0, "deposit_owed": 36.88, "owed": 45.88, "recovered": 0.0, "in_question": 0.0,
+   "findings": 14, "findings_by_counts_as": {"owed": 12, "deposit": 1, "contract_stands": 1},
+   "status": "short_deposit", "flags": ["short_deposit", "owed"]},
+  "..."],
+ "formula": {"expected_net": "...", "shortfall": "...", "owed": "...", "...": "..."}}
+```
+(Totals reconcile: 101595.85 expected - 101465.96 received = 129.89 shortfall = 93.01 open gaps + 36.88 short deposit.
+The one sold-never-paid order is in no lump sum, so it is counted under `unpaid_orders`, not `owed`.)
+
+### `GET /api/payouts/<payout_id>`
+Feeds the **(6)** detail. `<payout_id>` is the bare id (`UE-PO-20260209`) or the key (`ubereats:UE-PO-20260209`).
+Everything in the list row, plus:
+
+| field | means |
+| --- | --- |
+| `waterfall` | ordered steps for a chart: `gross` -> each deduction (`amount` = statement, `expected` = contract, `gap`, `in_question`, `computable`, `note`, `basis`, `finding_ids`) -> `adjustments` (if any) -> `statement_net` -> `other` gaps (if any) -> `expected_net` -> `deposit` -> `shortfall`. Each step has `running` (statement side) and `running_expected` (contract side) for floating bars |
+| `lines` | per deduction type: `actual`, `expected`, `gap`, `owed`, `recovered`, `in_question`, `finding_ids`, `computable`, `basis` (the term, e.g. "commission rate 0.2 (contract, contracts/ubereats_contract.json)"), `note` (why it can't be computed), `terms`; plus `other` (sold-never-paid, paid-without-register-order, anomalies) |
+| `stores_detail` | per store: `orders`, `gross`, `deductions`, `net`, `received` (its share), `deposit_gap`, `findings`, `open_gaps`, `share_of_gross` |
+| `findings_detail` | every finding inside it, riskiest first: `finding_id, check_type, line, store_id (null for a deposit finding), gap, expected, actual, outcome, state, counts_as, risk, risk_label, portal_ref, attention, needs_human, reason` |
+| `owed_breakdown` | `{open_gaps, deposit_shortfall, total, formula, deposit_closed_by}` |
+| `deposit`, `deposit_findings` | the bank deposit row and the deposit finding(s) |
+
+`404` for an unknown payout. Example (trimmed to two lines, two waterfall steps, two stores, two findings):
+```json
+{"payout_id": "UE-PO-20260209", "payout_key": "ubereats:UE-PO-20260209", "status": "short_deposit",
+ "gross": 13574.35, "net": 9975.41, "expected_net": 9984.41, "received": 9938.53, "shortfall": 45.88, "owed": 45.88,
+ "...": "...every list field...",
+ "lines": [
+  {"key": "commission", "label": "Commission", "actual": 2714.87, "expected": 2714.87, "gap": 0.0, "owed": 0.0,
+   "recovered": 0.0, "in_question": 0.0, "findings": 0, "finding_ids": [], "computable": true,
+   "basis": "commission rate 0.2 (contract, contracts/ubereats_contract.json)", "note": null,
+   "terms": [{"value": 0.2, "authority": "contract", "source_file": "contracts/ubereats_contract.json",
+              "quote": "Merchant is enrolled in the Standard (simulated) plan. Uber Eats (simulated coun..."}]},
+  {"key": "other_fees", "label": "Other fees", "actual": 602.25, "expected": 593.25, "gap": 9.0, "owed": 9.0,
+   "recovered": 0.0, "in_question": 0.0, "findings": 12, "finding_ids": ["F-0799505e", "F-13ff429f", "..."],
+   "computable": true, "basis": "fee 0.75 (contract, contracts/ubereats_contract.json)", "note": null,
+   "terms": [{"value": 0.75, "authority": "contract", "source_file": "contracts/ubereats_contract.json",
+              "quote": "Merchant shall pay a Marketing Fee of $0.75 per completed order. Fee changes or ..."}]},
+  "..."],
+ "waterfall": [
+  {"key": "gross", "label": "Gross sales on the statement", "kind": "total", "amount": 13574.35,
+   "running": 13574.35, "running_expected": 13574.35},
+  {"key": "commission", "label": "Commission", "kind": "deduction", "amount": -2714.87, "expected": -2714.87,
+   "gap": 0.0, "in_question": 0.0, "computable": true, "note": null,
+   "basis": "commission rate 0.2 (contract, contracts/ubereats_contract.json)", "finding_ids": [],
+   "running": 10859.48, "running_expected": 10859.48},
+  "...",
+  {"key": "statement_net", "label": "Net per statement", "kind": "total", "amount": 9975.41, "running": 9975.41,
+   "running_expected": 9984.41},
+  {"key": "expected_net", "label": "Expected net per contract", "kind": "total", "amount": 9984.41,
+   "computable": true, "running": 9975.41, "running_expected": 9984.41},
+  {"key": "deposit", "label": "Deposit received (BNK-9362204)", "kind": "total", "amount": 9938.53,
+   "running": 9938.53, "running_expected": 9984.41},
+  {"key": "shortfall", "label": "Shortfall (expected - received)", "kind": "result", "amount": 45.88,
+   "running": 9938.53, "running_expected": 9984.41}],
+ "owed_breakdown": {"open_gaps": 9.0, "deposit_shortfall": 36.88, "total": 45.88,
+                    "formula": "owed = open recoverable gaps (not yet recovered) + deposit shortfall still open",
+                    "deposit_closed_by": []},
+ "stores_detail": [
+  {"store_id": "S01", "txn_id": "ubereats:UE-PO-20260209:S01", "orders": 76, "gross": 1210.9, "deductions": 326.9,
+   "net": 884.0, "received": 880.73, "deposit_gap": -3.27, "findings": 13, "open_gaps": 9.0, "share_of_gross": 0.0892},
+  "..."],
+ "findings_detail": [
+  {"finding_id": "F-8985179a", "check_type": "missing_order", "line": "other", "store_id": "S02",
+   "order_ids": ["9bcb-18e6-83a4", "ORD-12719"], "expected": 0.0, "actual": 2.6, "gap": 2.6, "outcome": "conflict",
+   "state": "REJECTED", "counts_as": "contract_stands", "risk": 41, "risk_label": "med", "portal_ref": null,
+   "attention": {"value": 2.6, "rank": 2, "budget": 10, "status": "queued"}, "needs_human": false, "reason": "..."},
+  {"finding_id": "F-ec9e9ba8", "check_type": "deposit", "line": "deposit", "store_id": null,
+   "order_ids": ["UE-PO-20260209"], "expected": 9975.41, "actual": 9938.53, "gap": 36.88, "outcome": "recoverable",
+   "state": "FILED", "counts_as": "deposit", "risk": 41, "risk_label": "med", "portal_ref": "SBX-3E5A05", "...": "..."},
+  "..."],
+ "deposit": {"deposit_id": "BNK-9362204", "amount": 9938.53, "date": "2026-02-18",
+             "covers_payouts": ["UE-PO-20260209"], "match_confidence": 1.0,
+             "source_file": "bank/bank_deposits.csv", "source_row": 4},
+ "deposit_findings": ["F-ec9e9ba8"]}
+```
+
+### `GET /api/stream?since=<cursor>`
+Feeds **(7) Agent theater**. One ordered feed of what the agents do, built from what the run already writes
+(`agent_status.jsonl`, `audit_log.jsonl`, `market_ledger.jsonl`, `proposed_rules.json`; `flock/theater.py`). Poll it
+every second with the `cursor` you got back; the files are tailed by byte offset, so a poll reads only what is new.
+
+Query: `since` (default 0 = from the start of the current run), `limit` (default 200, max 1000).
+Response: `run`, `cursor` (pass it back), `first_cursor` (the current run's first event), `latest`, `more` (true: poll
+again right away), `reset`, `balances` (each judge's balance now, for the ticker), `events`.
+
+- **Cursor**: an integer that only goes up while the server lives. An event never changes cursor or moves.
+- **`reset: true`**: your cursor is from an earlier run (a new run replaced the files) or an earlier server process.
+  Drop what you have and render these events (they start at the new run's `run_started`).
+- **Every event**: `cursor, at, type, lane (agents|judges|market|human|learn), actor, text` (one readable sentence)
+  plus structured fields by type:
+
+| type | lane | fields |
+| --- | --- | --- |
+| `run_started` | agents | `run` |
+| `agent_spawned` / `agent_working` / `agent_done` / `agent_failed` | agents | `role, agent_id, subject, summary` (checker, Clicky, journal, learner; one per worker when a batch has 8 or fewer) |
+| `workers` | agents | `count, stores` (+ `findings, rows` when done): workers aggregated |
+| `checked` | agents | `count, by_type, gap_total`: the checkers' findings, aggregated |
+| `case_file` | agents | `finding_id, trigger, why, facts, next_step` (an investigator's case file) |
+| `vote` | judges | `finding_id, judge, outcome, confidence, model, round, reason, weight` |
+| `revision` | judges | `finding_id, judge, from, to, confidence, changed` (the debate round) |
+| `second_opinion` | judges | `finding_id, judge (reviewer), outcome, confidence, model` (audit sample) |
+| `verdict` | judges | `finding_id, outcome, confidence, agree, gap, check_type, channel, reason` |
+| `memo` | judges | `finding_id, memo` (the reviewer's note to the human on a split) |
+| `rule_applied` | learn | `finding_id, rule_id, outcome` (an approved rule decided it: no panel, no bets) |
+| `escalation` | human | `finding_id, rank, budget, value, status (queued|deferred), gap, check_type, channel` |
+| `bet_staked` | market | `finding_id, judge, outcome, confidence, stake, to_win, at_risk, bet_id, balances` |
+| `bet_settled` | market | `finding_id, judge, payout, result (won|lost|abstained), truth, called, balance, balances` |
+| `dispute_drafted` | agents | `finding_id, gap, channel` |
+| `human_decision` | human | `finding_id, decision (approve|reject|recover), human, role, reason, gap` |
+| `filed` | agents | `finding_id, portal_ref` (Clicky's sandbox filing reference) |
+| `denied` | human | `finding_id, attempted, by, role, reason` (the gatekeeper refused a move) |
+| `rule_proposed` | learn | `rule_id, description, evidence_count, precedents, outcome` |
+| `rule_approved` | learn | `rule_id, human, description` |
+| `journal`, `ranked` | agents | `count` |
+| `judged_bulk`, `bets_bulk`, `settled_bulk`, `decided_bulk`, `drafted_bulk`, `filed_bulk`, `cases_bulk` | | `count` + totals (`by_outcome`, `stake`, `by_judge`, `balances`, ...) |
+
+**Light at year scale.** A finding is told in full (votes, revisions, verdict, memo, escalation, bets, decision,
+settlements) when it is the first of its kind (check type x outcome), one of the first 6, one of the first 6
+conflicts past those, or it had a debate or a memo (60 per run at most). Every other escalation (60 per run) still pops
+into the human lane with its rank and decision. Everything else is counted into one `*_bulk` event per batch; workers,
+checks, ranks and journal entries are always aggregated. 3,000 judged findings make under 600 events.
+
+**Order.** Sources are merged by the second they happened in, then by pipeline stage; bets are anchored to their move:
+stakes right after the finding's verdict, settlements right after the human decision.
+
+Example (`since=0`, one event of each kind picked from the 310 of this run):
+```json
+{"run": "RUN-8be3137e", "cursor": 310, "first_cursor": 1, "latest": 310, "reset": true, "more": false,
+ "balances": {"strict": 388.0, "operator": 273.6, "skeptic": 346.4}, "count": 310, "poll_ms": 1000,
+ "events": [
+  {"cursor": 1, "at": "2026-10-25T08:01:04.769+00:00", "type": "run_started", "lane": "agents", "actor": "pipeline",
+   "run": "RUN-8be3137e", "text": "Run RUN-8be3137e started: the flock is waking up"},
+  {"cursor": 4, "type": "workers", "lane": "agents", "actor": "workers", "count": 8,
+   "stores": ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08"],
+   "text": "8 workers spawned, one per store (S01..S08): matching orders to payouts", "at": "..."},
+  {"cursor": 14, "type": "checked", "lane": "agents", "actor": "checkers", "count": 73,
+   "by_type": {"missing_order": 2, "error_charge": 4, "fee": 60, "tax": 1, "promo": 2, "commission": 1, "deposit": 2,
+               "anomaly": 1}, "gap_total": 175.29,
+   "text": "Checkers logged 73 findings (60 fee, 4 error charge, 2 missing order, 2 promo): $175.29 in gaps, computed in code from the deal terms", "at": "..."},
+  {"cursor": 15, "type": "case_file", "lane": "agents", "actor": "investigator:F-8985179a",
+   "finding_id": "F-8985179a", "trigger": "missing_order_unsupported", "why": "missing order with no second source",
+   "facts": ["Payout UE-PO-20260209 (2026-02-17) has 803 lines, net $9,975.41.",
+             "First ubereats missing order finding for store S02."],
+   "next_step": "Look for a register order under another id or time for this charge; ...",
+   "text": "Investigator opened a case file on F-8985179a: missing order with no second source. Next: ...", "at": "..."},
+  {"cursor": 16, "type": "vote", "lane": "judges", "actor": "judge.strict", "finding_id": "F-6b175438",
+   "judge": "strict", "outcome": "recoverable", "confidence": 0.9, "model": "offline rules",
+   "reason": "Payout breaks a term backed by a contract or authorized source.", "weight": 0.3785, "round": null,
+   "text": "strict votes recoverable (90%) on F-6b175438, doordash missing order $17.95", "at": "..."},
+  {"cursor": 19, "type": "verdict", "lane": "judges", "actor": "panel", "finding_id": "F-6b175438",
+   "outcome": "recoverable", "confidence": 0.9, "gap": 17.95, "check_type": "missing_order", "channel": "doordash",
+   "agree": 3, "reason": "All 3 judges agree ...", "text": "Panel: F-6b175438 is recoverable, 3 of 3 agree (90%)",
+   "at": "..."},
+  {"cursor": 20, "type": "bet_staked", "lane": "market", "actor": "judge.strict", "finding_id": "F-6b175438",
+   "judge": "strict", "outcome": "recoverable", "confidence": 0.9, "stake": 9, "to_win": 9.6, "at_risk": 22.4,
+   "bet_id": "B-15609abd", "balances": {"strict": 301.6, "operator": 222.4, "skeptic": 272.8},
+   "text": "strict stakes 9 on recoverable (F-6b175438): wins up to +9.6, risks 22.4", "at": "..."},
+  {"cursor": 27, "type": "escalation", "lane": "human", "actor": "panel", "finding_id": "F-8985179a", "rank": 2,
+   "budget": 10, "value": 2.6, "status": "queued", "gap": 2.6, "check_type": "missing_order", "channel": "ubereats",
+   "text": "F-8985179a (ubereats missing order $2.60) escalated to a human: attention #2 of 10 (worth $2.60 of a look)",
+   "at": "..."},
+  {"cursor": 212, "type": "judged_bulk", "lane": "judges", "actor": "panel", "count": 36,
+   "by_outcome": {"recoverable": 36}, "by_rule": 0, "gap_total": 36.34,
+   "text": "Judges decided 36 more findings: 36 recoverable", "at": "..."},
+  {"cursor": 232, "type": "human_decision", "lane": "human", "actor": "demo-controller", "finding_id": "F-6b175438",
+   "decision": "approve", "human": "demo-controller", "role": "human", "reason": "Evidence checks out", "gap": 17.95,
+   "text": "demo-controller approved F-6b175438: \"Evidence checks out\"", "at": "..."},
+  {"cursor": 233, "type": "bet_settled", "lane": "market", "actor": "judge.strict", "finding_id": "F-6b175438",
+   "judge": "strict", "payout": 9.6, "result": "won", "truth": "recoverable", "called": "recoverable",
+   "balance": 311.2, "bet_id": "B-15609abd", "balances": {"strict": 311.2, "operator": 222.4, "skeptic": 272.8},
+   "text": "strict won +9.6 on F-6b175438 (truth: recoverable); balance 311.2", "at": "..."},
+  {"cursor": 293, "type": "filed", "lane": "agents", "actor": "clicky", "finding_id": "F-6b175438",
+   "portal_ref": "SBX-C69986", "gap": 17.95, "text": "Clicky filed F-6b175438 in the sandbox portal: SBX-C69986",
+   "at": "..."},
+  {"cursor": 310, "type": "rule_proposed", "lane": "learn", "actor": "learner", "rule_id": "R-001",
+   "description": "grubhub fee backed by contract, unauth_email: accept, do not dispute", "evidence_count": 8,
+   "precedents": ["F-079af078", "F-0ba349b4", "..."], "outcome": "correct",
+   "text": "Learner proposes R-001: grubhub fee backed by contract, unauth_email: accept, do not dispute (learned from 8 human decisions)",
+   "at": "..."}]}
+```
+(Balances carry over between runs until `--forget`, which is why they start above 100 here.)
+
+### `GET /api/stream/sse?since=<cursor>`
+The same events as Server-Sent Events: `id: <cursor>`, `event: <type>`, `data: <event JSON>`. Live by default (new
+events every 0.5 s, a `: keep-alive` comment every 15 s, closes after 10 min; `EventSource` reconnects with
+`Last-Event-ID`). An `event: reset` comes first when the run changed. `&replay=1&speed=N` streams the replay below and
+ends with `event: done`. Some proxies buffer SSE; the polling endpoint always works, so use SSE only as a nicety.
+
+### `GET /api/stream/replay?run=last&speed=N`
+The last run's theater, re-emitted with stage pacing, so the show runs on stage without re-running the pipeline.
+Events are rebuilt from the files (cursors 1..N; `live_cursor` is the event's cursor in the live feed) and each gets
+`delay_ms` by type (a vote 500 ms, an escalation 1.4 s, a rule 1.8 s, a stake 220 ms; `pace_ms` lists them) divided by
+`speed` (0.25-20, default 1), clamped to `[60, 3000] / speed` ms, and compressed so the whole replay fits in
+`150 s / speed` (the floor gives way only when even the floor would not fit). `bounds` says the numbers in effect.
+
+- **Polling (same loop as live):** first call without `start`: you get `start` (server ms) and the events due at t=0.
+  Then call `?run=last&speed=N&since=<cursor>&start=<start>` every ~250 ms (or after `next_in_ms`); you get the events
+  whose time has come. `done: true` after the last one.
+- **All at once:** `&all=1` returns the whole schedule (`t_ms` per event, `duration_ms`); the client plays it.
+- `run` must be `last` (anything else: `400`). `speed` that is not a number: `400`.
+
+```json
+{"mode": "replay", "run": "RUN-8be3137e", "speed": 2.0, "duration_ms": 75000, "count": 310,
+ "bounds": {"min_gap_ms": 30, "max_gap_ms": 1500, "max_total_ms": 75000},
+ "start": 1792915282335, "elapsed_ms": 0, "cursor": 1,
+ "events": [{"cursor": 1, "at": "2026-10-25T08:01:04.769+00:00", "type": "run_started", "lane": "agents",
+             "actor": "pipeline", "run": "RUN-8be3137e", "text": "Run RUN-8be3137e started: the flock is waking up",
+             "live_cursor": 1, "delay_ms": 0, "t_ms": 0}],
+ "done": false, "next_in_ms": 108}
+```
 
 ### `GET /api/metrics`
 The four bottom cards. Each card: `id`, `title`, `value`, `unit`, `formula` (plain English), `inputs`, `sources`
@@ -402,14 +662,20 @@ python scripts/smoke_hosted.py https://web-production-812b4.up.railway.app      
 python scripts/smoke_hosted.py https://web-production-812b4.up.railway.app \
     --token-file ~/.flock_token --run --stores 12 --weeks 2                                # + a dataset run, polled
 ```
-Prints a pass/fail table (every GET, a finding detail, traversal -> 404, unknown route -> JSON 404, POST without the
+Prints a pass/fail table (every GET, a finding detail, a payout detail, the payout identities (shortfall = expected -
+received, owed = open gaps + deposit owed), stream cursors strictly increasing and continuing from `since`, replay
+gaps and length inside `bounds`, `run=other` -> 400, traversal -> 404, unknown route -> JSON 404, POST without the
 token -> 401, and with `--run` the job and the transactions it wrote); exits 1 on any failure.
 
 ## The dashboard mirrors
 
-`python -m dashboard.app` serves the same read models: `/api/transactions`, `/api/metrics`, `/api/agents/<agent_id>`,
-`/api/screens/...`, and risk on `/api/findings` and `/api/findings/<id>`. (Its own `/api/agents` is the live flock
-snapshot, not the roster.) It has no `/api/run`, jobs or health.
+`python -m dashboard.app` serves the same read models: `/api/transactions`, `/api/payouts`, `/api/payouts/<id>`,
+`/api/stream`, `/api/stream/replay`, `/api/metrics`, `/api/agents/<agent_id>`, `/api/screens/...`, and risk on
+`/api/findings` and `/api/findings/<id>`. (Its own `/api/agents` is the live flock snapshot, not the roster.) It has no
+`/api/run`, jobs, health or SSE. Its **Lump sums** tab (`#/payouts`, `#/payout/<key>`: list, waterfall chart with
+statement vs contract bars, line-by-line table, stores, findings linked) and **Theater** tab (`#/theater`: three judge
+columns with votes and bets, a balance ticker, the human lane, a rule-learned banner; Live or "Replay last run" at
+1-8x) are the backup UI for the demo.
 
 ## Proposed CONTRACT.md addition (not applied)
 
@@ -418,5 +684,8 @@ A transaction row (`flock/transactions.py`), for anyone building against it:
 deductions {commission, promo, error_charges, tax_withheld, other_fees, total}, net,
 deposit {deposit_id, amount, store_share, date, covers_payouts, match_confidence, source_file, source_row} | null,
 deposit_gap, deposit_status (matched|short|over|missing_deposit|missing_payout), finding_ids,
-source {lines, files [{file, first_row, last_row}]}` plus read-time `status` and `flags`.
+source {lines, files [{file, first_row, last_row}]}, orders, terms {<deduction>: {value, authority, source_file, quote}}`
+plus read-time `status` and `flags`.
 And on a finding, read-time `risk` (0-100), `risk_label`, `risk_factors`.
+A lump sum (`transactions.json` "payouts", `flock/payouts.py` on read): the fields of `GET /api/payouts` above.
+A theater event (`flock/theater.py`): `cursor, at, type, lane, actor, text` + the per-type fields above.

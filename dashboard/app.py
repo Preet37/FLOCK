@@ -13,6 +13,9 @@ that changed since the cursor come back, and past a few hundred per role they ar
 The Clicky view shows the workflow Clicky learned from a human's demonstration (flock/workflow.py): plain-English
 steps with screenshots, which finding field feeds each, its state, and the recording. Approving it is a gatekeeper
 transition (machine=workflow.WORKFLOW) with the person's Actor; only a human may.
+The Lump sums view reads GET /api/payouts (flock/payouts.py): each platform deposit as a waterfall from gross to what hit
+the bank, actual vs the deal's figure per deduction, with the findings inside it. The Theater view polls
+GET /api/stream?since=<cursor> (flock/theater.py), or plays GET /api/stream/replay for the stage.
 """
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ from typing import Any
 from flask import Flask, abort, jsonify, request, send_from_directory
 from flask.json.provider import DefaultJSONProvider
 
-from flock import agents_live, frontend, llm, market, portal, transactions, workflow
+from flock import agents_live, frontend, llm, market, payouts, portal, theater, transactions, workflow
 from flock.agents import clicky, journal, learner, panel
 from flock.gatekeeper import Denied, transition
 from flock.models import JE_TRANSITIONS, JOURNAL, TRANSITIONS, Actor
@@ -367,6 +370,44 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
         return jsonify(transactions.query(transactions.load(frontend.state_dir(st())), st().all(),
                                           channel=a.get("channel") or None, store=a.get("store") or None,
                                           status=a.get("status") or None, limit=limit, offset=offset))
+
+    @app.get("/api/payouts")
+    def api_payouts():
+        """One row per lump sum (platform x payout): expected net per contract vs what hit the bank, and what's owed."""
+        return jsonify(payouts.listing(transactions.load(frontend.state_dir(st())), st().all(),
+                                       channel=request.args.get("channel") or None,
+                                       status=request.args.get("status") or None))
+
+    @app.get("/api/payouts/<path:key>")
+    def api_payout(key: str):
+        try:
+            return jsonify(payouts.detail(transactions.load(frontend.state_dir(st())), st().all(), key))
+        except KeyError:
+            abort(404, f"no payout {key}")
+
+    @app.get("/api/stream")
+    def api_stream():
+        """The agent theater: events after ?since=<cursor> (flock/theater.py)."""
+        try:
+            since, limit = int(request.args.get("since") or 0), int(request.args.get("limit") or 200)
+        except ValueError:
+            return jsonify(error="since and limit must be whole numbers"), 400
+        return jsonify(theater.for_store(st()).read(since=since, limit=limit))
+
+    @app.get("/api/stream/replay")
+    def api_stream_replay():
+        """The last run's theater with stage pacing (?speed=N, &since= &start=, or &all=1)."""
+        a = request.args
+        if (a.get("run") or "last") != "last":
+            return jsonify(error="run must be 'last'"), 400
+        try:
+            speed = float(a.get("speed") or 1)
+            since = int(a.get("since") or 0)
+            start = float(a["start"]) if a.get("start") else None
+        except ValueError:
+            return jsonify(error="speed and start must be numbers, since a whole number"), 400
+        return jsonify(theater.replay(st(), speed=speed, since=since, start_ms=start,
+                                      everything=a.get("all") in ("1", "true", "yes")))
 
     @app.get("/api/metrics")
     def api_metrics():

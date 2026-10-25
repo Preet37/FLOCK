@@ -1,7 +1,8 @@
-// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/flock  #/finding/<id>  #/clicky  #/journal  #/journal/<id>  #/score  #/market
+// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/flock  #/finding/<id>  #/clicky  #/journal  #/journal/<id>  #/score  #/market  #/payouts  #/payout/<key>  #/theater
 // Polls /api/summary every second; re-renders the current view when the audit log grows.
 // Also polls /api/progress and updates the live board's progress bar in place (no re-render), and
-// /api/agents?since=<cursor> for the Flock view (only agents that changed come back).
+// /api/agents?since=<cursor> for the Flock view (only agents that changed come back), and /api/stream?since=<cursor> (or
+// /api/stream/replay) for the Theater view, which keeps its own state and redraws only when events arrive.
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -816,16 +817,275 @@ async function pollClicky() {
   } catch { /* the board works without it */ }
 }
 
+// ---------- lump sums (flock/payouts.py -> /api/payouts) ----------
+const PAY_STATUS = { missing_deposit: "no deposit", short_deposit: "short deposit", owed: "money owed",
+  needs_review: "needs a human", recovered: "recovered", matched: "matched" };
+const PAY_BADGE = { missing_deposit: "denied", short_deposit: "conflict", owed: "recoverable", needs_review: "JUDGED",
+  recovered: "RECOVERED", matched: "correct" };
+const payBadge = (s) => badge(PAY_BADGE[s] || "NEW", PAY_STATUS[s] || s);
+const payHref = (p) => `#/payout/${encodeURIComponent(p.payout_key)}`;
+
+async function renderPayouts() {
+  const d = await api("/api/payouts");
+  const s = d.summary;
+  const rows = d.payouts;
+  view.innerHTML = `
+    <div class="page-head"><div><h1>Lump sums</h1>
+      <div class="sub">Every platform deposit that hit the bank: what the statement said, what our deals say it should
+        have been, what arrived, and what is still owed. All amounts computed in code from the run's files.</div></div></div>
+    <div class="stats">
+      <div class="card stat accent"><div class="label">Still owed</div><div class="value num">${usd(s.owed)}</div>
+        <div class="hint">${usd(s.open_gaps)} open gaps + ${usd(s.deposit_owed)} short deposits</div></div>
+      <div class="card stat"><div class="label">Expected net (per contract)</div><div class="value num">${usd(s.expected_net)}</div>
+        <div class="hint">statements said ${usd(s.net)}</div></div>
+      <div class="card stat"><div class="label">Deposits received</div><div class="value num">${usd(s.received)}</div>
+        <div class="hint">shortfall ${usd(s.shortfall)}</div></div>
+      <div class="card stat"><div class="label">Lump sums</div><div class="value">${s.payouts}</div>
+        <div class="hint">${Object.entries(s.by_status).filter(([, n]) => n).map(([k, n]) => `${n} ${PAY_STATUS[k] || k}`).join(" · ") || "none"}</div></div>
+      <div class="card stat"><div class="label">In question</div><div class="value num">${usd(s.in_question)}</div>
+        <div class="hint">conflicts waiting for a human, not counted yet</div></div>
+    </div>
+    <section class="card"><div class="card-head"><h2>Deposits</h2><span class="muted">${esc(d.source || "")}</span></div>
+      ${rows.length ? `<div class="table-scroll"><table class="pay-table"><thead><tr>
+        <th>Paid</th><th>Platform</th><th>Payout</th><th>Deposit</th><th class="r">Stores</th><th class="r">Orders</th>
+        <th class="r">Gross</th><th class="r">Deductions</th><th class="r">Net (statement)</th><th class="r">Expected net</th>
+        <th class="r">Received</th><th class="r">Shortfall</th><th class="r">Owed</th><th class="r">Findings</th><th>Status</th></tr></thead><tbody>
+        ${rows.map((p) => `<tr class="link" data-href="${payHref(p)}">
+          <td>${esc(p.deposit_date || p.payout_date || "")}</td><td>${chan(p.channel)}</td>
+          <td><a class="mono" href="${payHref(p)}">${esc(p.payout_id)}</a></td>
+          <td class="mono">${esc(p.deposit_id || "none")}${p.covers_payouts.length > 1 ? ` <span class="muted">(covers ${p.covers_payouts.length})</span>` : ""}</td>
+          <td class="r num">${p.stores}</td><td class="r num">${big(p.orders)}</td><td class="r num">${usd(p.gross)}</td>
+          <td class="r num">${usd(p.deductions_total)}</td><td class="r num">${usd(p.net)}</td>
+          <td class="r num">${usd(p.expected_net)}${p.expected_net_computable ? "" : ' <span class="muted" title="a deduction has no deal term behind it; see the waterfall">*</span>'}</td>
+          <td class="r num">${usd(p.received)}</td><td class="r num ${p.shortfall > 0.05 ? "bad-t" : ""}">${usd(p.shortfall)}</td>
+          <td class="r num"><b class="${p.owed > 0.05 ? "accent-t" : "muted"}">${usd(p.owed)}</b></td><td class="r num">${p.findings}</td>
+          <td>${payBadge(p.status)}</td></tr>`).join("")}
+        </tbody></table></div>
+        <div class="card-pad muted pay-foot">* expected net includes a deduction with no deal term behind it: shown at the statement figure, not checked.
+          ${d.unpaid_orders.count ? ` ${d.unpaid_orders.count} sold-never-paid order(s) (${usd(d.unpaid_orders.gross)}) are in no lump sum.` : ""}</div>`
+      : `<div class="empty">${esc(d.note || "No lump sums yet.")} They come from a real-data run: <code>python -m flock.demo --seed 2025 --keep</code> or POST /api/run with dataset=demo.</div>`}
+    </section>`;
+}
+
+function waterfallSvg(steps) {
+  const W = 1000, H = 360, top = 30, bottom = 70, left = 10;
+  const vals = steps.flatMap((s) => [s.running, s.running_expected, s.amount || 0]);
+  const max = Math.max(1, ...vals.map((v) => Math.abs(Number(v) || 0)));
+  const y = (v) => top + (H - top - bottom) * (1 - Math.max(0, Number(v) || 0) / max);
+  const n = steps.length, slot = (W - left * 2) / n, bw = Math.min(70, slot * 0.36);
+  let prevA = 0, prevE = 0;
+  const parts = steps.map((s, i) => {
+    const x = left + i * slot + slot / 2;
+    let a = "", e = "", lbl = "";
+    if (s.kind === "deduction" || s.kind === "adjustment" || s.kind === "gap") {
+      const a0 = prevA, a1 = s.running, e0 = prevE, e1 = s.running_expected;
+      a = `<rect class="wf-a ${s.kind === "deduction" ? "neg" : ""}" x="${x - bw - 2}" y="${Math.min(y(a0), y(a1))}" width="${bw}" height="${Math.max(2, Math.abs(y(a0) - y(a1)))}"><title>${esc(s.label)}: statement ${usd(s.amount)}</title></rect>`;
+      e = `<rect class="wf-e ${s.computable === false ? "nc" : ""}" x="${x + 2}" y="${Math.min(y(e0), y(e1))}" width="${bw}" height="${Math.max(2, Math.abs(y(e0) - y(e1)))}"><title>${esc(s.label)}: contract ${usd(s.expected)}</title></rect>`;
+      lbl = s.gap ? `<text class="wf-gap" x="${x}" y="${Math.min(y(a1), y(e1)) - 8}" text-anchor="middle">+${usd(s.gap)}</text>` : "";
+    } else if (s.key === "shortfall") {
+      const top_ = y(s.running_expected), bot = y(s.running);
+      a = `<rect class="wf-short" x="${x - bw / 2}" y="${top_}" width="${bw}" height="${Math.max(3, bot - top_)}"><title>shortfall ${usd(s.amount)}</title></rect>`;
+      lbl = `<text class="wf-gap" x="${x}" y="${top_ - 8}" text-anchor="middle">${usd(s.amount)}</text>`;
+    } else {
+      const v = s.key === "expected_net" ? s.running_expected : s.amount;
+      a = `<rect class="wf-t ${s.key}" x="${x - bw / 2}" y="${y(v)}" width="${bw}" height="${Math.max(2, y(0) - y(v))}"><title>${esc(s.label)} ${usd(v)}</title></rect>`;
+      lbl = `<text class="wf-val" x="${x}" y="${y(v) - 8}" text-anchor="middle">${usd(v)}</text>`;
+    }
+    prevA = s.running; prevE = s.running_expected;
+    const name = s.label.replace(/ \(.*\)$/, "").replace("Gross sales on the statement", "Gross").replace("Net per statement", "Statement net")
+      .replace("Expected net per contract", "Expected net").replace("Promotions (store's share)", "Promos").replace("Shortfall (expected - received)", "Shortfall")
+      .replace("Other gaps the checkers found", "Other gaps").replace("Other statement adjustments", "Adjustments")
+      .replace("Deposit received", "Deposit").replace("Error charges", "Errors").replace("Tax withheld", "Tax");
+    return `${a}${e}${lbl}<text class="wf-lbl" x="${x}" y="${H - bottom + 22}" text-anchor="middle">${esc(name)}</text>`;
+  });
+  return `<svg class="wf" viewBox="0 0 ${W} ${H}" role="img" aria-label="Waterfall from gross to deposit">
+    <line class="wf-axis" x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}"/>${parts.join("")}
+    <g class="wf-key" transform="translate(${W - 330},10)"><rect class="wf-a neg" width="14" height="10"/><text x="20" y="10">statement</text>
+      <rect class="wf-e" x="110" width="14" height="10"/><text x="130" y="10">per contract</text>
+      <rect class="wf-short" x="230" width="14" height="10"/><text x="250" y="10">shortfall</text></g></svg>`;
+}
+
+async function renderPayout(key) {
+  let p;
+  try { p = await api(`/api/payouts/${encodeURIComponent(key)}`); }
+  catch (e) { view.innerHTML = `<div class="card empty section-gap">${esc(e.message)}. <a href="#/payouts">Back to lump sums</a></div>`; return; }
+  const ob = p.owed_breakdown;
+  view.innerHTML = `
+    <div class="pr-head"><div class="muted"><a href="#/payouts">Lump sums</a> / payout</div>
+      <h1 style="margin-top:6px">${chan(p.channel)} payout ${esc(p.payout_id)} <span class="id">${esc(p.deposit_id || "no deposit")}</span></h1>
+      <div class="pr-meta">${payBadge(p.status)} <span>paid ${esc(p.payout_date || "?")}${p.deposit_date ? ` · deposited ${esc(p.deposit_date)}` : ""}
+        · ${p.stores} stores · ${big(p.orders)} orders · ${big(p.payout_lines)} statement lines</span>
+        ${p.covers_payouts.length > 1 ? `<span>one deposit of ${usd(p.deposit_amount)} covers ${esc(p.covers_payouts.join(", "))}</span>` : ""}</div></div>
+    <div class="stats">
+      <div class="card stat"><div class="label">Expected net (per contract)</div><div class="value num">${usd(p.expected_net)}</div>
+        <div class="hint">${p.expected_net_computable ? "every line checked against a deal term" : `not every line has a deal term: ${esc((p.not_computable || []).join(", "))}`}</div></div>
+      <div class="card stat"><div class="label">Net per statement</div><div class="value num">${usd(p.net)}</div><div class="hint">gross ${usd(p.gross)}</div></div>
+      <div class="card stat"><div class="label">Deposit received</div><div class="value num">${usd(p.received)}</div>
+        <div class="hint">${p.deposit_id ? `${esc(p.deposit_id)}${p.covers_payouts.length > 1 ? " (this payout's share)" : ""}` : "no bank deposit found"}</div></div>
+      <div class="card stat"><div class="label">Shortfall</div><div class="value num ${p.shortfall > 0.05 ? "bad-t" : ""}">${usd(p.shortfall)}</div><div class="hint">expected − received</div></div>
+      <div class="card stat accent"><div class="label">Still owed</div><div class="value num">${usd(ob.total)}</div>
+        <div class="hint">${usd(ob.open_gaps)} open gaps + ${usd(ob.deposit_shortfall)} deposit</div></div>
+    </div>
+    <section class="card"><div class="card-head"><h2>Waterfall</h2><span class="muted">gross → each deduction (statement vs contract) → net → deposit</span></div>
+      <div class="card-pad">${waterfallSvg(p.waterfall)}</div></section>
+    <div class="grid-2 section-gap">
+      <section class="card"><div class="card-head"><h2>Line by line</h2><span class="muted">expected = statement − gaps owed back</span></div>
+        <div class="table-scroll"><table><thead><tr><th>Line</th><th class="r">Statement</th><th class="r">Contract</th><th class="r">Gap</th><th class="r">In question</th><th>Basis</th></tr></thead><tbody>
+        ${p.lines.map((ln) => `<tr><td><b>${esc(ln.label)}</b>${ln.findings ? ` <span class="muted">${ln.findings} finding${ln.findings === 1 ? "" : "s"}</span>` : ""}</td>
+          <td class="r num">${usd(ln.actual)}</td><td class="r num">${ln.computable ? usd(ln.expected) : `<span class="muted" title="${esc(ln.note)}">can't compute</span>`}</td>
+          <td class="r num ${ln.gap > 0 ? "accent-t" : ""}">${ln.gap ? usd(ln.gap) : ""}</td><td class="r num">${ln.in_question ? usd(ln.in_question) : ""}</td>
+          <td class="muted small">${esc(ln.note || ln.basis || "")}</td></tr>`).join("")}
+        ${p.adjustments ? `<tr><td>Other statement adjustments</td><td class="r num">${usd(p.adjustments)}</td><td class="r num">${usd(p.adjustments)}</td><td></td><td></td><td class="muted small">on the statement, not a deduction type</td></tr>` : ""}
+        </tbody></table></div>
+        <div class="card-pad owed-box"><b>Still owed ${usd(ob.total)}</b> = ${usd(ob.open_gaps)} open recoverable gaps + ${usd(ob.deposit_shortfall)} deposit shortfall
+          ${ob.deposit_closed_by.length ? `<div class="muted">deposit gap closed by ${ob.deposit_closed_by.map((f) => `<a class="mono" href="#/finding/${esc(f)}">${esc(f)}</a>`).join(", ")}</div>` : ""}</div>
+      </section>
+      <section class="card"><div class="card-head"><h2>By store</h2><span class="muted">each store's part of the lump sum</span></div>
+        <div class="table-scroll"><table><thead><tr><th>Store</th><th class="r">Orders</th><th class="r">Gross</th><th class="r">Deductions</th><th class="r">Net</th><th class="r">Received</th><th class="r">Open gaps</th><th class="r">Findings</th></tr></thead><tbody>
+        ${p.stores_detail.map((s) => `<tr><td class="mono">${esc(s.store_id)}</td><td class="r num">${big(s.orders)}</td><td class="r num">${usd(s.gross)}</td>
+          <td class="r num">${usd(s.deductions)}</td><td class="r num">${usd(s.net)}</td><td class="r num">${usd(s.received)}</td>
+          <td class="r num">${s.open_gaps ? `<b class="accent-t">${usd(s.open_gaps)}</b>` : ""}</td><td class="r num">${s.findings || ""}</td></tr>`).join("")}
+        </tbody></table></div></section>
+    </div>
+    <section class="card section-gap"><div class="card-head"><h2>Findings inside this lump sum</h2><span class="muted">${p.findings_detail.length} · riskiest first</span></div>
+      ${p.findings_detail.length ? `<div class="table-scroll"><table><thead><tr><th>Finding</th><th>Line</th><th>Store</th><th class="r">Gap</th><th>Outcome</th><th>State</th><th class="r">Risk</th><th>Counts as</th></tr></thead><tbody>
+      ${p.findings_detail.map((f) => `<tr class="link" data-href="#/finding/${esc(f.finding_id)}"><td><a class="mono" href="#/finding/${esc(f.finding_id)}">${esc(f.finding_id)}</a></td>
+        <td>${label(f.line)}</td><td class="mono">${esc(f.store_id || "all")}</td><td class="r num">${usd(f.gap)}</td>
+        <td>${f.outcome ? badge(f.outcome, f.outcome) : ""}</td><td>${badge(f.state, f.state)}${f.needs_human ? ' <span class="badge b-conflict">needs you</span>' : ""}</td>
+        <td class="r num">${f.risk} <span class="muted">${esc(f.risk_label)}</span></td><td>${label(f.counts_as)}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">No findings in this lump sum: every line matched the deal.</div>`}</section>`;
+}
+
+// ---------- agent theater (flock/theater.py -> /api/stream, /api/stream/replay) ----------
+const TH_JUDGES = ["strict", "operator", "skeptic"];
+const th = { mode: "live", speed: 2, cursor: 0, start: null, run: null, balances: {}, prevBal: {}, cols: {}, agents: [],
+  human: new Map(), banner: null, verdict: null, timer: null, count: 0, done: false };
+function thClear() {
+  Object.assign(th, { cursor: 0, start: null, run: null, balances: {}, prevBal: {}, agents: [], human: new Map(),
+    banner: null, verdict: null, count: 0, done: false });
+  th.cols = Object.fromEntries(TH_JUDGES.map((j) => [j, []]));
+}
+thClear();
+
+function thApply(e) {
+  th.count++;
+  if (e.balances) { th.prevBal = { ...th.balances }; th.balances = { ...e.balances }; }
+  if (e.run) th.run = e.run;
+  const col = th.cols[e.judge];
+  if (col && ["vote", "revision", "bet_staked", "bet_settled"].includes(e.type)) { col.unshift(e); col.length = Math.min(col.length, 14); }
+  if (e.type === "verdict" || e.type === "rule_applied") th.verdict = e;
+  if (e.type === "escalation") th.human.set(e.finding_id, { ...e, decision: null });
+  if (e.type === "human_decision") {
+    const c = th.human.get(e.finding_id);
+    if (c) c.decision = e; else th.human.set(e.finding_id, { finding_id: e.finding_id, gap: e.gap, decision: e, text: e.text });
+  }
+  if (e.type === "rule_proposed" || e.type === "rule_approved" || e.type === "rule_applied") th.banner = e;
+  if (e.lane === "agents" || e.type === "denied" || e.type.endsWith("_bulk")) { th.agents.unshift(e); th.agents.length = Math.min(th.agents.length, 18); }
+}
+
+async function thPoll() {
+  if (th.mode === "live") {
+    const d = await api(`/api/stream?since=${th.cursor}&limit=300`);
+    if (d.reset) { thClear(); th.balances = d.balances; }
+    d.events.forEach(thApply);
+    th.cursor = d.cursor; th.run = d.run || th.run;
+    if (!th.count) th.balances = d.balances;
+    return d.events.length > 0 || d.reset;
+  }
+  if (th.done) return false;
+  const q = th.start == null ? `speed=${th.speed}` : `speed=${th.speed}&since=${th.cursor}&start=${th.start}`;
+  const d = await api(`/api/stream/replay?run=last&${q}`);
+  th.start = d.start; th.run = d.run || th.run;
+  d.events.forEach(thApply);
+  th.cursor = d.cursor; th.done = d.done;
+  return d.events.length > 0;
+}
+
+function thStart(mode) {
+  th.mode = mode || th.mode;
+  thClear();
+  clearInterval(th.timer);
+  const tick = async () => {
+    if ((location.hash.replace(/^#/, "") || "/") !== "/theater") return;
+    try { if (await thPoll()) drawTheater(); } catch { /* keep trying */ }
+  };
+  th.timer = setInterval(tick, th.mode === "live" ? 1000 : 250);
+  tick().then(drawTheater);
+}
+
+function thCard(e) {
+  const fid = e.finding_id ? `<a class="mono" href="#/finding/${esc(e.finding_id)}">${esc(e.finding_id)}</a>` : "";
+  if (e.type === "vote" || e.type === "revision")
+    return `<div class="th-card th-${esc(e.type)}">${badge(e.outcome, e.type === "revision" ? `${e.from} → ${e.to}` : e.outcome)}
+      <span class="th-conf num">${pct(e.confidence)}</span> ${fid}<div class="bar"><i style="width:${Math.round((e.confidence || 0) * 100)}%"></i></div>
+      <div class="th-meta">${esc(e.model || "")}${e.type === "revision" ? " · after debate" : ""}</div></div>`;
+  if (e.type === "bet_staked")
+    return `<div class="th-card th-bet">bets <b>${esc(e.stake)}</b> on ${esc(e.outcome)} ${fid}<div class="th-meta">wins up to +${esc(e.to_win)} · risks ${esc(e.at_risk)}</div></div>`;
+  const cls = e.payout > 0 ? "ok-t" : e.payout < 0 ? "bad-t" : "muted";
+  return `<div class="th-card th-settle"><b class="${cls}">${e.payout > 0 ? "+" : ""}${esc(e.payout)}</b> ${esc(e.result)} ${fid}<div class="th-meta">truth ${esc(e.truth)} · balance ${esc(e.balance)}</div></div>`;
+}
+
+function drawTheater() {
+  if ((location.hash.replace(/^#/, "") || "/") !== "/theater") return;
+  const balCard = (j) => {
+    const b = th.balances[j], p = th.prevBal[j];
+    const d = b != null && p != null ? b - p : 0;
+    return `<div class="card th-bal ${d > 0 ? "up" : d < 0 ? "down" : ""}"><div class="label">${esc(j)}</div>
+      <div class="th-bal-v num">${b == null ? "–" : Number(b).toFixed(2)}</div><div class="hint num">${d ? (d > 0 ? "+" : "") + d.toFixed(2) : "&nbsp;"}</div></div>`;
+  };
+  const v = th.verdict;
+  const humans = [...th.human.values()].slice(-12).reverse();
+  view.innerHTML = `
+    <div class="page-head"><div><h1>Agent theater</h1>
+      <div class="sub">${th.mode === "live" ? "Live: what the agents are doing now" : `Replay of the last run at ${esc(th.speed)}×`}
+        ${th.run ? `· <span class="mono">${esc(th.run)}</span>` : ""} · ${th.count} events${th.mode === "replay" && th.done ? " · replay finished" : ""}</div></div>
+      <div class="th-controls">
+        <button class="${th.mode === "live" ? "btn-ok" : "btn-ghost"}" data-th="live">Live</button>
+        <button class="${th.mode === "replay" ? "btn-ok" : "btn-ghost"}" data-th="replay">Replay last run</button>
+        <select id="th-speed" aria-label="Replay speed">${[1, 2, 4, 8].map((s) => `<option value="${s}" ${s === th.speed ? "selected" : ""}>${s}×</option>`).join("")}</select>
+      </div></div>
+    ${th.banner ? `<div class="th-banner"><b>${th.banner.type === "rule_applied" ? "Rule applied" : th.banner.type === "rule_approved" ? "Rule approved" : "Rule learned"}</b> ${esc(th.banner.text)}</div>` : ""}
+    <div class="th-bals">${TH_JUDGES.map(balCard).join("")}
+      <div class="card th-verdict">${v ? `<div class="label">Latest verdict</div><div class="th-v">${badge(v.outcome, v.outcome)} <a class="mono" href="#/finding/${esc(v.finding_id)}">${esc(v.finding_id)}</a> ${v.gap != null ? usd(v.gap) : ""}</div><div class="hint">${esc(v.text)}</div>` : '<div class="muted">Waiting for the panel…</div>'}</div></div>
+    <div class="th-grid">
+      ${TH_JUDGES.map((j) => `<section class="card th-col"><div class="card-head"><h2>${esc(j)}</h2><span class="muted">votes and bets</span></div>
+        <div class="th-list">${th.cols[j].map(thCard).join("") || '<div class="empty">No votes yet.</div>'}</div></section>`).join("")}
+      <section class="card th-col th-human"><div class="card-head"><h2>Human lane</h2><span class="muted">escalations by attention rank</span></div>
+        <div class="th-list">${humans.map((c) => `<div class="th-card th-esc ${c.decision ? "decided" : ""} ${c.status === "deferred" ? "deferred" : ""}">
+          ${c.rank ? `<span class="th-rank">#${esc(c.rank)}</span>` : ""} <a class="mono" href="#/finding/${esc(c.finding_id)}">${esc(c.finding_id)}</a> ${c.gap != null ? usd(c.gap) : ""}
+          <div class="th-meta">${c.decision ? `${esc(c.decision.human)} ${esc(c.decision.decision)}d` : c.status === "deferred" ? "deferred: over budget" : "waiting for a human"}</div></div>`).join("") || '<div class="empty">Nobody escalated yet.</div>'}</div></section>
+    </div>
+    <section class="card section-gap"><div class="card-head"><h2>The flock</h2><span class="muted">agents spawning, case files, drafts, filings</span></div>
+      <ul class="feed th-feed">${th.agents.map((e) => `<li><span class="dot ${e.type === "denied" ? "denied" : e.lane === "human" ? "human" : "agent"}"></span><span>${esc(e.text)}</span><span class="meta">${when(e.at)}</span></li>`).join("") || '<li class="muted">Quiet. Start a run, or replay the last one.</li>'}</ul></section>`;
+}
+
+function renderTheater() {
+  if (!th.timer) thStart("live"); else drawTheater();
+}
+
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-th]");
+  if (b) thStart(b.dataset.th);
+});
+document.addEventListener("change", (ev) => {
+  if (ev.target.id === "th-speed") { th.speed = Number(ev.target.value); if (th.mode === "replay") thStart("replay"); }
+});
+
 // ---------- router + polling ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
   const m = h.match(/^\/finding\/(.+)$/);
   const jm = h.match(/^\/journal\/(.+)$/);
+  const pm = h.match(/^\/payout\/(.+)$/);
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on",
     (a.dataset.view === "live" && (h === "/" || m)) || (a.dataset.view === "queue" && h === "/queue")
     || (a.dataset.view === "journal" && (h === "/journal" || jm)) || (a.dataset.view === "score" && h === "/score")
     || (a.dataset.view === "market" && h === "/market") || (a.dataset.view === "flock" && h === "/flock")
-    || (a.dataset.view === "clicky" && h === "/clicky")));
+    || (a.dataset.view === "clicky" && h === "/clicky") || (a.dataset.view === "payouts" && (h === "/payouts" || pm))
+    || (a.dataset.view === "theater" && h === "/theater")));
+  if (h === "/theater") return renderTheater();
+  if (h === "/payouts") return renderPayouts();
+  if (pm) return renderPayout(decodeURIComponent(pm[1]));
   if (h === "/clicky") return renderClicky();
   if (m) return renderFinding(decodeURIComponent(m[1]));
   if (jm) return renderJournalEntry(decodeURIComponent(jm[1]));

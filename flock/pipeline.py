@@ -392,7 +392,7 @@ def save_transactions(store: Store, context: dict, findings: list[dict], source:
         if tables.get("payout_lines"):   # fixtures clear context: no tables
             deposits = context.get("deposit_stories") or [s for s in context.get("stories", [])
                                                           if s.get("kind") == "deposit"]
-            doc = transactions.build(tables, deposits, findings, source)
+            doc = transactions.build(tables, deposits, findings, source, terms=context.get("terms"))
         else:
             doc = transactions.empty(source, f"this run read {source}: hand-made findings with no payout tables, "
                                              "so there are no transactions (POST /api/run with dataset=demo)")

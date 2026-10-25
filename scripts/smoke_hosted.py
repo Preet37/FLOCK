@@ -76,6 +76,44 @@ def transactions_ok(out: Any) -> str | None:
     return None
 
 
+def payouts_ok(out: Any) -> str | None:
+    err = has("payouts", "total", "summary", "unpaid_orders")(out)
+    if err:
+        return err
+    for p in out["payouts"]:
+        miss = [k for k in ("payout_id", "payout_key", "gross", "net", "expected_net", "received", "shortfall", "owed",
+                            "status") if k not in p]
+        if miss:
+            return f"{p.get('payout_key')} missing {', '.join(miss)}"
+        c = lambda k: round(p[k] * 100)  # noqa: E731
+        if c("shortfall") != c("expected_net") - c("received"):
+            return f"{p['payout_key']}: shortfall != expected_net - received"
+        if c("owed") != c("open_gaps") + c("deposit_owed"):
+            return f"{p['payout_key']}: owed != open_gaps + deposit_owed"
+    return None
+
+
+def stream_ok(out: Any) -> str | None:
+    err = has("run", "cursor", "events", "reset", "balances")(out)
+    if err:
+        return err
+    cur = [e.get("cursor") for e in out["events"]]
+    if cur != sorted(cur) or len(cur) != len(set(cur)):
+        return "cursors are not strictly increasing"
+    if out["events"] and not all(e.get("text") and e.get("type") for e in out["events"]):
+        return "an event has no text / type"
+    return None
+
+
+def replay_ok(out: Any) -> str | None:
+    err = has("mode", "events", "duration_ms", "bounds", "done")(out)
+    if err:
+        return err
+    if any(e["delay_ms"] > out["bounds"]["max_gap_ms"] + 1 for e in out["events"]):
+        return "a replay gap is over max_gap_ms"
+    return None if out["duration_ms"] <= out["bounds"]["max_total_ms"] + 1 else "replay longer than max_total_ms"
+
+
 GETS: list[tuple[str, Callable[[Any], str | None]]] = [
     ("/api", has("ok", "routes")),
     ("/api/health", has("status", "store", "counts", "last_run")),
@@ -85,6 +123,9 @@ GETS: list[tuple[str, Callable[[Any], str | None]]] = [
     ("/api/findings", findings_ok),
     ("/api/findings?sort=risk", findings_ok),
     ("/api/transactions?limit=5", transactions_ok),
+    ("/api/payouts", payouts_ok),
+    ("/api/stream?since=0&limit=50", stream_ok),
+    ("/api/stream/replay?run=last&speed=4&all=1", replay_ok),
     ("/api/metrics", metrics_ok),
     ("/api/log", lambda o: None if isinstance(o, list) else "expected a list"),
     ("/api/rules", has("approved", "proposed")),
@@ -108,6 +149,20 @@ def check_gets(base: str, results: list[tuple[str, bool, str]]) -> None:
         err = None if code == 200 else f"HTTP {code}"
         err = err or has("finding", "log")(one)
         results.append((f"GET /api/findings/{fid}", err is None, err or f"{ms:.0f}ms"))
+    code, out, _ = call(base, "GET", "/api/payouts")
+    if code == 200 and isinstance(out, dict) and out.get("payouts"):
+        key = out["payouts"][0]["payout_key"]
+        code, one, ms = call(base, "GET", f"/api/payouts/{key}")
+        err = None if code == 200 else f"HTTP {code}"
+        err = err or has("waterfall", "lines", "stores_detail", "findings_detail", "owed_breakdown")(one)
+        results.append((f"GET /api/payouts/{key}", err is None, err or f"{ms:.0f}ms"))
+    code, out, _ = call(base, "GET", "/api/stream?since=0&limit=5")
+    if code == 200 and isinstance(out, dict) and out.get("more"):
+        code, nxt, ms = call(base, "GET", f"/api/stream?since={out['cursor']}&limit=5")
+        ok = code == 200 and not nxt.get("reset") and all(e["cursor"] > out["cursor"] for e in nxt.get("events", []))
+        results.append(("GET /api/stream?since=<cursor> continues", ok, f"{ms:.0f}ms" if ok else f"HTTP {code}"))
+    code, out, _ = call(base, "GET", "/api/stream/replay?run=other")
+    results.append(("GET /api/stream/replay?run=other -> 400", code == 400, f"HTTP {code}"))
     code, out, _ = call(base, "GET", "/api/screens/..%2f..%2fREADME.md")
     results.append(("GET /api/screens/<traversal> -> 404", code == 404, f"HTTP {code}"))
     code, out, _ = call(base, "GET", "/api/no-such-route")
