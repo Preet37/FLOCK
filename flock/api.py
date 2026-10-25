@@ -394,8 +394,13 @@ class Api:
                 return 202, self.start("fixtures", {k: body.get(k) for k in ("reset", "forget", "demo_approve")},
                                        lambda: self._fixtures(body))
             return 200, self._exclusive(lambda: self._fixtures(body))
+        if dataset == "showtime":
+            params = self.showtime_params(body)
+            if wait:
+                return 200, self._exclusive(lambda: self._showtime(params))
+            return 202, self.start("showtime", params, lambda: self._showtime(params))
         if dataset != "demo":
-            raise BadRequest(f"unknown dataset {dataset!r}: use 'fixtures' (default) or 'demo'")
+            raise BadRequest(f"unknown dataset {dataset!r}: use 'fixtures' (default), 'demo' or 'showtime'")
         params = self.dataset_params(body)
         if wait:
             return 200, self._exclusive(lambda: self._dataset(params))
@@ -444,6 +449,35 @@ class Api:
                                                 "orders", "seconds")},
                 "findings": len(self.store.all()),
                 "transactions": (transactions.load(self.dir) or {}).get("data")}
+
+    @staticmethod
+    def showtime_params(body: dict[str, Any]) -> dict[str, Any]:
+        """Validate a hosted showtime prepare (prior months + the demo month). Raises BadRequest."""
+        def whole(name: str, default: int, lo: int, hi: int) -> int:
+            v = body.get(name, default)
+            if isinstance(v, bool) or not str(v).strip().isdigit():
+                raise BadRequest(f"{name} must be a whole number")
+            v = int(v)
+            if not lo <= v <= hi:
+                raise BadRequest(f"{name} must be between {lo} and {hi} on this server (got {v})")
+            return v
+        return {"months": whole("months", 4, 1, 4), "seed": whole("seed", 2025, 0, 2**31 - 1),
+                "stores": whole("stores", MAX_STORES, 1, MAX_STORES)}
+
+    def _showtime(self, p: dict[str, Any]) -> dict[str, Any]:
+        """flock.showtime prepare into this server's state: the prior months (learning curve, judge balances, learned
+        rules) and the demo month, stopped before the headline finding is approved. Cheat sheet: GET /api/showtime."""
+        from flock import showtime
+        showtime.prepare(months=p["months"], seed=p["seed"], stores=p["stores"], store=self.store, portal=self.portal)
+        return {"params": p, "showtime": self.showtime_sheet().get("json"), "findings": len(self.store.all())}
+
+    def showtime_sheet(self) -> dict[str, Any]:
+        """The last showtime cheat sheet in this server's state (json + markdown), or an empty note."""
+        from flock import showtime
+        jp, mp = self.dir / showtime.JSON_NAME, self.dir / showtime.MD_NAME
+        if not jp.exists():
+            return {"json": None, "markdown": None, "note": "no showtime prepared here: POST /api/run {\"dataset\": \"showtime\"}"}
+        return {"json": json.loads(jp.read_text()), "markdown": mp.read_text() if mp.exists() else None}
 
     def _exclusive(self, fn) -> dict[str, Any]:
         if not self.run_lock.acquire(blocking=False):
@@ -557,6 +591,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parts == ["api", "health"]:
                 return self._send(200, a.health())
+            if parts == ["api", "showtime"]:
+                return self._send(200, a.showtime_sheet())
             if parts == ["api", "agents"]:
                 return self._send(200, a.agents())
             if len(parts) == 3 and parts[:2] == ["api", "agents"]:
