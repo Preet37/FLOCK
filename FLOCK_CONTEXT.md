@@ -1,10 +1,13 @@
 # Flock: Full Project Context (Cal Hacks 13.0, Hyphenate Track)
 
-Last updated: Saturday Oct 24, 2026, ~5:20 AM PT
+Last updated: Saturday Oct 24, 2026 (company and owners synced late Saturday; first written ~5:20 AM PT)
 Submission deadline: Sunday Oct 25, 9:00 AM local. Judging 10:30 AM to 12:30 PM.
-Team: Maja, Thabhelo, Preet, Ira
+Team: Himaja (Maja), Thabhelo, Preet, Ira
 
-This file is the single source of truth for the team. Paste it into Claude (or any agent) at the start of a session so it has full context.
+This file is the background for the team: problem, research, pitch, plan. Paste it into Claude (or any agent) at the start of a session so it has full context.
+For what the code does today, `CONTRACT.md` (rules, data shapes, state machines, traps 1-22) and `docs/STATUS.md` (what's built, measured, simulated) win over anything here.
+
+**The company: Noah's NY Bagels**, about 56 locations across California, a mid-market chain. All data is **simulated** with `--profile ca_bagel_chain` (a fictional 56-store California bagel chain; the generated files use the made-up brand "Ringtide Bagels"). No real Noah's records, people or contract terms are used. Dave's Hot Chicken was the first target; its sourced facts are kept below as earlier research.
 
 ---
 
@@ -12,25 +15,25 @@ This file is the single source of truth for the team. Paste it into Claude (or a
 
 Flock does the boring job a restaurant pays an accountant to do by hand: it takes the messy money reports from DoorDash, Uber Eats, Grubhub and the restaurant's own app, sorts them all into one place, and checks them, faster and cheaper than a person can.
 
-Name: Flock = chicken / wings / a flock of agents.
+Name: Flock = a flock of agents (the name came from the first target, a hot chicken chain: chicken / wings).
 
 ---
 
-## 2. The problem (5 Ws, using Dave's Hot Chicken)
+## 2. The problem (5 Ws, using Noah's NY Bagels)
 
 **Short version (ELI5)**
-- **What:** Dave's gets paid by four food apps, and each one sends money and reports in a different, messy way.
-- **Why:** Each app has its own deal with Dave's, and none of them talk to each other.
+- **What:** Noah's gets paid by four food apps, and each one sends money and reports in a different, messy way.
+- **Why:** Each app has its own deal with Noah's, and none of them talk to each other.
 - **When:** Every week, when the money shows up and never matches what the stores actually sold.
 - **Where:** On an accountant's desk, stuck in four websites and a pile of spreadsheets.
-- **Why it matters:** Dave's pays someone to sort it all by hand, it's slow, and mistakes mean Dave's loses money it already earned.
+- **Why it matters:** Noah's pays someone to sort it all by hand, it's slow, and mistakes mean Noah's loses money it already earned.
 
 **Longer version**
-- **What is it?** A Dave's Hot Chicken franchise group with dozens of stores gets paid by DoorDash, Uber Eats, Grubhub and its own app, and every one of them sends money and reports in a different, messy format, under different deals.
-- **Why does it exist?** Each app is a separate company with its own contract, commission tiers, promos and refund rules, and none of their systems talk to Dave's register, bank or contracts.
-- **When does it come into play?** Every week, when the payouts land in Dave's bank as lump sums that never match what the register says the stores sold.
-- **Where does it live?** In Dave's accounting team, on a staff accountant's desk, spread across four app portals, the register, the bank account, the contracts and a pile of spreadsheets.
-- **Why does it matter?** Someone gets paid to sort and check all of it by hand, which is slow and expensive, and because it's slow and manual, mistakes slip through and Dave's quietly loses money it already earned.
+- **What is it?** Noah's NY Bagels, a chain of about 56 stores across California, gets paid by DoorDash, Uber Eats, Grubhub and its own app, and every one of them sends money and reports in a different, messy format, under different deals.
+- **Why does it exist?** Each app is a separate company with its own contract, commission tiers, promos and refund rules, and none of their systems talk to Noah's register, bank or contracts.
+- **When does it come into play?** Every week, when the payouts land in Noah's bank as lump sums that never match what the register says the stores sold.
+- **Where does it live?** In Noah's accounting team, on a staff accountant's desk, spread across four app portals, the register, the bank account, the contracts and a pile of spreadsheets.
+- **Why does it matter?** Someone gets paid to sort and check all of it by hand, which is slow and expensive, and because it's slow and manual, mistakes slip through and Noah's quietly loses money it already earned.
 
 **Two halves of the cost (use both in the pitch)**
 1. Cost of doing the work: paying people to manually sort messy data from four apps.
@@ -42,21 +45,21 @@ Flock fixes both.
 
 ## 3. How the money actually flows (so everyone can explain it)
 
-Money only flows one way: the app pays Dave's. Everything Dave's "owes" the app is subtracted before the money arrives. Accountants call this netting.
+Money only flows one way: the app pays Noah's. Everything Noah's "owes" the app is subtracted before the money arrives. Accountants call this netting.
 
 Example:
-1. Customer pays DoorDash $10 for Dave's.
+1. Customer pays DoorDash $10 for a Noah's bagel order.
 2. DoorDash subtracts its commission (example: 30% = $3).
-3. DoorDash subtracts Dave's share of any promo.
-4. DoorDash subtracts any error charge (the "my fries were missing" refund).
-5. Whatever is left lands in Dave's bank, bundled with every other order that week.
+3. DoorDash subtracts Noah's share of any promo.
+4. DoorDash subtracts any error charge (the "my schmear was missing" refund).
+5. Whatever is left lands in Noah's bank, bundled with every other order that week.
 
 The weekly payout is one number with a pile of hidden subtractions. The question is: was each subtraction correct according to the deal?
 
 Gym analogy (Ira's framing):
-| Gym | Dave's |
+| Gym | Noah's |
 | --- | --- |
-| Contract: gym membership | Dave's contract with DoorDash, Uber Eats, Grubhub |
+| Contract: gym membership | Noah's contract with DoorDash, Uber Eats, Grubhub |
 | Payment structure: $16 biweekly | Commission %, promo split, fees, refund rules |
 | Invoice with a deadline | The weekly payout statement each app sends |
 | Billed $16, paid $14, follow up | App owed X, paid less, is the gap right? If not, dispute |
@@ -66,12 +69,12 @@ Gym analogy (Ira's framing):
 
 ## 4. Company, role, and what we automate (Hyphenate slide 4 framing)
 
-- **Company:** A multi-unit Dave's Hot Chicken franchise operator group. Make it big enough to plausibly clear ~$75M revenue (Hyphenate's smallest customers are around $75M). [need: average Dave's sales per location to set store count]
+- **Company:** Noah's NY Bagels, about 56 locations across California: a mid-market chain (Hyphenate's smallest customers are around $75M revenue). Data is simulated with `--profile ca_bagel_chain` (56 stores, morning-heavy, weekend peaks, catering; ~1.2M orders a year). [need: a sourced revenue figure before quoting one on stage]
 - **Roles we replace:** (1) the delivery reconciliation staff accountant, (2) the disputes clerk. The controller stays human and approves disputes and new rules.
 - **Hyphenate teams this maps to:** Receivables ("payments in, short or late; who to chase") + Cash ("every bank line matched to what it pays").
-- **Pitch line:** "We replace the delivery reconciliation accountant and the disputes clerk at a multi-unit restaurant group."
+- **Pitch line:** "We replace the delivery reconciliation accountant and the disputes clerk at a multi-unit restaurant chain like Noah's NY Bagels."
 - **What we automate:** checking every delivery order's payout against the deal actually in effect, then recovering what's short, with proof for every dollar.
-- **Why "receivables" even with no invoice:** a receivable is just money someone owes you. The moment a customer orders on DoorDash, DoorDash owes Dave's. The weekly payout pays that debt.
+- **Why "receivables" even with no invoice:** a receivable is just money someone owes you. The moment a customer orders on DoorDash, DoorDash owes Noah's. The weekly payout pays that debt.
 - **Q&A answer if asked about close or rev rec:** "We deliberately stayed in receivables and cash, because one corner done deep beats ten done shallow." (Hyphenate's own line.)
 
 **Hyphenate's four questions (slide 8), answered**
@@ -154,7 +157,7 @@ Prizes: $8K / $5K / $3K. Top 5 teams: expedited interviews for every member.
 - Financial reports with error charges are downloadable from the Merchant Portal.
 - Sources: https://help.doordash.com/merchants/s/article/How-Do-I-Dispute-Error-Charges , https://merchants.doordash.com/en-us/learning-center/doordash-merchant-refund
 
-**Dave's Hot Chicken facts**
+**Dave's Hot Chicken facts (earlier research, from when Dave's was the target; not about Noah's)**
 - Opened its 500th restaurant Oct 9, 2026, ~100 locations in six months. https://www.fastcasual.com/news/daves-hot-chicken-hits-500-restaurants-adds-100-units-in-6-months/
 - Roark Capital bought a majority stake in 2025 at ~$1B valuation. (This is a valuation, NOT sales. Don't say "$1B in sales.") https://lexpress-franchise.com/en-us/news/daves-hot-chicken-500-restaurants-franchise-growth/
 - 95% of Dave's franchisees are multi-unit operators. https://www.franchising.com/articles/20260829_the_2026_multiunit_50_a_snapshot_of_scale.html
@@ -203,10 +206,10 @@ Range for $150M to $400M chains (delivery share 10% to 20%, 2.5% leakage, 80% re
 **30-second hook (problem + market)**
 > "A family bakery in California used DoorDash for years. Their contract said 13% commission. DoorDash charged them 30%, for almost a decade, and nobody noticed until they'd lost over $100,000.
 > That's not rare. Industry operators say 2 to 3% of restaurant revenue gets lost in delivery app disputes and deductions. And today the only thing checking is a staff accountant with four spreadsheets, a week late.
-> Dave's Hot Chicken just opened its 500th restaurant, and 95% of its franchisees run multiple locations. Every one of them has this problem, and pays someone to miss it."
+> Take Noah's NY Bagels: about 56 stores across California, four apps, four different deals, every week. Every chain that size has this problem, and pays someone to miss it."
 
 **Alternate hook (relatable)**
-> "You've ordered Dave's on DoorDash. Here's what you never see: the restaurant got paid less than the order total, and nobody can tell you if that's right. Commission, a buy-one-get-one DoorDash was supposed to help pay for, a refund for fries someone claimed never came. Now do that across four apps, dozens of stores, every week. Tools today catch the missing fries. We catch the broken deals, and prove every call."
+> "You've ordered bagels on DoorDash. Here's what you never see: the store got paid less than the order total, and nobody can tell you if that's right. Commission, a buy-one-get-one DoorDash was supposed to help pay for, a refund for a schmear someone claimed never came. Now do that across four apps, dozens of stores, every week. Tools today catch the missing schmear. We catch the broken deals, and prove every call."
 
 **One-line problem:** "Mid-size restaurant groups pay accountants to manually piece together four delivery apps' messy reports, and still lose 2 to 3% of revenue to mistakes they never catch. Flock does that job automatically, faster and more accurately, for less than the people cost."
 
@@ -222,12 +225,12 @@ Range for $150M to $400M chains (delivery share 10% to 20%, 2.5% leakage, 80% re
 
 ## 9. The pipeline (plain words, following one order)
 
-Example: Sam orders $20 of Dave's on DoorDash Friday night. (Numbers illustrative.)
+Example: Sam orders $20 of bagels from Noah's on DoorDash Saturday morning. (Numbers illustrative.)
 
 1. **Collect:** grab register, 4 app reports, bank deposits, contracts, rep emails. Save untouched.
 2. **Read:** translate every file into one standard format. No deleting, no deciding. Every row remembers its source file and row.
 3. **Connect:** link every record about the same order (register #881 = DoorDash line A92 = part of Tuesday's deposit). Unlinked records are findings ("sold, never paid").
-4. **Decide:** work out the deal in effect, compute what Dave's should have been paid (plain code), compare to actual, and put it in a bucket:
+4. **Decide:** work out the deal in effect, compute what Noah's should have been paid (plain code), compare to actual, and put it in a bucket:
    - Correct: close it.
    - Recoverable: clear mistake with proof.
    - Conflict: sources disagree or no precedent, ask a human.
@@ -275,7 +278,8 @@ Stronger wins automatically. Equal strength or unknown authority -> conflict -> 
 | Direct app | Orders, refunds, delivery partner bill | Ordering system export | Simulated CSV |
 | Register (POS) | Every order | Toast/Square exports or APIs | Simulated CSV |
 | Bank | Deposits | Statement download or Plaid | Simulated CSV |
-| Contracts, emails | Deals, amendments, rep promises | PDFs, inbox | Simulated JSON/txt/PDF |
+| Contracts, emails | Deals, amendments, authorized contacts, rep promises | PDFs, inbox | Simulated JSON, .txt and .eml |
+| Slack, call notes | Rep messages in shared channels, meeting notes | Slack export / a CREAO connector watching Slack and Gmail (`docs/connectors.md`) | Simulated Slack export + .md notes |
 
 Say on stage: "In production the collector downloads these from each portal; here it reads simulated exports."
 
@@ -287,20 +291,24 @@ Rule: AI only where things are messy or need judgment. All math in plain code.
 
 | # | Name | AI or code | Job |
 | --- | --- | --- | --- |
-| 1 | Collector | Code | Picks up all files, saves raw untouched |
-| 2 | Formatter / Format Mapper | AI | Maps unknown columns to the standard format, asks a human once, remembers |
-| 3 | Document Reader | AI (local on GX10 if possible) | Reads contracts, amendments, emails, PDFs; outputs terms with exact quotes |
-| 4 | Matcher | Code (+AI tie-breaks) | Links each order's records together |
-| 5 | Deal Keeper | AI + rules | Works out effective deal per store/app/date using authority ranking |
-| 6 | Checkers | Code | Commission, promo, tax, error charges, deposit; run in parallel (the "flock") |
-| 7 | Panel (judges) | AI | 3 judges independently call each finding and bet a confidence; agree = decide, disagree = human |
-| 8 | Ranker | Code | Ranks disputes by value x win chance within dispute limits |
-| 9 | Dispute Writer | AI | Drafts dispute with evidence |
-| 10 | Learner | AI | Proposes rules from human decisions with evidence counts |
-| 11 | Clicky | AI browser automation | Files approved disputes into a FAKE sandbox portal (never real) |
-| 12 | Gatekeeper / Logging | Code | Permissions, transition(), append-only log |
+| 1 | Collector | Code | Picks up all files (incl. Slack exports, .eml, .md notes, connector drops), saves raw untouched |
+| 2 | Formatter / Format Mapper | AI (mapper role) + code | Maps unknown columns to the standard format, asks a human once, remembers |
+| 3 | Document Reader | AI (reader role; local on the GX10 or CREAO) | Reads free-text deal messages the rules can't parse; keeps a claim only if its quote is verbatim |
+| 4 | Matcher | Code | Links each order's records together; unlinked records become missing_order findings |
+| 5 | Deal Keeper | Rules (+ reader) | Effective deal per store/app/date: newest binding source wins, authority from the contract's authorized contacts |
+| 6 | Checkers | Code | Commission, promo, tax, fee, error charges, refunds, deposit; one worker per store in parallel |
+| 7 | Anomaly Detector | Code (learned baselines) | Learns each store x app's normal fees/commission/timing; flags jumps no deal term covers |
+| 8 | Investigator | Code (+ writer model for the summary) | Spawned only for an unexplained finding; attaches a case file, never changes an outcome or a dollar |
+| 9 | Panel (judges) | AI | 3 judges vote and bet; one debate round on a split; agree = decide, disagree = human (reviewer writes a memo, never breaks the tie) |
+| 10 | Judge market | Code | Brier-scored bets settle on human decisions; balances weight the votes; attention budget orders the human queue |
+| 11 | Ranker | Code | Ranks disputes by value x win chance within dispute limits |
+| 12 | Dispute Writer | AI (writer role) | Drafts dispute with evidence |
+| 13 | Clicky | Browser automation | Files approved disputes into a FAKE sandbox portal (never real); learns the form from one human demonstration |
+| 14 | Journal Entry Drafter | Code | Balanced GL entries per store x channel x payout; a human approves, the gatekeeper posts the import CSV |
+| 15 | Learner | Code | Proposes rules from human decisions with evidence counts; a human approves |
+| 16 | Gatekeeper / Logging | Code | Permissions, transition(), append-only log |
 
-**State machine:** NEW -> CHECKED -> JUDGED -> APPROVED (human only) -> FILED (gatekeeper only) -> RECOVERED
+**State machine:** NEW -> CHECKED -> JUDGED -> APPROVED (human only) -> FILED (gatekeeper only) -> RECOVERED, plus JUDGED -> REJECTED (human). Journal entries and Clicky's learned workflows have their own machines through the same gatekeeper. Full tables: `CONTRACT.md`.
 
 **Betting, done right:** the Panel's confidence bets decide when to bring a human in. Disagreement between judges = escalate. That's the "betting" idea with a real job.
 
@@ -310,49 +318,19 @@ Rule: AI only where things are messy or need judgment. All math in plain code.
 - Rules stored as readable entries (rules.json), not hidden in model weights.
 - Demo it: week 1 sends N conflicts to a human, week 2 sends fewer with the same accuracy.
 
-**GX10 use:** run a local model to read PDFs and emails ("restaurant financials never leave the building"). Optional. Don't let it become a side quest. Preet's HackMIT paper (small-model document extraction for the financial close, Zenodo DOI 10.5281/zenodo.22927774) is directly relevant if reused.
+**GX10 use:** local models (Ollama over an SSH tunnel, `scripts/gx10.sh`) as judges, writer, mapper and reader; `FLOCK_AIRGAP=1` proves no call left the network ("restaurant financials never leave the building"). Preet's HackMIT paper (small-model document extraction for the financial close, Zenodo DOI 10.5281/zenodo.22927774) is directly relevant if reused.
 
 ---
 
-## 12. Shared contract (CONTRACT.md, lock this first)
+## 12. Shared contract (CONTRACT.md)
 
-```
-FOLDERS
-data/raw/<source>/        untouched files (pos, doordash, ubereats, grubhub, direct_app, bank, contracts, emails)
-data/std/                 standardized tables
-data/answer_key.csv       planted traps + correct outcome
+The contract started here as a short sketch on Saturday morning. It has grown with the code, so the living version is
+`CONTRACT.md`: the rules, folders, every table and row shape (std tables, deal terms with authorized contacts and
+locators, findings with votes / case files / attention, journal entries, workflows, the market ledger, agent status
+events, log entries with `subject_type` and `diff`), all three state machines with who may do each move, the
+"newest binding document wins" rule, check types (incl. `fee` and `anomaly`) and traps 1-22.
 
-STANDARD ORDER ROW (register / direct app)
-order_id, store_id, channel, placed_at (ISO), subtotal, tax, promo_code,
-source_file, source_row
-
-STANDARD PAYOUT LINE (one per order per platform)
-payout_line_id, channel, store_id, platform_order_id, order_id (if known),
-gross, commission, promo_merchant_funded, error_charge, tax_withheld_by_platform,
-other_fees, net, payout_id, payout_date, source_file, source_row
-
-BANK DEPOSIT
-deposit_id, channel, amount, deposit_date, memo, source_file, source_row
-
-DEAL TERM (output of Deal Keeper)
-term_id, channel, store_id (or "all"), term_type (commission|promo_split|fee|tax_rule),
-value, effective_from, effective_to,
-authority (contract|amendment|auth_email|unauth_email|call_note),
-quote, source_file
-
-FINDING (one per discrepancy)
-finding_id, order_ids[], channel,
-check_type (commission|promo|tax|error_charge|deposit|missing_order),
-expected, actual, gap, evidence[] (source_file + row or quote),
-outcome (correct|recoverable|conflict), confidence, reason (plain English),
-state (NEW|CHECKED|JUDGED|APPROVED|FILED|RECOVERED)
-
-LOG ENTRY (append-only, never edited)
-at, actor (agent name or human), action, subject_id, allowed (true/false),
-before, after, reason, evidence[]
-```
-
-Rule: any change to a finding goes through one function, `transition()`, which writes the log entry. No agent edits a finding directly.
+Rule (unchanged): any change to a finding goes through one function, `transition()`, which writes the log entry. No agent edits a finding directly.
 
 ---
 
@@ -384,6 +362,12 @@ Each goes in data/answer_key.csv with order_id, trap_type, correct outcome, corr
 17. Penny rounding differences -> ignore within tolerance
 18. The direct app's payment processor quietly raises its processing rate for one store-week; no contract term states a flat fee, so only history can catch it -> recoverable (Anomaly Detector)
 
+**Messy deal sources (Slack only; planted with `--sources ...slack...`, the default for `ca_bagel_chain`)**
+19. An authorized rep waives a fee in the shared Slack channel -> recoverable
+20. A rep NOT on the contract's authorized contacts promises a waiver in Slack -> conflict
+21. A thread reply corrects the waiver to a different day: the new day -> recoverable
+22. ... and the day the first message named is billed as normal -> correct
+
 **Data generation approach**
 - Seeded Python generator. Build the TRUE world first, then render each source with its own quirks, then plant traps and write the answer key.
 - Use Claude only for text parts (rep emails, complaint text, contract wording).
@@ -392,6 +376,17 @@ Each goes in data/answer_key.csv with order_id, trap_type, correct outcome, corr
 ---
 
 ## 14. Team split and prompts
+
+**Current owners (late Saturday Oct 24; `docs/PLAN.md` has the live task list)**
+
+| Who | Owns now |
+| --- | --- |
+| **Preet** | Hosting (Railway deploy of the API, `docs/DEPLOY.md`) and all ML + benchmarking: GX10 models, local and tuned judges, `scripts/benchmark.py`, `scripts/judge_*.py`, `scripts/gx10.sh`, the anomaly detector, `flock/llm.py`, `panel.py`, `market.py`; merging into `main` |
+| **Thabhelo** | CREAO: every AI role as a hosted CREAO agent (`scripts/creao_setup.py`), the Flock Judge built on agent.creao.ai (track requirement), CREAO connectors for Slack/Gmail (`docs/connectors.md`); also `flock/api.py`, `matcher.py`, `checkers.py`, `deal_keeper.py` |
+| **Himaja (Maja)** | UI, in her own frontend folder (not merged into this repo yet; the Flask dashboard in `dashboard/` is what runs today); still owns `generator/`, `collector.py`, `formatter.py`, `profiles/` |
+| **Ira** | Pitch, demo video, Devpost [confirm with Ira]. SpacetimeDB (`SpacetimeStore` is still a stub) and the Figma/Notability process tracks are unassigned unless Ira confirms them |
+
+**Original split and prompts (Saturday morning, kept for reference; owners above win)**
 
 **Step 0 (everyone, 30 min):** lock CONTRACT.md (section 12).
 
@@ -432,7 +427,8 @@ Prompt:
 | Track | Fit | Owner | Notes |
 | --- | --- | --- | --- |
 | Hyphenate | Main target | Everyone | $8K/$5K/$3K + interviews for top 5 |
-| SpacetimeDB | Strong | Ira | Must be the core real-time backend (shared state, live sync). $2,048/$1,024/$512 |
+| SpacetimeDB | Strong | Ira [confirm] | Must be the core real-time backend (shared state, live sync). $2,048/$1,024/$512. `SpacetimeStore` in `flock/store.py` is still a stub |
+| CREAO | Strong | Thabhelo | At least one agent built on agent.creao.ai doing core work, its agent ID and a run share link in the README, shown in the demo. Ours: the Flock Judge (README "CREAO track") |
 | Microsoft | Strong | Ira (pitch) | Production-minded agent, customer understanding, measurable usefulness, responsible design |
 | Figma | Good | Ira | Requires stage log (<=200 words per stage), Figma Slides with embedded prototype, video <=3 min, public Figma access. Log as you go. Prize details conflict between brief and Devpost |
 | Notability | Good | Anyone | Keep real evolving notes and diagrams in Notability all weekend. Code CALHACKS for a month of Pro |
@@ -445,7 +441,7 @@ Prompt:
 
 **Setup:** generator creates a fresh week with traps and an answer key, run live so it's clearly not hard-coded.
 
-- **0:00 to 0:25 Hook.** Bakery story or the Dave's order story. Say example numbers are examples.
+- **0:00 to 0:25 Hook.** Bakery story, then "Noah's NY Bagels, 56 California stores" (simulated data). Say example numbers are examples.
 - **0:25 to 0:45 Inputs.** Four statements in four formats, register export, contract PDF, rep email. "This is what the bookkeeper gets every Monday."
 - **0:45 to 1:20 The run.** Live board, checkers running in parallel, counters ticking. Zoom into three catches:
   1. Broken deal (differentiator): BOGO charged 100% to the store, contract says 50/50.
@@ -492,7 +488,7 @@ Prompt:
 
 ## 19. Open items ([need])
 
-- Average Dave's sales per location (to size the fictional group above ~$75M).
+- A sourced Noah's NY Bagels revenue / sales-per-location figure (to say "mid-market" with a number). Until then, say "about 56 California locations" and that the data is simulated.
 - Third-party delivery share of sales for fast casual.
 - Restaurant-only count of large multi-unit operators.
 - Whether "reconciling one location takes an hour" is per week, per day, or per month.
@@ -508,4 +504,4 @@ Prompt:
 - CPG deductions analyst (retailers short-paying brands). Parked: not relatable enough.
 - AI customer-service outcome billing disputes (Decagon-style). Parked: too close to Hyphenate's own example.
 - University restricted funds / tuition receivables. Parked.
-- Early-payment discount capture in payables (City of Toronto auditor general found ~$450K lost in vendor discounts from processing delays; TTC could gain ~$100K/yr by raising discount capture from 75% to 90%). Najib reacted strongly to this. Strong backup idea if Dave's falls apart. Sources: https://www.toronto.ca/legdocs/mmis/2013/au/bgrd/backgroundfile-55721.pdf , https://www.torontoauditor.ca/?p=516
+- Early-payment discount capture in payables (City of Toronto auditor general found ~$450K lost in vendor discounts from processing delays; TTC could gain ~$100K/yr by raising discount capture from 75% to 90%). Najib reacted strongly to this. Strong backup idea if the restaurant idea falls apart. Sources: https://www.toronto.ca/legdocs/mmis/2013/au/bgrd/backgroundfile-55721.pdf , https://www.torontoauditor.ca/?p=516

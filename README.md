@@ -2,7 +2,8 @@
 
 Flock does the boring job a restaurant pays an accountant to do by hand: it takes the messy money reports from DoorDash, Uber Eats, Grubhub and the restaurant's own app, sorts them into one place, and checks them, faster and cheaper than a person can.
 
-> **Team: read [`docs/PLAN.md`](docs/PLAN.md) now.** It has the plan to submission (Sun Oct 25, 9 AM), the GX10 + benchmark plan, the 3-minute demo, and who's on what. Updated Saturday Oct 24.
+> **Team:** [`docs/STATUS.md`](docs/STATUS.md) is the one page on what's built, measured and simulated.
+> [`docs/PLAN.md`](docs/PLAN.md) has the plan to submission (Sun Oct 25, 9 AM), the demo script and who's on what.
 
 **The company: Noah's NY Bagels**, about 56 locations across California, a mid-market chain. All data in this repo is **simulated** (`--profile ca_bagel_chain`); no real Noah's records or contract terms are used.
 - **What:** the stores get paid by delivery apps (DoorDash, Uber Eats, Grubhub) and their own ordering channel, and each one sends money and reports in a different, messy way.
@@ -11,20 +12,36 @@ Flock does the boring job a restaurant pays an accountant to do by hand: it take
 - **Where:** on a staff accountant's desk, stuck in app portals, the register, the bank and a pile of spreadsheets.
 - **Why it matters:** someone gets paid to sort it all by hand. It's slow, and mistakes mean the company loses money it already earned.
 
+**On this page:** [Quickstart](#quickstart-works-right-now-no-api-key-needed) ·
+[Models](#models-local-first-claude-as-reviewer) · [GX10 + air gap](#gx10-local-models-over-tailscale-nothing-changed-on-the-box) ·
+[CREAO track](#creao-track-the-agent-built-on-agentcreaoai) · [CREAO for every role](#run-every-ai-role-on-creao) ·
+[Judge market](#judge-market-bets-that-settle-against-reality-human-attention-as-a-budget) ·
+[Live flock + investigators](#the-flock-live-agents-each-with-a-job) · [Data + deal sources](#data-generator---collector---formatter) ·
+[Anomaly Detector](#anomaly-detector-learned-not-written) · [Benchmark](#benchmark-the-proof-table) ·
+[Tuned judge](#tuned-judge-the-training-set-step-1) · [Live seed demo](#live-seed-demo-a-judge-picks-the-number) ·
+[Clicky + learning](#clicky-demo-agent-files-disputes-in-a-sandbox-portal) · [Deploy](#deploy-railway) ·
+[Pipeline + journal](#pipeline) · [Owners](#who-owns-what-updated-saturday-oct-24-details-in-docsplanmd) ·
+[Rules](#rules-for-everyone) · [Repo map](#repo-map)
+
 ## Read first
 
 | File | What's in it |
 | --- | --- |
-| `FLOCK_CONTEXT.md` | Everything: problem, money flow, research, numbers, pitch, agents, 17 edge cases, team prompts, demo plan, timeline. Paste it into Claude at the start of a session. |
-| `CONTRACT.md` | Shared data shapes (order row, payout line, bank deposit, deal term, finding) and the state machine. Build to this. |
-| `docs/PLAN.md` | **The plan:** what's next, the benchmark (trained model vs human vs frontier), timeline, demo script, who's on what. |
-| `docs/hyphenate-track.md` | What the Hyphenate judges want: criteria, workshop notes, the speaker's advice. |
-| `docs/sponsor-tracks.md` | Sponsor track rules, submission checklist, schedule. **Submit by Sun Oct 25, 9:00 AM.** |
-| `docs/pipeline-sketch.png` | The team's original hand-drawn pipeline. |
+| `CONTRACT.md` | **Build to this.** The rules, folders, every table and row shape, the state machines (findings, journal entries, workflows) with who may do each move, the deal-term rule, check types, traps 1-22. |
+| `docs/STATUS.md` | One page: what's built (and the command to see it), what's measured, what's simulated vs real, open items. |
+| `FLOCK_CONTEXT.md` | Background: problem, money flow, sourced research, numbers, pitch, agents, edge cases, team split, demo plan. Paste it into Claude at the start of a session. |
+| `docs/PLAN.md` | The plan: benchmark design, timeline, demo script, who's on what. |
+| `docs/connectors.md` | How Slack, Gmail and call notes get into Flock (drop-folder JSON contract for a CREAO connector). |
+| `docs/DEPLOY.md` | Hosting the API (and optionally the dashboard) on Railway. |
+| `docs/benchmark_schema.md` | Result file schema for the judge load test. |
+| `dashboard/README.md` | Dashboard screens and its API. |
+| `docs/hyphenate-track.md`, `docs/sponsor-tracks.md` | What the judges want; sponsor rules and the submission checklist. **Submit by Sun Oct 25, 9:00 AM.** |
+| `docs/TEAM_BRIEF.md` | The Discord team brief. `docs/pipeline-sketch.png`: the original hand-drawn pipeline. |
 
 ## Quickstart (works right now, no API key needed)
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate          # Railway runs Python 3.12
 pip install -r requirements.txt
 export FLOCK_OFFLINE=1                                      # offline rules: fast, free, deterministic
 
@@ -33,12 +50,13 @@ python scripts/score.py                                     # caught 6/6, 2 sent
 python -m flock.agents.learner --approve R-001              # human approves the rule the Learner proposed
 python -m flock.pipeline --reset --demo-approve             # WEEK 2: same traps, 0 sent to a human
 python scripts/score.py                                     # also prints Week 1: 2 | Week 2: 0
-pytest                                                      # all tests (offline, models mocked)
+FLOCK_OFFLINE=1 pytest -q                                   # all tests (offline, models mocked)
 python -m dashboard.app                                     # dashboard at http://127.0.0.1:5050
 ```
 
 Dashboard details (screens, API, the live `--pace` demo) are in `dashboard/README.md`.
-Storage is picked by `FLOCK_STORE=json|spacetime` (json default) through `flock.store.get_store()`.
+Storage is picked by `FLOCK_STORE` through `flock.store.get_store()`: `json` (default, `data/state/`); `spacetime` is a stub that raises until SpacetimeStore is written.
+The Quickstart runs on `fixtures/fake_findings.json` (6 hand-written findings). The company story is Noah's NY Bagels, simulated with `--profile ca_bagel_chain` (see Data and Live seed demo); the generator's `default` profile is still the original 12-store hot chicken company.
 
 That week 1 vs week 2 drop is the "self-improving" demo moment.
 With nothing set (or `FLOCK_OFFLINE=1`) everything runs on offline rules, exactly as above.
@@ -55,6 +73,7 @@ the OpenAI chat API over plain HTTP (no extra dependency), except Claude:
 | `nvidia` | build.nvidia.com | `NVIDIA_API_KEY`, `FLOCK_NVIDIA_MODEL` (default `meta/llama-3.3-70b-instruct`), `FLOCK_NVIDIA_URL` |
 | `anthropic` | Claude | `ANTHROPIC_API_KEY`, `FLOCK_MODEL` (default `claude-sonnet-5-5`) |
 | `creao` | CREAO Developer Platform /v2: every AI role as a hosted CREAO agent (see below) | `CREAO_API_KEY` (project key, USD wallet), `creao_agents.json` from `scripts/creao_setup.py --create`, optional `FLOCK_CREAO_LLM`, `FLOCK_CREAO_RPM`, `FLOCK_CREAO_MODE=async` |
+| `creaoapp` | An agent built on agent.creao.ai (the Flock Judge, CREAO track) through its app API Trigger | `CREAO_APP_KEY` (`capi_...`), app id from `creao_agents.json` (`apps`), optional `FLOCK_CREAOAPP_URL` |
 | `offline` | never call anything | |
 
 | Role | Env | Default |
@@ -209,7 +228,7 @@ case file on a finding's page.
 ```bash
 export FLOCK_OFFLINE=1
 python generator/generate.py --mini                   # first milestone: 1 store x 1 day, traps 3, 7, 16
-python generator/generate.py --seed 42 --stores 12 --weeks 2     # full run, all 17 traps -> generator/out/
+python generator/generate.py --seed 42 --stores 12 --weeks 2     # full run, traps 1-18 -> generator/out/ (19-22 need --sources slack)
 python -m flock.agents.collector                      # copy generator/out/* untouched into data/raw/<source>/ + manifest.csv
 python -m flock.agents.formatter                      # data/raw -> data/std/*.csv; asks y/N for the unseen layout (trap 2)
 python -m flock.agents.formatter --confirm            # same, accepting proposed mappings without asking
@@ -219,7 +238,7 @@ python generator/generate.py --profile ca_bagel_chain --weeks 52   # another (si
 - Same `--seed` and args = byte-identical files. `--traps 3,7,16` picks traps, `--days N` overrides `--weeks`. Traps 2 and 5 need `--weeks 2`.
 - **Company profiles** (`profiles/*.json`, `--profile NAME`): name, stores and cities, channels, orders per store per day by channel, menu / average ticket, weekday + monthly seasonality, dayparts, catering, and the contract terms per channel. `default` is the original 12-store company (same bytes as before profiles existed). `ca_bagel_chain` is a **fictional, simulated** 56-store California bagel chain (morning-heavy, weekend peaks, catering orders; ~1.2M orders a year); no real company, people or contract terms. `--stores` defaults to the profile's store count.
 - **Traps across a year:** each trap is planted `max(1, round(trap_rate x weight x store_weeks / 100))` times, spread across the period (`--trap-rate`, default 2 per 100 store-weeks; a 2-week demo still gets exactly one of each, 12 stores x 52 weeks gets 12 of most, 56 x 52 gets 58). Waiver traps 14/15 are weighted lower, the unseen layout (2) happens once. The answer key scales with it.
-- **Year scale** (offline, 10-core laptop, full chain `generate -> collect -> format -> pipeline -> score`, all traps caught, 0 false alarms): 12 stores x 2 weeks (3.2k orders) **2s**; 12 x 52 weeks (83k orders) **9s**; bagel chain 56 x 52 weeks (1.24M orders, 2.5M std rows, 1,126 answer-key rows) **84s** (generate 31s, format 33s, pipeline 19s). The formatter streams and converts column-wise, the pipeline splits the std tables by store and runs Matcher + Checkers in parallel processes (`flock/scan.py`, `FLOCK_WORKERS`), deal terms are cached per store/day, and the JSON store batches writes. The pipeline reuses `data/std/` when the raw files and mappings haven't changed.
+- **Year scale** (offline, laptop, full chain `generate -> collect -> format -> pipeline -> score`, all traps caught, 0 false alarms): 12 stores x 2 weeks (3.2k orders) **2s**; 12 x 52 weeks (83k orders) **9s**; bagel chain 56 x 52 weeks (1.24M orders, 2.5M std rows): **124s** with traps 1-22 (9,655/9,655 answer-key rows, 342 sent to a human; `python -m flock.demo --seed 42 --profile ca_bagel_chain --weeks 52 --confirm`, Oct 24). Before traps 18-22 existed the same run was 84s with 1,126 rows. The formatter streams and converts column-wise, the pipeline splits the std tables by store and runs Matcher + Checkers in parallel processes (`flock/scan.py`, `FLOCK_WORKERS`), deal terms are cached per store/day, and the JSON store batches writes. The pipeline reuses `data/std/` when the raw files and mappings haven't changed.
 - **Progress:** the formatter and pipeline draw a terminal progress bar (stage, done/total, rows/sec) and write `data/state/progress.json`; the dashboard's live board shows it (`GET /api/progress`).
 - A statement whose layout nobody has confirmed yet is skipped, and "sold, never paid" for that channel is held back (not disputed) until a human says yes, because its orders were never read.
 - The answer key goes to `generator/out/answer_key.csv`. `data/answer_key.csv` (the demo scoreboard) is only overwritten with `--write-answer-key`; restore it with `git checkout data/answer_key.csv`. The collector never copies the answer key.
@@ -265,6 +284,9 @@ python scripts/benchmark.py --contestants local-tuned --tuned-model <id the serv
 python scripts/benchmark.py --human sheets/ira.csv --human-scope 101:S07:1 --human-minutes 95
 python scripts/benchmark.py --list
 ```
+
+Latest rules-only run (Oct 24, traps 1-22, seeds 101-110, bagel chain 56 stores x 2 weeks): **3,676/3,676 traps,
+0 false alarms, 173 sent to a human, ~53s**.
 
 Metrics per contestant: traps caught, false alarms, correct dollars, sent to a human, p50 / p95 seconds per finding,
 findings per minute, estimated $ per 1,000 findings (tokens ~ chars / 4 at list prices, `--price model=in,out`),
@@ -380,6 +402,13 @@ FLOCK_PORTAL_LAYOUT=v2 FLOCK_CLICKY_HEADED=1 python -m flock.agents.clicky file 
   HTML without a browser); `FLOCK_TEST_BROWSER=1` adds the full record -> learn -> approve -> replay -> v2 stale ->
   record again -> replay run in a real browser, with a scripted person at the keyboard.
 
+## Deploy (Railway)
+
+The `Procfile` serves the JSON API (`python -m flock.api --host 0.0.0.0`); the dashboard can run as a second service
+(`python -m dashboard.app --host 0.0.0.0`). Set `FLOCK_API_TOKEN` on any public deploy (POSTs need
+`Authorization: Bearer <token>`), `FLOCK_OFFLINE=1` until model keys are set, and mount a volume at `/app/data/state`.
+Step by step: [`docs/DEPLOY.md`](docs/DEPLOY.md). Simulated data only.
+
 ## Getting started (teammates)
 
 ```bash
@@ -388,16 +417,19 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Then run the Quickstart below, open your files from the "Who owns what" table, and start on the next step written at the top of each file.
+Then run the Quickstart above, open your files from the "Who owns what" table, and read the docstring at the top of each file.
 Work on a branch (`git checkout -b maja/generator`), push it, and open a PR into `main`. Keep `main` runnable: the Quickstart and `pytest` should pass before you merge.
 
 ## Pipeline
 
 ```
-Collect -> Read -> Connect -> Deal terms -> Check + Anomaly Detector -> Judge (3-judge panel) -> Rank -> Draft
-        -> [human approves] -> File (Clicky, sandbox portal) -> Journal (draft GL entries) -> Learn (proposes rules)
+Collect -> Read -> Connect -> Deal terms -> Check + Anomaly Detector -> [Investigate] -> Judge (3-judge panel + market)
+        -> [Investigate] -> Rank -> Draft -> [human approves] -> File (Clicky, sandbox portal)
+        -> Journal (draft GL entries, human approves, gatekeeper posts) -> Learn (proposes rules, human approves)
 Audit log underneath every step, via flock/gatekeeper.py
 ```
+
+Shapes, state machines and who may do each move: [`CONTRACT.md`](CONTRACT.md).
 
 **Journal entries (real data only).** `flock/agents/journal.py` drafts one balanced journal entry per store, channel
 and payout: Dr Cash (the store's share of the bank deposit), Dr commission / promotions / fees / error charges,
@@ -411,47 +443,50 @@ As soon as `data/std/` has real tables and the matcher/checkers return findings,
 
 ## Who owns what (updated Saturday Oct 24; details in `docs/PLAN.md`)
 
-| Who | Now working on | Owns |
+| Who | Now | Owns |
 | --- | --- | --- |
-| **Preet** | **Hosting** (Railway: Flock's API live, tell Thabhelo the URL + token) and **all ML + benchmarking**: GX10 models, local judges, fine-tuned judge, `scripts/benchmark.py` runs (rules / local / tuned / CREAO / Claude / human), results write-up; merging into `main` | `flock/llm.py`, `panel.py`, `market.py`, `scripts/benchmark.py`, `scripts/judge_*.py`, `scripts/gx10.sh`, `scripts/train/`, `anomaly.py`, deploy config |
-| **Thabhelo** | **CREAO**: all AI roles as hosted CREAO agents (`scripts/creao_setup.py`), CREAO connectors for Slack/Gmail into Flock, CREAO on the deployed API, talk to the CREAO booth about their judging | `flock/llm.py` (creao provider), `scripts/creao_setup.py`, `flock/api.py`, `matcher.py`, `checkers.py`, `deal_keeper.py` |
-| **Himaja** | UI: the demo flow on the dashboard, including a benchmark tab | `dashboard/`; still owns `generator/`, `collector.py`, `formatter.py`, `profiles/` |
-| **Ira** | [confirm] SpacetimeDB backend, pitch, video, Figma/Notability process tracks | `flock/store.py` (SpacetimeStore), `gatekeeper.py`, `scripts/score.py` |
+| **Preet** | Hosting (Railway, `docs/DEPLOY.md`) and all ML + benchmarking: GX10 models, local and tuned judges, benchmark runs; merging into `main` | `flock/llm.py`, `panel.py`, `market.py`, `anomaly.py`, `scripts/benchmark.py`, `scripts/judge_*.py`, `scripts/gx10.sh`, deploy config |
+| **Thabhelo** | CREAO: every AI role as a hosted CREAO agent, the Flock Judge on agent.creao.ai, CREAO connectors for Slack/Gmail | `flock/llm.py` (creao providers), `scripts/creao_setup.py`, `flock/api.py`, `matcher.py`, `checkers.py`, `deal_keeper.py` |
+| **Himaja** | UI, in her own frontend folder (not merged yet; `dashboard/` is the UI that runs today) | the frontend; still `generator/`, `collector.py`, `formatter.py`, `profiles/` |
+| **Ira** | Pitch, demo video, Devpost [confirm] | |
 
 ## Rules for everyone
 1. Build to `CONTRACT.md`. Changing it means telling the team.
-2. Every finding change goes through `flock.gatekeeper.transition()`. Never edit a finding directly.
+2. Every change to a finding, journal entry or workflow goes through `flock.gatekeeper.transition()`. Never edit one directly.
 3. Every row keeps `source_file` and `source_row`.
 4. No LLM does money math. Use `flock.models.money()`.
-5. Agents propose. Only humans approve. Only the gatekeeper files.
+5. Agents propose. Only humans approve. Only the gatekeeper files disputes or posts journal entries.
+6. Never commit generated data, `rules.json`, `.env` or API keys.
 
 ## Repo map
 
 ```
-CONTRACT.md            shared data shapes + state machine
-FLOCK_CONTEXT.md       everything about the project (problem, research, pitch, plan)
-flock/models.py        constants, Finding, Actor, the state machine table
-flock/store.py         Store protocol + get_store(): JsonStore now, SpacetimeStore stub
+CONTRACT.md            rules, data shapes, state machines, traps 1-22 (build to this)
+FLOCK_CONTEXT.md       background: problem, research, pitch, plan
+flock/models.py        constants, Finding, Actor, state machines (findings, journal entries)
 flock/gatekeeper.py    transition(): the one door, logs every move incl. denied ones
-flock/market.py        judge market: Brier-scored bets settled on human/RECOVERED truth, attention budget
-flock/llm.py           model providers (local/vLLM/Ollama, Groq, NVIDIA, Claude) per role, offline fallback
-flock/pipeline.py      runs everything end to end
-flock/scan.py          year-scale detection: split std tables by store, match + check in parallel
-flock/progress.py      progress reporter: terminal bar + data/state/progress.json (dashboard progress bar)
-flock/agents_live.py   the live flock: agent status feed (spawn/working/done), tracker, pooling, /api/agents snapshot
+flock/store.py         Store protocol + get_store(): JsonStore, JournalStore, SpacetimeStore stub
+flock/pipeline.py      runs everything end to end; flock/scan.py = year-scale parallel match + check
+flock/market.py        judge market: Brier-scored bets, balance weights, attention budget
+flock/llm.py           model providers per role (local, groq, nvidia, anthropic, creao, creaoapp), offline + air gap
+flock/agents_live.py   live agent status feed, tracker, pooling, /api/agents snapshot
+flock/connectors.py    drop-folder hand-off for Slack / Gmail / call-note connectors (docs/connectors.md)
+flock/workflow.py      Clicky's learned workflow: learn, human approval, stale detection (flock/recorder.py records)
+flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
 flock/demo.py          live seed demo: generate -> collect -> pipeline -> score, then restore
-profiles/              company profiles for the generator (default, ca_bagel_chain: simulated)
-flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into (FLOCK_PORTAL_LAYOUT=v2: redesigned form)
-flock/recorder.py      records a human filing one dispute (steps, locators, screenshots, video, trace)
-flock/workflow.py      learns a parameterized workflow from a recording; human approval, stale detection
-flock/agents/          one file per agent, owner named at the top (anomaly.py: learned baselines, no deal term needed)
-fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)
-generator/             Maja's data generator (output in generator/out/, gitignored)
-mappings.json          Formatter column maps per source layout (human-confirmed)
-chart_of_accounts.json GL accounts + which account each kind of amount posts to (Journal Entry Drafter)
-scripts/score.py       scoreboard vs answer key (scripts/llm_check.py pings the configured models)
-scripts/gx10.sh        GX10 tunnel / env / status / model pulls; scripts/judge_load.py panel latency + throughput
-tests/                 gatekeeper, store, dashboard, detection, data, panel/ranker/learner/writer, llm, providers, market, journal, end-to-end
-dashboard/             Ira's UI: Flask + one page (python -m dashboard.app)
-docs/                  Hyphenate track notes, sponsor rules, pipeline sketch
+flock/progress.py      terminal progress bar + data/state/progress.json
+flock/api.py           stdlib JSON API (port 8787, Procfile, bearer token on writes)
+flock/agents/          one file per agent, owner at the top: collector, formatter, matcher, deal_keeper, checkers,
+                       anomaly, investigator, panel, ranker, dispute_writer, clicky, journal, learner
+dashboard/             Flask + one page (python -m dashboard.app, port 5050)
+generator/             seeded data generator, traps 1-22, answer key (output in generator/out/)
+profiles/              company profiles (default, ca_bagel_chain: simulated)
+fixtures/              fake findings for the Quickstart, adversarial findings, Clicky examples
+scripts/               score.py, benchmark.py, judge_dataset.py, judge_load.py, llm_check.py, creao_setup.py, gx10.sh
+mappings.json          Formatter column maps per layout (human-confirmed)
+chart_of_accounts.json GL accounts for the Journal Entry Drafter
+creao_agents.json      CREAO agent ids per role (ids, not secrets)
+Procfile               web: python -m flock.api --host 0.0.0.0 (Railway)
+tests/                 offline test suite (models mocked)
+docs/                  STATUS, PLAN, connectors, DEPLOY, benchmark schema, track notes
 ```
