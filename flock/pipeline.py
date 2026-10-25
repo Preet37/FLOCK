@@ -40,7 +40,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flock import agents_live, llm, market, scan, transactions
+from flock import agents_live, llm, market, rollup as rollups, scan, transactions
 from flock.agents import (clicky, deal_keeper, dispute_writer, formatter, investigator, journal, learner, panel,
                           ranker)
 from flock.gatekeeper import transition
@@ -129,12 +129,13 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
         fixtures: Path | None = None, raw: Path | None = None, std: Path | None = None,
         mappings: Path | None = None, confirm: bool = False, interactive: bool = False,
         progress: Progress | None = None, runs_path: Path | None = None, label: str = "",
-        attention_budget: int | None = None, source_label: str | None = None) -> Store:
+        attention_budget: int | None = None, source_label: str | None = None, rollup: bool = False) -> Store:
     """store / rules_path / portal / fixtures default to the repo paths; tests point them at a temp dir.
     raw / std / mappings point the Formatter at another dataset (flock.demo); confirm / interactive are its
     unseen-layout question. progress defaults to a terminal bar + progress.json next to the store.
     attention_budget defaults to env FLOCK_ATTENTION_BUDGET (10). source_label: a readable name for the data (else the
-    std folder's path)."""
+    std folder's path). rollup: group per-order findings that break the same deal term in the same weekly payout into
+    one finding per lump sum (flock/rollup.py; flock.showtime turns it on)."""
     store = store or get_store()
     rules_path = Path(rules_path or learner.RULES)
     portal = Path(portal or clicky.PORTAL)
@@ -161,7 +162,7 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     try:
         with batched(store):
             info = _run(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path,
-                        jstore, attention_budget, source_label)
+                        jstore, attention_budget, source_label, rollup)
     except BaseException:
         progress.finish("failed")
         raise
@@ -188,19 +189,20 @@ def write_last_run(store: Store, info: dict) -> dict:
 
 def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
          pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
-         source_label: str | None = None) -> dict:
+         source_label: str | None = None, rollup: bool = False) -> dict:
     run_id = "RUN-" + uuid.uuid4().hex[:8]
     flock = agents_live.Tracker(store, run_id)
     try:
         return {"run_id": run_id, **_stages(store, rules_path, portal, fixtures, data, demo_approve, pace, progress,
-                                            runs_path, jstore, attention_budget, run_id, flock, source_label)}
+                                            runs_path, jstore, attention_budget, run_id, flock, source_label,
+                                            rollup)}
     finally:
         flock.close()
 
 
 def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
             pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
-            run_id: str, flock: agents_live.Tracker, source_label: str | None = None) -> dict:
+            run_id: str, flock: agents_live.Tracker, source_label: str | None = None, rollup: bool = False) -> dict:
     def move(finding_id: str, action: str, actor: Actor, **kw) -> None:
         transition(store, finding_id, action, actor, **kw)
         if pace:
@@ -209,6 +211,8 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
 
     context: dict = {}
     findings, source = detect(fixtures, progress, context, agents=flock, source_label=source_label, **data)
+    if rollup and (context.get("tables") or {}).get("payout_lines"):
+        findings = roll_up(findings, context["tables"]["payout_lines"], flock)
     print(f"\n== Flock run on {source}: {len(findings)} findings ==")
     volume = save_transactions(store, context, findings, source)
 
@@ -313,6 +317,23 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
     airgap_summary(store)
     return {"source": source, "data": volume, "demo_approve": demo_approve,
             "judging": {k: plan[k] for k in ("live", "concurrency", "budget", "used", "outside", "judged", "by_rule")}}
+
+
+def roll_up(findings: list[dict], payout_lines: Path, flock: agents_live.Tracker) -> list[dict]:
+    """One finding per broken deal term per weekly payout (flock/rollup.py). The rolled-up finding's worker is the
+    worker that found its first order."""
+    by_order = {f["order_ids"][0]: f["finding_id"] for f in findings if len(f.get("order_ids") or []) == 1}
+    rolled = rollups.rollup(findings, rollups.payout_index(payout_lines))
+    for f in rolled:
+        if f.get("rollup"):
+            owner = flock.owner.get(by_order.get(f["order_ids"][0]))
+            if owner:
+                flock.owner[f["finding_id"]] = owner
+    groups = [f for f in rolled if f.get("rollup")]
+    if groups:
+        print(f"rolled up {sum(f['rollup']['orders'] for f in groups):,} per-order findings into {len(groups)} "
+              f"(one per broken deal term per weekly payout); {len(rolled)} findings in all")
+    return rolled
 
 
 DEFAULT_LIVE_CONCURRENCY = 6   # findings judged at once when a live judge is configured (CREAO pacing still applies)

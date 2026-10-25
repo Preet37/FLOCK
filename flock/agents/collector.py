@@ -11,7 +11,7 @@ OUT: the same files copied untouched into data/raw/<source>/, plus data/raw/mani
   python -m flock.agents.collector                      # inbox defaults to generator/out
   python -m flock.agents.collector path/to/inbox
 
-Never collected: answer_key.csv (that's the grader's copy, agents must not see it) and dotfiles.
+Never collected: answer_key.csv and scenario.json (the grader's copies, agents must not see them) and dotfiles.
 Production note for the pitch: here it reads simulated exports; in real life it would pull reports
 from each merchant portal (DoorDash already offers downloadable financial reports).
 """
@@ -30,7 +30,7 @@ RAW = ROOT / "data" / "raw"
 INBOX = ROOT / "generator" / "out"
 SOURCES = ["pos", "doordash", "ubereats", "grubhub", "direct_app", "bank", "contracts", "emails", "slack", "notes"]
 BY_SUFFIX = {".eml": "emails", ".md": "notes"}
-SKIP = {"answer_key.csv"}
+SKIP = {"answer_key.csv", "scenario.json"}  # the grader's copies: agents must not see them
 MANIFEST_COLS = ["source", "file", "sha256", "copied_at"]
 
 
