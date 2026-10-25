@@ -204,3 +204,13 @@ thread_ts=1768907280.000011`; the Saturday claim is superseded; the ops message 
   `authority_basis`.
 - In a thread, the latest binding message about the same channel + store + term_type supersedes earlier messages in
   that thread (before effective() runs).
+
+## Fallback connector: `scripts/slack_watcher.py`
+
+CREAO's Slack connector could not be installed into our demo workspace on Oct 25 (Slack returned `invalid_team_for_non_distributed_app`: CREAO's Slack app is not published for other workspaces). The same payload is delivered by `scripts/slack_watcher.py`, a read-only Slack app (`Flock Watcher`, scopes channels:history, channels:read, users:read, users:read.email) polling one channel with `SLACK_BOT_TOKEN`:
+
+```bash
+python scripts/slack_watcher.py --channel doordash-partnership --watch 10 --post http://127.0.0.1:8787
+```
+
+It names itself `script:slack-watcher` in the payload, never `creao:`. Demo workspace: Ringtide Bagels Finance, channel `#doordash-partnership`. `generator/out` is gitignored, so on the demo laptop the DoorDash demo contract's `schedule_b_authorized_contacts` has the demo poster's email added by hand (one object: name, email, title); a commission message from that account then comes back `auth_email`, binding; anyone else's comes back unauthorised and goes to a human. Set `FLOCK_CONTRACTS_DIR=generator/out/contracts` for the API when `data/raw/contracts` has not been collected yet.
