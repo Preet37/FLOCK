@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flock Agent Theater</title>
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2034%2034%22%3E%3Cpath%20d%3D%22M17%200L20.8%2013.2L34%2017L20.8%2020.8L17%2034L13.2%2020.8L0%2017L13.2%2013.2L17%200Z%22%20fill%3D%22%232EA7FF%22%2F%3E%3C%2Fsvg%3E">
+    <script src="vendor/tailwind-3.4.16.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <script src="vendor/lucide-0.453.0.min.js"></script>
+    <script>
+        tailwind.config = { theme: { extend: { fontFamily: { sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'] } } } };
+    </script>
+    <style>
+        :root { --navy: #23263a; --navy2: #2b2f47; --muted: #8b93b5; --b500: #0084FF; --b400: #2EA7FF; --b300: #61CDFF; --b200: #97E2FF; --b100: #D2F5FF; }
+        html, body { background: #1b1e2e; color: #eef2ff; overflow-x: hidden; }
+        .card { background: var(--navy); border: 1px solid #31364f; border-radius: 26px; }
+        .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 10px 18px; font-weight: 700; font-size: 13.5px; transition: background .2s, opacity .2s; }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+        /* stage */
+        #stage { position: relative; height: 560px; border-radius: 30px; overflow: hidden;
+            background: radial-gradient(ellipse at 50% 60%, #27314f 0%, #222539 55%, #1d2033 100%); border: 1px solid #31364f; }
+        #row { position: absolute; left: 3%; right: 3%; top: 58%; display: flex; justify-content: space-between; align-items: flex-start; }
+        .av { position: relative; width: 76px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .av .disc { position: relative; width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center; color: #fff;
+            box-shadow: 0 6px 18px rgba(0,0,0,.35); transition: transform .25s, filter .3s, opacity .3s; filter: saturate(.55) brightness(.75); }
+        .av .nm { font-size: 11.5px; font-weight: 700; color: #aab3d6; white-space: nowrap; transition: color .3s; }
+        .av.working .disc, .av.done .disc { filter: none; }
+        .av.working .nm { color: #fff; }
+        .av.working .disc::before, .av.working .disc::after { content: ''; position: absolute; inset: -6px; border-radius: 50%;
+            border: 2px solid var(--glow, #2EA7FF); animation: ring 1.4s ease-out infinite; }
+        .av.working .disc::after { animation-delay: .7s; }
+        @keyframes ring { from { transform: scale(.9); opacity: .9; } to { transform: scale(1.55); opacity: 0; } }
+        .av .ok { position: absolute; right: -3px; bottom: -3px; width: 20px; height: 20px; border-radius: 50%; background: #34d399; color: #0b2a1f;
+            display: none; place-items: center; border: 2px solid #23263a; }
+        .av.done .ok { display: grid; }
+        .av.bump .disc { transform: scale(1.14); }
+        .wire { position: absolute; top: 29px; height: 2px; background: #343b5a; z-index: -1; }
+        .wire i { position: absolute; inset: 0; background: linear-gradient(90deg, #0159C4, #2EA7FF); transform-origin: 0 50%; transform: scaleX(0); transition: transform .5s; }
+        .bell { position: absolute; top: -10px; right: -4px; width: 24px; height: 24px; border-radius: 50%; background: #fbbf24; color: #1b1e2e;
+            display: grid; place-items: center; font-size: 11px; font-weight: 900; transform: scale(0); transition: transform .3s cubic-bezier(.2,1.6,.4,1); }
+        .bell.on { transform: scale(1); animation: ringbell 1s ease-in-out 2; }
+        @keyframes ringbell { 0%,100% { rotate: 0deg; } 20% { rotate: -18deg; } 40% { rotate: 16deg; } 60% { rotate: -10deg; } 80% { rotate: 6deg; } }
+
+        /* flying things */
+        .fly { position: absolute; z-index: 20; pointer-events: none; will-change: transform, opacity; }
+        .fcard { padding: 12px 18px; border-radius: 18px; background: #fff; color: #1b1e2e; font-weight: 800; font-size: 17px; white-space: nowrap;
+            box-shadow: 0 14px 40px rgba(0,0,0,.45); display: flex; align-items: center; gap: 10px; }
+        .fcard .amt { color: #0159C4; }
+        .judge { position: absolute; z-index: 15; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+        .judge .jd { position: relative; width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; color: #fff; }
+        .judge svg.jring { position: absolute; inset: -7px; width: 78px; height: 78px; transform: rotate(-90deg); }
+        .judge .thumb { position: absolute; right: -10px; top: -8px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+            transform: scale(0); transition: transform .35s cubic-bezier(.2,1.6,.4,1); border: 3px solid #23263a; }
+        .judge .thumb.on { transform: scale(1); }
+        .judge .jn { font-size: 11px; font-weight: 800; color: #cfe6ff; text-transform: capitalize; }
+        .judge .jm { font-size: 9.5px; font-weight: 700; color: #61CDFF; background: rgba(1,47,138,.6); padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+        .chip { padding: 12px 20px; border-radius: 999px; font-weight: 900; font-size: 18px; white-space: nowrap; box-shadow: 0 14px 40px rgba(0,0,0,.45);
+            display: flex; align-items: center; gap: 8px; }
+        .dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #61CDFF; box-shadow: 0 0 10px #2EA7FF; z-index: 5; pointer-events: none; }
+
+        /* clicky browser */
+        .browser { width: 230px; border-radius: 14px; overflow: hidden; background: #fff; box-shadow: 0 18px 50px rgba(0,0,0,.5); color: #1b1e2e; }
+        .browser .bar { height: 26px; background: #e8eef9; display: flex; align-items: center; gap: 5px; padding: 0 9px; }
+        .browser .bar i { width: 8px; height: 8px; border-radius: 50%; background: #c7d2e6; display: block; }
+        .browser .bar span { flex: 1; height: 13px; border-radius: 6px; background: #fff; margin-left: 6px; }
+        .browser .pg { padding: 12px; display: flex; flex-direction: column; gap: 8px; position: relative; min-height: 120px; }
+        .browser .fld { height: 12px; border-radius: 4px; background: #eef2f8; overflow: hidden; }
+        .browser .fld b { display: block; height: 100%; width: 0; background: #97E2FF; transition: width .45s ease-out; }
+        .browser .sub { align-self: flex-end; width: 64px; height: 20px; border-radius: 6px; background: #0084FF; transition: transform .15s; }
+        .browser .done { position: absolute; inset: 0; background: rgba(255,255,255,.94); display: grid; place-items: center; opacity: 0; transition: opacity .3s; }
+        .browser .done.on { opacity: 1; }
+        .browser .done div { width: 54px; height: 54px; border-radius: 50%; background: #34d399; display: grid; place-items: center; color: #fff; }
+        .cursor { position: absolute; width: 16px; height: 16px; z-index: 3; transition: left .45s ease-in-out, top .45s ease-in-out; }
+
+        /* $ counter */
+        #money { font-size: clamp(44px, 7vw, 92px); font-weight: 900; letter-spacing: -.02em; line-height: 1;
+            background: linear-gradient(180deg, #ffffff, #97E2FF); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        #caption { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); padding: 12px 22px; border-radius: 999px;
+            background: rgba(1,47,138,.75); border: 1px solid #0159C4; font-weight: 700; font-size: 16px; white-space: nowrap; transition: opacity .3s; z-index: 25; }
+
+        /* economy */
+        .stack { position: relative; width: 54px; height: 200px; display: flex; flex-direction: column-reverse; align-items: center; }
+        .stack .coins { width: 46px; border-radius: 12px 12px 6px 6px; transition: height .8s cubic-bezier(.2,.9,.3,1);
+            background: repeating-linear-gradient(0deg, #f5b300 0 9px, #ffd34d 9px 12px); box-shadow: inset -6px 0 0 rgba(0,0,0,.12), 0 0 18px rgba(255,200,0,.18); }
+        .pm { position: absolute; top: -6px; left: 50%; transform: translateX(-50%); font-weight: 900; font-size: 16px; pointer-events: none; }
+        @media (max-width: 900px) { #stage { height: 640px; } #row { flex-wrap: wrap; row-gap: 26px; top: 50%; } .av { width: 16.6%; } .wire { display: none; } }
+        @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+    </style>
+</head>
+
+<body class="font-sans min-h-full antialiased">
+    <div class="max-w-[1680px] mx-auto px-4 md:px-6 py-5 flex flex-col gap-4">
+        <header class="flex flex-wrap items-center gap-3">
+            <a href="./" class="flex items-center gap-3 mr-2" title="Back to the console">
+                <svg width="32" height="32" viewBox="0 0 34 34"><path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#2EA7FF"/><path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#012F8A"/></svg>
+                <span class="text-xl font-extrabold">Flock, live</span>
+            </a>
+            <span id="modePill" class="px-3 py-1 rounded-full text-xs font-extrabold" style="background:#3E445C;color:#97E2FF">IDLE</span>
+            <div class="flex-1"></div>
+            <button id="replayBtn" class="btn text-white" style="background:#3E445C"><i data-lucide="rotate-ccw" class="w-4 h-4"></i>Replay</button>
+            <button id="liveBtn" class="btn text-white" style="background:#0084FF"><i data-lucide="play" class="w-4 h-4"></i>Run a new month live</button>
+            <a href="./" class="btn" style="border:1px solid #3E445C;color:#97E2FF"><i data-lucide="layout-dashboard" class="w-4 h-4"></i>Console</a>
+        </header>
+
+        <div id="tokenBox" class="card p-4 hidden flex flex-wrap items-center gap-3">
+            <i data-lucide="key-round" class="w-5 h-5" style="color:#61CDFF"></i>
+            <input id="tokenInput" type="password" placeholder="Presenter token" class="rounded-full px-4 py-2 text-sm flex-1 min-w-[200px] text-white" style="background:#2b2f47;border:1px solid #3E445C" />
+            <button id="tokenSave" class="btn text-white" style="background:#0084FF">Start</button>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-4">
+            <div id="stage">
+                <div class="absolute left-8 top-7 z-10">
+                    <div class="text-xs font-extrabold uppercase tracking-[.18em]" style="color:#61CDFF">Money found</div>
+                    <div id="money">$0</div>
+                </div>
+                <div class="absolute right-8 top-8 z-10 flex gap-5 text-sm font-bold" style="color:#aab3d6">
+                    <span class="flex items-center gap-2" title="findings"><i data-lucide="search-check" class="w-5 h-5" style="color:#61CDFF"></i><span id="nFind">0</span></span>
+                    <span class="flex items-center gap-2" title="sent to a human"><i data-lucide="bell-ring" class="w-5 h-5" style="color:#fbbf24"></i><span id="nHuman">0</span></span>
+                    <span class="flex items-center gap-2" title="filed by Clicky"><i data-lucide="send" class="w-5 h-5" style="color:#34d399"></i><span id="nFiled">0</span></span>
+                </div>
+                <div id="row"></div>
+                <div id="caption" style="opacity:0"></div>
+            </div>
+
+            <div class="card p-5 flex flex-col">
+                <div class="flex items-center gap-2 font-extrabold"><i data-lucide="coins" class="w-5 h-5" style="color:#fbbf24"></i>Judge wallets</div>
+                <div class="text-xs mt-1" style="color:#8b93b5">Right calls earn coins. Coins = voting power.</div>
+                <div id="wallets" class="flex-1 flex items-end justify-around gap-2 mt-6 min-h-[260px]"></div>
+            </div>
+        </div>
+    </div>
+    <script src="evidence.js"></script>
+    <script src="theater.js"></script>
+</body>
+
+</html>
