@@ -53,9 +53,10 @@ Keep each line short. Newest at the bottom. Never delete other people's lines.
 | `preet/frontend-api` | Preet's agent | `/api/transactions`, risk score, `/api/metrics`, `/api/agents/<id>`, background `/api/run` jobs, `/api/health`, `docs/API.md` |
 | `preet/release-qa` | Preet's agent | end-to-end release tests, QA report, demo-day checklist |
 | `preet/gx10-run` | Preet's agent | GX10 models, speed + benchmark tables, fine-tuned judge, `docs/gx10_results.md` |
-| `preet/docs-sync` | Preet's agent | CONTRACT.md / README / FLOCK_CONTEXT / STATUS.md synced to the code (done, merging) |
+| `preet/docs-sync` | Preet's agent | merged into main |
 
 ## Status log (append below; newest last)
 
 - Sat 22:30 PT — Preet: Railway live with CREAO judges (verified: F-0001 judged by 3 CREAO agents, 0 fallbacks). Long `/api/run` requests hit Railway's proxy timeout (502) while the run continues server-side; fix (background jobs) coming in `preet/frontend-api`.
 - Sat 22:30 PT — Preet: COORDINATION.md created. Everyone: follow "The loop" above.
+- Sat 22:40 PT — Preet: DONE merged `preet/docs-sync` into main: CONTRACT.md rewritten to match the code (all shapes, state machines, traps 1-22, deal-term rule), README/FLOCK_CONTEXT updated (Noah's, current owners), new docs/STATUS.md. Docs only; 472 tests pass.
