@@ -32,11 +32,11 @@ Flock does the boring job a restaurant pays an accountant to do by hand: it take
 | `FLOCK_CONTEXT.md` | Background: problem, money flow, sourced research, numbers, pitch, agents, edge cases, team split, demo plan. Paste it into Claude at the start of a session. |
 | `docs/PLAN.md` | The plan: benchmark design, timeline, demo script, who's on what. |
 | `docs/connectors.md` | How Slack, Gmail and call notes get into Flock (drop-folder JSON contract for a CREAO connector). |
-| `docs/DEPLOY.md` | Hosting the API (and optionally the dashboard) on Railway. |
+| `docs/DEPLOY.md` | Hosting the API (which also serves the console) on Railway. |
 | `docs/DEMO.md` | The 3-minute demo run sheet: `python -m flock.showtime prepare` the night before, the exact clicks, what to say, fallbacks, timings. |
 | `docs/API.md` | The deployed JSON API for the frontend: every endpoint, real example responses, auth, CORS, which panel each feeds, how the metrics are computed. |
 | `docs/benchmark_schema.md` | Result file schema for the judge load test. |
-| `dashboard/README.md` | Dashboard screens and its API. |
+| `frontend/README.md` | The console (Himaja's UI): what each screen shows, how it finds the API, how to run it. |
 | `docs/hyphenate-track.md`, `docs/sponsor-tracks.md` | What the judges want; sponsor rules and the submission checklist. **Submit by Sun Oct 25, 9:00 AM.** |
 | `docs/TEAM_BRIEF.md` | The Discord team brief. `docs/pipeline-sketch.png`: the original hand-drawn pipeline. |
 
@@ -53,10 +53,10 @@ python -m flock.agents.learner --approve R-001              # human approves the
 python -m flock.pipeline --reset --demo-approve             # WEEK 2: same traps, 0 sent to a human
 python scripts/score.py                                     # also prints Week 1: 2 | Week 2: 0
 FLOCK_OFFLINE=1 pytest -q                                   # all tests (offline, models mocked)
-python -m dashboard.app                                     # dashboard at http://127.0.0.1:5050
+python -m flock.api                                         # the console at http://127.0.0.1:8787/
 ```
 
-Dashboard details (screens, API, the live `--pace` demo) are in `dashboard/README.md`.
+The console (see **UI** below) is the product UI; `frontend/README.md` has the details.
 Storage is picked by `FLOCK_STORE` through `flock.store.get_store()`: `json` (default, `data/state/`); `spacetime` is a stub that raises until SpacetimeStore is written.
 The Quickstart runs on `fixtures/fake_findings.json` (6 hand-written findings). The company story is Noah's NY Bagels, simulated with `--profile ca_bagel_chain` (see Data and Live seed demo); the generator's `default` profile is still the original 12-store hot chicken company.
 
@@ -67,6 +67,26 @@ offline) runs four prior months and September 2026 of the simulated bagel chain 
 up per weekly lump sum), leaves the headline finding for the presenter to approve live, and writes the cheat sheet to
 `data/state/showtime.md`. `showtime status` / `restore` / `reset` (back to this Quickstart).
 With nothing set (or `FLOCK_OFFLINE=1`) everything runs on offline rules, exactly as above.
+
+## UI
+
+The console is `frontend/` (Himaja's design: static HTML + JS, no build step). `python -m flock.api` serves it at
+**http://127.0.0.1:8787/**, and the hosted API serves it at its root (https://web-production-812b4.up.railway.app/).
+Served that way it talks to the same origin; opened as a file or from another host it uses the hosted API, and
+`?api=http://127.0.0.1:8787` overrides either way. Approve / Reject need your name and, on a token-protected API, the
+token: the key icon (kept in that browser's localStorage only).
+
+| Screen | What it shows (endpoint) |
+| --- | --- |
+| Overview | This month's lump sum banner (`/api/showtime`), the four metric cards with "How we got this" (formula, inputs, ASSUMPTION labels; `/api/metrics`), hand-offs to a human by month (`/api/score`), discrepancies with filters (`/api/findings`), the audit log incl. refusals (`/api/log`), the agent chain (`/api/agents`) |
+| Lump sums | Every deposit: expected net per contract vs received, shortfall, owed (`/api/payouts`); one lump sum: the waterfall gross -> each deduction (statement vs contract) -> expected net -> received -> shortfall, the gaps zoomed, per-store contribution, the findings inside (`/api/payouts/<id>`) |
+| Finding (drawer, `#/finding/<id>`) | Expected vs actual, rollup label ("457 orders at S28, S38, S41"), evidence with authority badges, votes per round, reviewer memo, investigator case file, audit trail; Approve (Clicky files it, SBX- ref) / Reject; "Try to approve as an agent" (the gatekeeper refuses, 409, and the refusal is shown and logged); the vendor follow-up card on FILED claims (draft, approve, reject, send via Clicky) |
+| Agent theater | Live (`/api/stream`) or a replay of the last run at 1x / 2x / 4x / 8x (`/api/stream/replay`): votes and confidence, debate revisions, bets and balances, escalations to the human lane, decisions, filings, rules learned |
+| Sources / Inbox | Connector batches (`/api/connectors`): each claim's quote, sender, authority and a Binding / Not binding badge |
+| Scoreboard | Answer-key score, the learning curve by month, traps by type, the judge market (`/api/market`) |
+
+Browser test of the whole demo click path: `FLOCK_TEST_BROWSER=1 pytest -q tests/test_frontend_e2e.py` (screenshots in
+`results/ui/`). The older Flask UI in `dashboard/` is kept as a backup only.
 
 ## Models (local first, Claude as reviewer)
 
@@ -164,7 +184,7 @@ export FLOCK_STORE=spacetime FLOCK_OFFLINE=1
 python -m flock.pipeline --reset --forget --demo-approve && python scripts/score.py   # 6/6, 2 to a human
 python -m flock.agents.learner --approve R-001
 python -m flock.pipeline --reset --demo-approve && python scripts/score.py            # 6/6, 0 to a human
-python -m dashboard.app                                              # same dashboard, reading SpacetimeDB
+python -m flock.api                                                  # same console, reading SpacetimeDB
 spacetime sql flock "SELECT finding_id, state FROM finding" --server local
 ```
 
@@ -367,8 +387,8 @@ python -m flock.demo --seed 4821 --confirm                          # accept the
 python -m flock.demo --seed 4821 --keep                             # leave the run on the dashboard afterwards
 ```
 
-Generates into a temp folder, collects, runs the whole pipeline with the progress bar (also on the dashboard's live
-board, so run `python -m dashboard.app` next to it), and prints the scoreboard against the **freshly generated**
+Generates into a temp folder, collects, runs the whole pipeline with the progress bar (also in the console's agent
+chain and theater, so run `python -m flock.api` next to it), and prints the scoreboard against the **freshly generated**
 answer key. It never writes `data/answer_key.csv` or `mappings.json` (it uses temp copies); the unseen-layout trap
 still asks y/N unless `--confirm`. Afterwards `data/state` and the sandbox portal are restored to the fixtures demo,
 unless `--keep` (then the generated key sits at `data/state/answer_key.csv` for the scoreboard until the next
@@ -444,8 +464,8 @@ FLOCK_PORTAL_LAYOUT=v2 FLOCK_CLICKY_HEADED=1 python -m flock.agents.clicky file 
 
 ## Deploy (Railway)
 
-The `Procfile` serves the JSON API (`python -m flock.api --host 0.0.0.0`); the dashboard can run as a second service
-(`python -m dashboard.app --host 0.0.0.0`). Set `FLOCK_API_TOKEN` on any public deploy (POSTs need
+The `Procfile` serves the JSON API and, at `/`, the console (`python -m flock.api --host 0.0.0.0`): the hosted URL's
+root is the UI. Set `FLOCK_API_TOKEN` on any public deploy (POSTs need
 `Authorization: Bearer <token>`), `FLOCK_OFFLINE=1` until model keys are set, and mount a volume at `/app/data/state`.
 Step by step: [`docs/DEPLOY.md`](docs/DEPLOY.md). Simulated data only.
 
@@ -487,7 +507,7 @@ As soon as `data/std/` has real tables and the matcher/checkers return findings,
 | --- | --- | --- |
 | **Preet** | Hosting (Railway, `docs/DEPLOY.md`) and all ML + benchmarking: GX10 models, local and tuned judges, benchmark runs; merging into `main` | `flock/llm.py`, `panel.py`, `market.py`, `anomaly.py`, `scripts/benchmark.py`, `scripts/judge_*.py`, `scripts/gx10.sh`, deploy config |
 | **Thabhelo** | CREAO: every AI role as a hosted CREAO agent, the Flock Judge on agent.creao.ai, CREAO connectors for Slack/Gmail | `flock/llm.py` (creao providers), `scripts/creao_setup.py`, `flock/api.py`, `matcher.py`, `checkers.py`, `deal_keeper.py` |
-| **Himaja** | UI, in her own frontend folder (not merged yet; `dashboard/` is the UI that runs today) | the frontend; still `generator/`, `collector.py`, `formatter.py`, `profiles/` |
+| **Himaja** | The UI: `frontend/` (the console, served by the API at `/`) | the frontend; still `generator/`, `collector.py`, `formatter.py`, `profiles/` |
 | **Ira** | Pitch, demo video, Devpost [confirm] | |
 
 ## Rules for everyone
@@ -517,10 +537,11 @@ flock/demo.py          live seed demo: generate -> collect -> pipeline -> score,
 flock/showtime.py      the 3-minute demo: prepare (prior months + demo month), status, approve, restore, reset
 flock/rollup.py        per-order findings that break one deal term in one weekly payout -> one finding (opt-in)
 flock/progress.py      terminal progress bar + data/state/progress.json
-flock/api.py           stdlib JSON API (port 8787, Procfile, bearer token on writes)
+flock/api.py           stdlib JSON API (port 8787, Procfile, bearer token on writes); serves frontend/ at /
 flock/agents/          one file per agent, owner at the top: collector, formatter, matcher, deal_keeper, checkers,
                        anomaly, investigator, panel, ranker, dispute_writer, clicky, journal, learner, follow_up
-dashboard/             Flask + one page (python -m dashboard.app, port 5050)
+frontend/              the console (Himaja's UI, static HTML/JS, vendored Tailwind + Lucide): served at / by flock/api.py
+dashboard/             older Flask UI, kept as a backup (python -m dashboard.app, port 5050)
 generator/             seeded data generator, traps 1-22, answer key (output in generator/out/)
 profiles/              company profiles (default, ca_bagel_chain: simulated)
 fixtures/              fake findings for the Quickstart, adversarial findings, Clicky examples

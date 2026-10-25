@@ -7,7 +7,7 @@ Everything on stage is prepared the night before by `python -m flock.showtime pr
 no network. All data is **simulated** (Ringtide Bagels, the fictional 56-store `ca_bagel_chain` profile).
 
 Every dollar figure you say comes from `data/state/showtime.md`, which `prepare` computes from that run's findings
-and generated answer key; the lump-sum figures are exactly what the dashboard's **Lump sums** tab shows
+and generated answer key; the lump-sum figures are exactly what the console's **Lump sums** screen shows
 (`flock/payouts.py`). The numbers quoted below are what our run printed (seed 2025, Oct 25); if you
 change the seed or the code, read the new cheat sheet, not this page.
 
@@ -19,8 +19,7 @@ export FLOCK_OFFLINE=1                       # or set up live judges first (see 
 python -m flock.showtime prepare             # ~50 s: 4 prior months + September 2026, prints the cheat sheet
 python -m flock.showtime status              # "Headline F-...: JUDGED (ready for the presenter)"
 cat data/state/showtime.md                   # print it; this is what you read from on stage
-python -m dashboard.app                      # http://127.0.0.1:5050 (leave it running)
-python -m flock.api                          # optional: http://127.0.0.1:8787 for the frontend / curl fallback
+python -m flock.api                          # the console at http://127.0.0.1:8787/ (leave it running)
 ```
 
 Rehearse the clicks as often as you like, then put the prepared state back:
@@ -53,27 +52,35 @@ it goes to a human).
 
 ## On stage (3:00)
 
-Open the dashboard on the **Live board** with the cheat sheet next to you. "Acting as" = your name.
+Open the console at **http://127.0.0.1:8787/** (the hosted site serves the same console at its root:
+https://web-production-812b4.up.railway.app/) with the cheat sheet next to you. Key icon (top right): your name, and
+the token if `FLOCK_API_TOKEN` is set. Sidebar icons: house = Overview, bank = Lump sums, clapper = Agent theater,
+inbox = Sources, trophy = Scoreboard.
 
 | Time | Click | Say |
 | --- | --- | --- |
-| 0:00 | Live board | "Ringtide Bagels, 56 stores, four delivery channels. In September: 102,730 orders. The bank saw 20 deposits. Nobody can check 100,000 lines by hand, so nobody does." |
-| 0:25 | **Lump sums** tab, open DoorDash DD-PO-20260901 | "Take one deposit: DoorDash payout DD-PO-20260901, 8,114 orders from 56 stores, one wire of $131,085.91. By the contracts it should have been $131,635.24. Flock broke it down line by line (the waterfall) and found why: three stores are still being charged 25% after the amendment cut it to 20%. $549.33 in this one deposit, $2,019.17 this month." |
-| 0:45 | **Human queue** tab: the headline (`F-...`, the one drafted dispute). Type "amendment says 20%", click **Approve**, then **File 1 approved via Clicky** | "Agents propose, people approve, and only the gatekeeper files. Clicky files it in the platform's portal; here's the reference." (toast: SBX-...) |
-| 1:20 | Same tab: the Uber Eats conflict, click **Reject** with "not binding: rep not on the contract" | "This one Flock won't decide. An Uber Eats rep promised a fee waiver, but he's not on the contract's authorized contacts. A person decides. In May a Grubhub rep did the same thing twice; a person said no twice; now that's a rule, and this month it was settled without anyone." |
-| 1:50 | **Scoreboard** tab | "Hand-offs to a human by month: 5, 4, 3, 1, 1. Every planted mistake caught: 1,945 of 1,945 answer-key rows, zero false alarms." Then **Judge market** tab: "the judges bet on their calls; the honest ones gain weight." |
-| 2:20 | Open the follow-up finding (`F-...` in the cheat sheet, `#/finding/F-...`), **Vendor follow-up** card: **Approve**, then **Send via Clicky** (toast: SBX-...) | "And what's still owed: in August we filed a claim for a short Uber Eats deposit, $55.38, and it was never paid. Flock drafted the follow-up with the claim number and the evidence; I approve it and Clicky sends it." |
-| 2:45 | Live board | "5.9 seconds of agent time for 280 store-weeks a person would spend an hour each on. That's Flock." |
+| 0:00 | **Overview** (the dark banner shows the month's lump sum) | "Ringtide Bagels, 56 stores, four delivery channels. In September: 102,730 orders. The bank saw 20 deposits. Nobody can check 100,000 lines by hand, so nobody does." |
+| 0:25 | Banner: **Open the lump sum** (or **Lump sums**, row DoorDash DD-PO-20260901): the waterfall and the zoomed gap cards | "Take one deposit: DoorDash payout DD-PO-20260901, 8,114 orders from 56 stores, one wire of $131,085.91. By the contracts it should have been $131,635.24. Flock broke it down line by line (the waterfall) and found why: three stores are still being charged 25% after the amendment cut it to 20%. $549.33 in this one deposit, $2,019.17 this month." |
+| 0:45 | Click the headline (`F-...`) under **Findings inside this lump sum**. Optional: **Try to approve as an agent** (red box: the gatekeeper refused, 409, logged). Type "amendment says 20%", click **Approve** (the API approves and Clicky files it: green box with the SBX- reference) | "Agents propose, people approve, and only the gatekeeper files. Clicky files it in the platform's portal; here's the reference." (toast: SBX-...) |
+| 1:20 | Close the drawer, **Overview** -> **Needs review** (or the bell): the Uber Eats conflict, type "not binding: rep not on the contract", click **Reject** | "This one Flock won't decide. An Uber Eats rep promised a fee waiver, but he's not on the contract's authorized contacts. A person decides. In May a Grubhub rep did the same thing twice; a person said no twice; now that's a rule, and this month it was settled without anyone." |
+| 1:50 | **Scoreboard** (trophy) | "Hand-offs to a human by month: 5, 4, 3, 1, 1. Every planted mistake caught: 1,945 of 1,945 answer-key rows, zero false alarms." Same screen, **Judge market**: "the judges bet on their calls; the honest ones gain weight." (Optional: **Agent theater**, **Replay last run**, 4x.) |
+| 2:20 | Open the follow-up finding (`F-...` in the cheat sheet: `http://127.0.0.1:8787/#/finding/F-...`, or **Filed** on the Overview), **Vendor follow-up** card: **Approve**, then **Send via Clicky** (sent ref SBX-...) | "And what's still owed: in August we filed a claim for a short Uber Eats deposit, $55.38, and it was never paid. Flock drafted the follow-up with the claim number and the evidence; I approve it and Clicky sends it." |
+| 2:45 | **Overview** (the Agent time card; "How we got this" shows the formula and the ASSUMPTION) | "5.9 seconds of agent time for 280 store-weeks a person would spend an hour each on. That's Flock." |
 
 The hours figure is an ASSUMPTION (60 minutes per store-week, cited in the metrics card), not a measurement: say
 "we assume an hour per store a week" if asked.
+
+The whole click path is a browser test: `FLOCK_TEST_BROWSER=1 pytest -q tests/test_frontend_e2e.py` (prepares a
+temp showtime state, drives the console, screenshots in `results/ui/`). The older Flask UI (`python -m dashboard.app`,
+port 5050) still works as a backup; it has a separate **File approved via Clicky** button because its approve
+doesn't file.
 
 ## Fallbacks
 
 | If | Do |
 | --- | --- |
-| Wi-Fi dies | Nothing on stage needs it: the dashboard, API and sandbox portal are localhost, the state is on disk, drafts and votes were written during prep. Keep `export FLOCK_OFFLINE=1` in the stage terminal so nothing even tries. |
-| The dashboard won't load | `python -m flock.showtime approve --actor <you>` (same gatekeeper move, then Clicky files it) and read the numbers from `showtime.md`. Or the API: `curl -X POST http://127.0.0.1:8787/api/findings/<id>/approve -H 'Content-Type: application/json' -d '{"actor": "<you>"}'` (approve also files). |
+| Wi-Fi dies | Nothing on stage needs it: the console (Tailwind and the icons are vendored in `frontend/vendor/`; only the web font falls back), API and sandbox portal are localhost, the state is on disk, drafts and votes were written during prep. Keep `export FLOCK_OFFLINE=1` in the stage terminal so nothing even tries. |
+| The console won't load | `python -m flock.showtime approve --actor <you>` (same gatekeeper move, then Clicky files it) and read the numbers from `showtime.md`. Or the API: `curl -X POST http://127.0.0.1:8787/api/findings/<id>/approve -H 'Content-Type: application/json' -d '{"actor": "<you>"}'` (approve also files). |
 | The follow-up card won't respond | API: `curl -X POST http://127.0.0.1:8787/api/findings/<id>/follow_up/approve -H 'Content-Type: application/json' -d '{"actor": "<you>"}'` then `.../follow_up/send`. Terminal: `python -m flock.agents.follow_up approve <id> --actor <you> --send`. |
 | A rehearsal left the headline approved | `python -m flock.showtime restore` (0.2 s). `status` says "ready for the presenter" again. |
 | The state is gone or broken | `python -m flock.showtime prepare` (~50 s offline). Worst case `python -m flock.showtime reset` and tell the Quickstart story: week 1 sends 2 to a human, a rule is approved, week 2 sends 0. |
@@ -97,7 +104,6 @@ are saved in the state, so the stage itself needs no model call.
 | One month through the pipeline in `prepare` (generate + collect + format + match/check + judge + file) | 9 to 11 s |
 | `showtime prepare` (4 prior months + the demo month, 56 stores) | 49 to 51 s |
 | `showtime status` / `restore` / `reset` | 0.26 s / 0.24 s / 0.26 s |
-| Dashboard approve / File via Clicky (file mode) | 12 ms / 5 ms |
 | API `POST /api/findings/<id>/approve` (approves and files) | 20 ms |
 | `prepare --stores 5 --months 2` (the test) | ~3 s |
 
@@ -111,9 +117,9 @@ are saved in the state, so the stage itself needs no model call.
 
 ## Headline finding (approve it live)
 - F-e7127388: DoorDash commission, gap $549.33 (457 orders at S28, S38, S41)
-- Sits in DoorDash payout DD-PO-20260901, deposit BNK-2063106 on 2026-09-10: one lump sum for 8,114 orders from 56 stores (dashboard: Lump sums tab)
+- Sits in DoorDash payout DD-PO-20260901, deposit BNK-2063106 on 2026-09-10: one lump sum for 8,114 orders from 56 stores (console: **Lump sums**)
 - Lump sum: expected $131,635.24 | arrived $131,085.91 | short $549.33 (findings inside: F-e7127388 commission $549.33)
-- Answer key for the same deposit: expected $131,652.92, deposited $131,085.91, short $567.01 ($17.68 of it is an order sold but never paid, which belongs to no lump sum on the dashboard: $549.33 on the paid orders)
+- Answer key for the same deposit: expected $131,652.92, deposited $131,085.91, short $567.01 ($17.68 of it is an order sold but never paid, which belongs to no lump sum in the console: $549.33 on the paid orders)
 
 ## Metrics cards
 1. Agent time: 5.929s of agent wall time vs 280.0 human hours (280 store-weeks x 60 min, ASSUMPTION)

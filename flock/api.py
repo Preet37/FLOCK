@@ -25,9 +25,14 @@ Read:
   GET  /api/progress                  what the pipeline is doing right now (stage, done/total)
   GET  /api/jobs                      background runs; GET /api/jobs/<id> for one (status, progress, output tail)
   GET  /api/screens/<file>            Clicky's screenshots (data/screens, data/demos/<id>/<file>), nothing else
+  GET  /api/market                    judge market: balances, weights, won/lost, recent bets and settlements
+  GET  /api/connectors                connector batches received (Slack/email claims, sender, authority, binding)
+  GET  /api/showtime                  the showtime cheat sheet (json + markdown) if one was prepared here
+  GET  /                              the web UI (frontend/dashboard.html); /frontend/<file> and /<file> serve frontend/
 
 Write (humans only; every write still goes through the gatekeeper):
   POST /api/findings/<id>/approve     {"actor": "thabhelo", "reason": "..."}  then Clicky files it
+                                      ("role": "agent", or an agent's id as actor: the gatekeeper refuses, logged)
   POST /api/findings/<id>/reject      {"actor": "thabhelo", "reason": "..."}
   POST /api/findings/<id>/follow_up   the follow-up agent drafts a reminder for a FILED, unpaid claim (returns it)
   POST /api/findings/<id>/follow_up/approve   {"actor": "thabhelo", "reason": "...", "text": "edited (optional)"}
@@ -75,6 +80,12 @@ sys.path.insert(0, str(ROOT))
 from scripts.score import score  # noqa: E402
 
 PORTAL = ROOT / "data" / "sandbox_portal" / "disputes.jsonl"
+FRONTEND_DIR = ROOT / "frontend"
+UI_ENTRY = "dashboard.html"
+STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon",
+                ".json": "application/json", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8"}
 TOKEN = os.environ.get("FLOCK_API_TOKEN", "")
 CORS_ORIGIN = os.environ.get("FLOCK_CORS_ORIGIN", "*")
 MAX_STORES = int(os.environ.get("FLOCK_HOSTED_MAX_STORES", "56"))   # caps for POST /api/run {"dataset": "demo"}
@@ -240,6 +251,27 @@ def _arg(q: dict[str, list[str]], name: str) -> str | None:
     return v or None
 
 
+def static_file(parts: list[str], root: Path | None = None) -> Path | None:
+    """The web UI: / -> frontend/dashboard.html, /frontend/<file> and /<file> -> frontend/<file>. Only files inside
+    frontend/ with a known type; dotfiles, '..' and anything resolving outside the folder are refused (None)."""
+    base = (root or FRONTEND_DIR).resolve()
+    rel = parts[1:] if parts[:1] == ["frontend"] else parts
+    rel = [unquote(p) for p in rel] or [UI_ENTRY]
+    if any(p in ("", ".", "..") or p.startswith(".") or "\\" in p or "\x00" in p for p in rel):
+        return None
+    path = base.joinpath(*rel)
+    if path.is_dir():
+        path = path / UI_ENTRY
+    try:
+        path = path.resolve()
+        path.relative_to(base)
+    except (OSError, ValueError):
+        return None
+    if path.suffix.lower() not in STATIC_TYPES or not path.is_file():
+        return None
+    return path
+
+
 class Api:
     def __init__(self, store: Store | None = None, portal: Path | None = None, runs_path: Path | None = None) -> None:
         self.store = store if store is not None else JsonStore()
@@ -326,6 +358,12 @@ class Api:
     def metrics(self) -> dict[str, Any]:
         return frontend.metrics(self.store, get_journal_store(self.store))
 
+    def market(self) -> dict[str, Any]:
+        """Judge balances (from the append-only ledger), recent bets / settlements, attention budget (same as the
+        dashboard's /api/market)."""
+        from flock import market
+        return market.snapshot(self.store)
+
     def rules(self) -> dict[str, Any]:
         return {"approved": learner.approved_rules(), "proposed": learner._read(learner._proposed_path(self.store))}
 
@@ -349,7 +387,7 @@ class Api:
     def decide(self, fid: str, action: str, body: dict[str, Any]) -> dict[str, Any]:
         self._not_running()
         with self.write_lock:
-            actor = Actor(id=str(body.get("actor") or "human"), role="human")
+            actor = _human(body)
             after = transition(self.store, fid, action, actor,
                                reason=str(body.get("reason") or f"{action}d from the dashboard"))
             entry = self.store.log(fid)[-1]   # the human's decision, before Clicky's filing is logged
@@ -545,9 +583,11 @@ AGENT_IDS = {a["actor"] for a in AGENTS if a["role"] != "human"}
 
 
 def _human(body: dict[str, Any]) -> Actor:
-    """The person deciding. An agent's own id is not a person: it goes to the gatekeeper as role agent (refused, logged)."""
+    """The person deciding. An agent's own id is not a person, and "role": "agent" says so explicitly (the UI's "Try as
+    an agent"): either goes to the gatekeeper as role agent, which refuses it and logs the attempt."""
     name = str(body.get("actor") or "human")
-    return Actor(id=name, role="agent" if name in AGENT_IDS else "human")
+    agent = name in AGENT_IDS or str(body.get("role") or "").strip().lower() == "agent"
+    return Actor(id=name, role="agent" if agent else "human")
 
 
 def _needs_human(f: dict[str, Any]) -> bool:
@@ -578,6 +618,18 @@ class Handler(BaseHTTPRequestHandler):
         data = path.read_bytes()
         self._headers(200, frontend.SCREEN_TYPES[path.suffix.lower()], len(data))
         self.wfile.write(data)
+
+    def _send_static(self, path: Path) -> None:
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", STATIC_TYPES[path.suffix.lower()])
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+        ms = (time.monotonic() - getattr(self, "_t0", time.monotonic())) * 1000
+        sys.stderr.write(f"api  {self.command} {self.path}  200  {ms:.0f}ms\n")
 
     def _body(self) -> dict[str, Any]:
         n = int(self.headers.get("Content-Length") or 0)
@@ -635,6 +687,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, a.store.log())
             if parts == ["api", "rules"]:
                 return self._send(200, a.rules())
+            if parts == ["api", "market"]:
+                return self._send(200, a.market())
             if parts == ["api", "score"]:
                 return self._send(200, a.scoreboard())
             if parts == ["api", "portal"]:
@@ -650,7 +704,12 @@ class Handler(BaseHTTPRequestHandler):
                 if path is None:
                     return self._send(404, {"error": "no such screenshot (only data/screens and data/demos files)"})
                 return self._send_file(path)
-            if parts in (["api"], []):
+            if parts[:1] != ["api"]:
+                path = static_file(parts)
+                if path is None:
+                    return self._send(404, {"error": "no such page (the UI is at /)"})
+                return self._send_static(path)
+            if parts == ["api"]:
                 return self._send(200, {"ok": True, "docs": "docs/API.md",
                                         "routes": [l.strip() for l in __doc__.splitlines() if l.strip().startswith(("GET", "POST"))]})
             self._send(404, {"error": "no such route"})
@@ -749,8 +808,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(e)})
         except Busy as e:
             self._send(409, {"error": str(e), "running": a.running})
-        except Denied as e:
-            self._send(409, {"error": str(e)})
+        except Denied as e:   # the gatekeeper refused (and logged it): send the refusal entry so the UI can show it
+            out: dict[str, Any] = {"error": str(e), "denied": True}
+            if len(parts) >= 3 and parts[:2] == ["api", "findings"]:
+                with contextlib.suppress(Exception):
+                    out["log_entry"] = a.store.log(parts[2])[-1]
+            self._send(409, out)
         except (KeyError, StopIteration, LookupError) as e:
             self._send(404, {"error": f"not found: {e}"})
         except Exception as e:  # keep the server alive, tell the UI what broke
@@ -762,7 +825,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(host: str = "127.0.0.1", port: int = 8787) -> None:
     install_stdout()   # per-thread stdout capture for jobs and the scoreboard; everything else reaches the terminal
-    print(f"Flock API on http://{host}:{port}/api  (ctrl-c to stop)")
+    print(f"Flock API on http://{host}:{port}/api  UI on http://{host}:{port}/  (ctrl-c to stop)")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

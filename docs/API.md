@@ -18,6 +18,7 @@ Every example below is a real response captured from a local run (`POST /api/run
 | Errors | Always JSON: `{"error": "..."}`. `400` bad input, `401` no/wrong token, `404` not found, `409` a run is in progress or the state machine refused the move, `500` a bug (the message says what broke). Never an HTML traceback. Bodies are strict JSON: a `NaN` or infinity is sent as `null` (`JSON.parse` rejects `NaN`), on this server and on the dashboard's mirror. |
 | Runs | One at a time. A second `POST /api/run`, or a decision while a run is going, gets `409` with `"running": "<job id>"`. |
 | Money | Dollars, rounded to cents. Gaps are computed in plain Python by the checkers; no model touches a dollar. |
+| Web UI | `GET /` serves the console (`frontend/dashboard.html`); `/frontend/<file>` and `/<file>` serve the rest of `frontend/` (`.html .js .css .svg .png ...` with their content types, `Cache-Control: no-cache`). Open, no token. Only files inside `frontend/`: `..`, encoded `%2e%2e`, dotfiles and unknown types get the JSON `404`. Served this way the console calls the same origin; `?api=<url>` overrides. Everything under `/api/*` is unchanged. |
 | Logs | The server writes one stderr line per request: `api  GET /api/metrics  200  9ms`. A run's own output goes to its job (`output_tail`), never to the terminal or to another request: stdout is a per-thread proxy installed once at startup, so concurrent requests and the background job each capture only their own prints. |
 
 ## Which endpoint feeds which panel
@@ -32,6 +33,11 @@ Every example below is a real response captured from a local run (`POST /api/run
 | Run button / status | `POST /api/run?wait=0` (fixtures) or `POST /api/run` with `dataset: "demo"` (always a job), then poll `GET /api/jobs/<id>`; `GET /api/health` | 1-2 s while running |
 | (6) Lump sums: list of deposits; click -> waterfall, stores, findings inside | `GET /api/payouts`, `GET /api/payouts/<payout_id>` | after each run / decision |
 | (7) Agent theater: judge columns, balance ticker, human lane, rule banner | `GET /api/stream?since=<cursor>` (live) or `GET /api/stream/replay?run=last&speed=N` (stage) | 1 s live; replay: `next_in_ms` |
+| (8) Showtime banner: this month's lump sum + headline finding | `GET /api/showtime` (`json.lump_sum`, `json.headline`, `json.follow_up`) | 4 s |
+| (9) Sources / Inbox: connector batches with each claim's quote, sender, authority, binding | `GET /api/connectors` | 4 s |
+| (10) Scoreboard + judge market | `GET /api/score` (`runs[]` = learning curve by month), `GET /api/market` | 4 s |
+
+The console in `frontend/` (served at `/`) uses every row above; `frontend/README.md` maps its screens to them.
 
 ## Reads
 
@@ -594,6 +600,9 @@ the resolved path must stay inside its folder. Anything else: `404` JSON.
 | `GET /api/log` | The whole audit log, oldest first (findings, journal entries, denied attempts). Each entry: `at, actor, role, action, subject_id, subject_type, allowed, before, after, diff, reason, evidence`. A resolve shows up here as `role: "human"`, `action: "approve" / "reject"`. |
 | `GET /api/score` | Scoreboard vs the run's answer key: `caught, total, missed, false_alarms, recovered, to_human, by_rule, traps[], runs[], text`. |
 | `GET /api/rules` | `approved` and `proposed` learned rules. |
+| `GET /api/market` | The judge market (same as the dashboard's): `start, scale, scoring, rule, leaderboard[]` (per judge: `judge, balance, weight, history[], won, lost, abstained, open, pnl`), `open_bets, settled, recent[]` (stakes / settlements, newest first), `attention` (budget, used, remaining). |
+| `GET /api/connectors` | `{"received": [...]}`: the connector batches posted to `POST /api/connectors`, each with `at, connector, source, items, simulated, claims[]` (`term_type, channel, store_id, value, effective_from, effective_to, authority, authority_basis, sender, quote, locator, binding`), `superseded, ignored`. |
+| `GET /api/showtime` | The showtime cheat sheet in this server's state: `{"json": {...}, "markdown": "..."}` (or both null and a `note`). |
 | `GET /api/portal` | Disputes Clicky filed in the sandbox portal. |
 | `GET /api/progress` | `{"status": "running" / "done" / "idle", "stage", "done", "total", "unit", "rate", "elapsed", ...}` |
 | `GET /api/jobs`, `GET /api/jobs/<id>` | Background runs (below). |
@@ -603,8 +612,10 @@ the resolved path must stay inside its folder. Anything else: `404` JSON.
 
 ### `POST /api/findings/<id>/approve` and `/reject`
 Body `{"actor": "himaja", "reason": "Evidence checks out"}`. The gatekeeper decides whether the move is legal (only a
-JUDGED finding can be approved / rejected); a refused move is logged and returns `409`. Approve also has Clicky file the
-dispute. Response: `finding` (with risk), `filed` (portal refs), `proposed` (rules the Learner now proposes), `was`,
+JUDGED finding can be approved / rejected); a refused move is logged and returns `409` with `"denied": true` and the
+refusal's `log_entry`. An agent can't decide: `"role": "agent"` in the body, or an agent's id as `actor` (e.g.
+`dispute_writer`), goes to the gatekeeper as role agent and is refused the same way (the console's "Try to approve as an
+agent"). Approve also has Clicky file the dispute (no separate filing step on this API). Response: `finding` (with risk), `filed` (portal refs), `proposed` (rules the Learner now proposes), `was`,
 `log_entry` (the audit-log line for this decision, so the log column can append it at once).
 
 ### Vendor follow-ups: `POST /api/findings/<id>/follow_up`, `/follow_up/approve`, `/follow_up/reject`, `/follow_up/send`
@@ -723,7 +734,7 @@ page has a **Vendor follow-up** card (draft text, Approve / Reject / Send via Cl
 `/api/run`, jobs, health or SSE. Its **Lump sums** tab (`#/payouts`, `#/payout/<key>`: list, waterfall chart with
 statement vs contract bars, line-by-line table, stores, findings linked) and **Theater** tab (`#/theater`: three judge
 columns with votes and bets, a balance ticker, the human lane, a rule-learned banner; Live or "Replay last run" at
-1-8x) are the backup UI for the demo.
+1-8x) were the backup UI for the demo; the console in `frontend/` (served at `/` by this API) is now the product UI.
 
 ## Proposed CONTRACT.md addition (not applied)
 

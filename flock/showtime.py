@@ -57,8 +57,9 @@ WORKDIR = ROOT / "data" / "showtime"
 MARKER = ".flock_showtime"
 MD_NAME, JSON_NAME = "showtime.md", "showtime.json"
 HUMAN = pipeline.DEMO_HUMAN          # the simulated human of --demo-approve
-DASHBOARD = "http://127.0.0.1:5050"
+DASHBOARD = "http://127.0.0.1:5050"   # the older Flask UI (backup, dashboard/)
 API = "http://127.0.0.1:8787"
+UI = f"{API}/"                       # the console (frontend/), served by flock.api
 
 
 def month_name(month: str) -> str:
@@ -372,7 +373,7 @@ def cheat_sheet(info: dict[str, Any]) -> str:
         if lump:
             out += [f"- Sits in {lump['platform']} payout **{lump['payout_id']}**, deposit {lump['deposit_id']} on "
                     f"{lump['deposit_date']}: one lump sum for {lump['orders']:,} orders from {lump['stores']} stores "
-                    "(dashboard: **Lump sums** tab)",
+                    "(console: **Lump sums**)",
                     f"- Lump sum: expected **{_usd(lump['expected'])}** | arrived **{_usd(lump['arrived'])}** | "
                     f"short **{_usd(lump['short'])}** (findings inside: "
                     + ", ".join(f"{x['finding_id']} {x['check_type']} {_usd(x['gap'])}" for x in lump["findings"]) + ")"]
@@ -382,7 +383,7 @@ def cheat_sheet(info: dict[str, Any]) -> str:
                 out.append(f"- Answer key for the same deposit: expected {_usd(k['expected_by_deal'])}, deposited "
                            f"{_usd(k['deposited'])}, short {_usd(k['shortfall'])}"
                            + (f" ({_usd(k['unpaid_net'])} of it is an order sold but never paid, which belongs to no "
-                              f"lump sum on the dashboard: {_usd(paid)} on the paid orders)"
+                              f"lump sum in the console: {_usd(paid)} on the paid orders)"
                               if k.get("unpaid_net") else ""))
     else:
         out.append("- none: no drafted dispute waited for a human (check the logs in data/showtime/logs)")
@@ -409,31 +410,35 @@ def cheat_sheet(info: dict[str, Any]) -> str:
                 f"- {fu['finding_id']}: {fu['platform']} claim {fu['claim_ref']} filed {fu['filed_on']} for "
                 f"{_usd(fu['amount'])} ({fu['check_type']}), still unpaid. Draft state: {fu['state']}."]
     hid = h["finding_id"] if h else "<headline>"
-    out += ["", "## Exact clicks", f"Dashboard: `python -m dashboard.app` -> {DASHBOARD} (Acting as: your name)",
-            "1. **Live board**: say the story line above while the counters sit at this month's run."]
+    fid = fu["finding_id"] if fu else "<id>"
+    out += ["", "## Exact clicks", f"Console: `python -m flock.api` -> {UI} (key icon: your name, plus the token if "
+            "FLOCK_API_TOKEN is set; the hosted site serves the same console at its root)",
+            "1. **Overview** (house icon): say the story line above; the dark banner shows this month's lump sum."]
     n = 2
     if lump:
-        out.append(f"{n}. **Lump sums** tab -> {lump['platform']} **{lump['payout_id']}** (status {lump['status']}): "
-                   f"expected {_usd(lump['expected'])}, received {_usd(lump['arrived'])}, short {_usd(lump['short'])}; "
-                   f"the waterfall shows the commission line, the findings list shows **{hid}**.")
+        out.append(f"{n}. **Lump sums** (bank icon) or the banner's **Open the lump sum** -> {lump['platform']} "
+                   f"**{lump['payout_id']}** (status {lump['status']}): expected {_usd(lump['expected'])}, received "
+                   f"{_usd(lump['arrived'])}, short {_usd(lump['short'])}; the waterfall shows the commission line, "
+                   f"**Findings inside this lump sum** shows **{hid}**: click it.")
         n += 1
-    out += [f"{n}. **Human queue** tab -> the one drafted dispute waiting is **{hid}** "
-            f"({_usd(h['gap']) if h else ''}). Type a reason (\"amendment says 20%\"), click **Approve**.",
-            f"{n + 1}. Click **File 1 approved via Clicky**: the toast shows the SBX- reference."]
-    n += 2
+    out += [f"{n}. Human queue (the bell, or **Needs review** on the Overview): the one drafted dispute waiting is "
+            f"**{hid}** ({_usd(h['gap']) if h else ''}). Optional: **Try to approve as an agent** (the gatekeeper "
+            "refuses, 409, logged). Type a reason (\"amendment says 20%\"), click **Approve**: the API approves and "
+            "Clicky files it; the green box shows the SBX- reference."]
+    n += 1
     if info["waiting_for_presenter"]:
         w = info["waiting_for_presenter"][0]
-        out.append(f"{n}. Same tab, the conflict **{w['finding_id']}** ({w['channel']} {w['check_type']}, "
+        out.append(f"{n}. Same queue, the conflict **{w['finding_id']}** ({w['channel']} {w['check_type']}, "
                    f"{_usd(w['gap'])}): Flock won't decide it. Type \"not binding: rep not on the contract\", "
                    "click **Reject** (accept the charge).")
         n += 1
-    out += [f"{n}. **Scoreboard** tab: the month-over-month hand-offs above; **Judge market** tab: balances.",
-            f"{n + 1}. Follow-up: open **{fu['finding_id'] if fu else '<id>'}** ({DASHBOARD}/#/finding/"
-            f"{fu['finding_id'] if fu else '<id>'}), **Vendor follow-up** card: click **Approve**, then "
-            "**Send via Clicky** (toast: the portal reference). API: `POST /api/findings/<id>/follow_up/approve` "
+    out += [f"{n}. **Scoreboard** (trophy icon): the month-over-month hand-offs above and the judge market balances. "
+            "**Agent theater** (clapper icon): **Replay last run** at 4x.",
+            f"{n + 1}. Follow-up: open **{fid}** ({UI}#/finding/{fid}), **Vendor follow-up** card: click **Approve**, "
+            "then **Send via Clicky** (toast: the portal reference). API: `POST /api/findings/<id>/follow_up/approve` "
             "{\"actor\": \"<you>\"}, then `.../follow_up/send`. Terminal fallback: `python -m flock.agents.follow_up "
-            f"approve {fu['finding_id'] if fu else '<id>'} --actor <you> --send`",
-            "", "API instead of the dashboard (approve also files via Clicky):",
+            f"approve {fid} --actor <you> --send`",
+            "", "API instead of the console (approve also files via Clicky):",
             f"`curl -X POST {API}/api/findings/{hid}/approve -H 'Content-Type: application/json' "
             "-d '{\"actor\": \"<you>\", \"reason\": \"amendment says 20%\"}'`",
             "No browser at all: `python -m flock.showtime approve --actor <you>` (same gatekeeper move, then Clicky).",

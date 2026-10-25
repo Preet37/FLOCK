@@ -4,8 +4,8 @@ Two services can run from this repo. Both use simulated data only.
 
 | Service | Start command | What it is |
 | --- | --- | --- |
-| **api** (default, `Procfile`) | `python -m flock.api --host 0.0.0.0` | Thabhelo's JSON API: findings, log, rules, score, agents, portal, `POST /api/run`. For CREAO agents and integrations. |
-| **dashboard** (optional) | `python -m dashboard.app --host 0.0.0.0` | The full UI + its API, for judges. Its approve/reject buttons have no login, so only deploy it when that's acceptable for the demo. |
+| **api** (default, `Procfile`) | `python -m flock.api --host 0.0.0.0` | The JSON API (findings, log, rules, score, agents, portal, payouts, theater, `POST /api/run`) **and the console** (`frontend/`) at `/`: the hosted URL's root is the UI judges use. POSTs need the token. |
+| **dashboard** (optional backup) | `python -m dashboard.app --host 0.0.0.0` | The older Flask UI + its API. Its approve/reject buttons have no login, so only deploy it when that's acceptable for the demo. |
 
 Both read `PORT` from Railway.
 

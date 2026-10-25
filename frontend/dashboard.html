@@ -4,22 +4,23 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Financial Dashboard</title>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts: Plus Jakarta Sans -->
+    <title>Flock Console</title>
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2034%2034%22%3E%3Cpath%20d%3D%22M17%200L20.8%2013.2L34%2017L20.8%2020.8L17%2034L13.2%2020.8L0%2017L13.2%2013.2L17%200Z%22%20fill%3D%22%23C4FE29%22%2F%3E%3Cpath%20d%3D%22M17%206L19.5%2014.5L28%2017L19.5%2019.5L17%2028L14.5%2019.5L6%2017L14.5%2014.5L17%206Z%22%20fill%3D%22%236B57EC%22%2F%3E%3C%2Fsvg%3E">
+    <!-- Tailwind (play build) and Lucide icons are vendored so the console works with no network (stage Wi-Fi) -->
+    <script src="vendor/tailwind-3.4.16.js"></script>
+    <!-- Google Fonts: Plus Jakarta Sans (falls back to the system sans offline) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
         rel="stylesheet">
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="vendor/lucide-0.453.0.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     fontFamily: {
-                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                        sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
                     },
                     colors: {
                         sidebar: '#161618',
@@ -42,1141 +43,185 @@
     </script>
     <style>
         body {
-            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
             background-color: #EBECEE;
             color: #111111;
             -webkit-tap-highlight-color: transparent;
         }
 
         /* Custom slim scrollbar for internal lists only */
-        .custom-scroll::-webkit-scrollbar {
-            width: 4px;
-            height: 4px;
-        }
-
-        .custom-scroll::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .custom-scroll::-webkit-scrollbar-thumb {
-            background: rgba(0, 0, 0, 0.15);
-            border-radius: 9999px;
-        }
-
-        .dark .custom-scroll::-webkit-scrollbar-thumb,
-        .dark-scroll::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.15);
-        }
+        .custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 9999px; }
+        .dark-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+        .dark-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 9999px; }
 
         /* Hide horizontal scrollbar */
-        .no-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-        .no-scrollbar {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
-        }
-
-        /* Pattern for diagonal striped expense bars */
+        /* Pattern for diagonal striped bars */
         .striped-bar {
-            background: repeating-linear-gradient(-45deg,
-                    #E2E4E8,
-                    #E2E4E8 5px,
-                    #F0F1F5 5px,
-                    #F0F1F5 10px);
+            background: repeating-linear-gradient(-45deg, #E2E4E8, #E2E4E8 5px, #F0F1F5 5px, #F0F1F5 10px);
         }
 
         /* Soft Card Shadows */
-        .card-shadow {
-            box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.03);
-        }
+        .card-shadow { box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.03); }
+
+        .pulse-dot { animation: pulse 1.6s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+        .flash { animation: flash 1.4s ease-out; }
+        @keyframes flash { from { background-color: rgba(196, 254, 41, .25); } to { background-color: transparent; } }
+        .slide-in { animation: slide .18s ease-out; }
+        @keyframes slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+
+        /* waterfall (lump sum) */
+        .wf text { font-family: inherit; }
+        .wf .lbl { font-size: 13px; font-weight: 600; fill: #6B7280; }
+        .wf .val { font-size: 13px; font-weight: 800; fill: #111; }
+        .wf .gap { font-size: 14px; font-weight: 800; fill: #DC2626; }
     </style>
 </head>
 
-<body
-    class="h-full w-full overflow-x-hidden lg:overflow-hidden bg-bgMain flex flex-col lg:flex-row antialiased select-none">
+<body class="h-full w-full overflow-x-hidden lg:overflow-hidden bg-bgMain flex flex-col lg:flex-row antialiased">
 
     <!-- ================= DESKTOP SIDEBAR ================= -->
-    <aside
-        class="hidden lg:flex w-20 xl:w-24 bg-sidebar flex-col items-center justify-between py-6 z-30 shrink-0 h-full">
-        <!-- Top Brand Logo -->
-        <div class="cursor-pointer hover:scale-105 transition-transform">
+    <aside class="hidden lg:flex w-20 xl:w-24 bg-sidebar flex-col items-center justify-between py-6 z-30 shrink-0 h-full">
+        <a href="#/" class="cursor-pointer hover:scale-105 transition-transform" aria-label="Flock home">
             <div class="w-10 h-10 relative flex items-center justify-center">
                 <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#C4FE29" />
-                    <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#6B57EC"
-                        fill-opacity="0.85" />
+                    <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#6B57EC" fill-opacity="0.85" />
                 </svg>
             </div>
-        </div>
+        </a>
 
-        <!-- Main Navigation Icons -->
-        <nav class="flex flex-col items-center gap-5">
-            <button
-                class="w-11 h-11 rounded-2xl flex items-center justify-center text-purpleAccent bg-cardDark transition hover:bg-gray-800"
-                aria-label="Home">
-                <i data-lucide="home" class="w-5 h-5 stroke-[2.5]"></i>
-            </button>
-            <button
-                class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800"
-                aria-label="Cards">
-                <i data-lucide="credit-card" class="w-5 h-5 stroke-[2]"></i>
-            </button>
-            <button
-                class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800"
-                aria-label="Transactions">
-                <i data-lucide="arrow-left-right" class="w-5 h-5 stroke-[2]"></i>
-            </button>
-            <button
-                class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800"
-                aria-label="Analytics">
-                <i data-lucide="bar-chart-3" class="w-5 h-5 stroke-[2]"></i>
-            </button>
-            <button
-                class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800"
-                aria-label="Rewards">
-                <i data-lucide="gift" class="w-5 h-5 stroke-[2]"></i>
-            </button>
+        <nav class="flex flex-col items-center gap-5" id="sideNav">
+            <a href="#/" data-nav="overview" title="Overview" aria-label="Overview" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="house" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="#/lumpsums" data-nav="lumpsums" title="Lump sums" aria-label="Lump sums" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="landmark" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="#/theater" data-nav="theater" title="Agent theater" aria-label="Agent theater" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="clapperboard" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="#/sources" data-nav="sources" title="Sources / Inbox" aria-label="Sources" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="inbox" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="#/scoreboard" data-nav="scoreboard" title="Scoreboard + judge market" aria-label="Scoreboard" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="trophy" class="w-5 h-5 stroke-[2]"></i>
+            </a>
         </nav>
 
-        <!-- Bottom Settings Icon -->
         <div>
-            <button
-                class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800"
-                aria-label="Settings">
+            <button data-open-settings title="Settings" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800" aria-label="Settings">
                 <i data-lucide="settings" class="w-5 h-5 stroke-[2]"></i>
             </button>
         </div>
     </aside>
 
     <!-- ================= MOBILE BOTTOM FLOATING NAVBAR ================= -->
-    <nav
-        class="lg:hidden fixed bottom-0 inset-x-0 bg-sidebar/95 backdrop-blur-md border-t border-gray-800/60 flex items-center justify-around py-3 px-4 z-40 text-gray-400">
-        <button class="p-2 text-purpleAccent" aria-label="Home">
-            <i data-lucide="home" class="w-6 h-6 stroke-[2.5]"></i>
-        </button>
-        <button class="p-2 hover:text-white" aria-label="Cards">
-            <i data-lucide="credit-card" class="w-6 h-6"></i>
-        </button>
-        <button class="p-2 hover:text-white" aria-label="Transactions">
-            <i data-lucide="arrow-left-right" class="w-6 h-6"></i>
-        </button>
-        <button class="p-2 hover:text-white" aria-label="Analytics">
-            <i data-lucide="bar-chart-3" class="w-6 h-6"></i>
-        </button>
-        <button class="p-2 hover:text-white" aria-label="Settings">
-            <i data-lucide="settings" class="w-6 h-6"></i>
-        </button>
+    <nav class="lg:hidden fixed bottom-0 inset-x-0 bg-sidebar/95 backdrop-blur-md border-t border-gray-800/60 flex items-center justify-around py-3 px-4 z-40 text-gray-400">
+        <a href="#/" data-nav="overview" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Overview"><i data-lucide="house" class="w-6 h-6"></i></a>
+        <a href="#/lumpsums" data-nav="lumpsums" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Lump sums"><i data-lucide="landmark" class="w-6 h-6"></i></a>
+        <a href="#/theater" data-nav="theater" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Agent theater"><i data-lucide="clapperboard" class="w-6 h-6"></i></a>
+        <a href="#/sources" data-nav="sources" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Sources"><i data-lucide="inbox" class="w-6 h-6"></i></a>
+        <a href="#/scoreboard" data-nav="scoreboard" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Scoreboard"><i data-lucide="trophy" class="w-6 h-6"></i></a>
+        <button data-open-settings class="p-2 hover:text-white" aria-label="Settings"><i data-lucide="settings" class="w-6 h-6"></i></button>
     </nav>
 
-    <!-- ================= MAIN DASHBOARD CONTAINER ================= -->
-    <main class="flex-1 flex flex-col h-full min-h-0 min-w-0 p-4 sm:p-5 lg:p-6 gap-4 lg:gap-5 pb-24 lg:pb-6">
+    <!-- ================= MAIN CONTAINER ================= -->
+    <main class="flex-1 flex flex-col h-full min-h-0 min-w-0 p-4 sm:p-5 lg:p-6 gap-4 lg:gap-5 pb-24 lg:pb-6 lg:overflow-y-auto custom-scroll">
 
         <!-- TOP HEADER -->
-        <header class="flex items-center justify-between shrink-0 h-11">
-            <div class="flex items-center gap-3">
-                <!-- Mobile Logo Indicator -->
+        <header class="flex items-center justify-between shrink-0 min-h-11 gap-3">
+            <div class="flex items-center gap-3 min-w-0">
                 <div class="lg:hidden w-8 h-8 relative flex items-center justify-center shrink-0">
                     <svg width="28" height="28" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#C4FE29" />
-                        <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#6B57EC"
-                            fill-opacity="0.85" />
+                        <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#6B57EC" fill-opacity="0.85" />
                     </svg>
                 </div>
-                <div>
-                    <h1
-                        class="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight text-gray-900 leading-none">
-                        Welcome Back!</h1>
-                    <p class="text-gray-500 font-semibold text-xs sm:text-sm mt-1">Dashboard</p>
+                <div class="min-w-0">
+                    <h1 id="pageTitle" class="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight text-gray-900 leading-none truncate">Flock</h1>
+                    <p id="pageSub" class="text-gray-500 font-semibold text-xs sm:text-sm mt-1 truncate">Simulated data</p>
                 </div>
             </div>
 
-            <!-- User Notifications & Profile Avatar -->
-            <div class="flex items-center gap-2.5 sm:gap-3">
-                <button
-                    class="w-9 h-9 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center text-gray-700 shadow-sm hover:bg-gray-50 transition border border-gray-200/50"
-                    aria-label="Notifications">
-                    <i data-lucide="bell" class="w-4 h-4"></i>
-                </button>
-                <div
-                    class="w-9 h-9 sm:w-10 sm:h-10 rounded-full overflow-hidden border-2 border-white shadow-sm cursor-pointer shrink-0 hover:ring-2 hover:ring-purpleAccent/50 transition">
-                    <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
-                        alt="User Profile" class="w-full h-full object-cover" />
+            <div class="flex items-center gap-2.5 sm:gap-3 shrink-0">
+                <div id="liveStatus" class="hidden sm:flex items-center gap-2 bg-white rounded-full px-3 h-9 sm:h-10 text-xs font-bold text-gray-600 border border-gray-200/50 shadow-sm">
+                    <span class="w-2 h-2 rounded-full bg-gray-300"></span> Connecting
                 </div>
+                <a href="#/?filter=review" id="queueBell" class="relative w-9 h-9 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center text-gray-700 shadow-sm hover:bg-gray-50 transition border border-gray-200/50" aria-label="Waiting for a human" title="Waiting for a human">
+                    <i data-lucide="bell" class="w-4 h-4"></i>
+                    <span id="queueCount" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-purpleAccent text-white text-[10px] font-extrabold flex items-center justify-center"></span>
+                </a>
+                <button data-open-settings id="actorBadge" class="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-white shadow-sm shrink-0 hover:ring-2 hover:ring-purpleAccent/50 transition bg-cardDark text-limeAccent text-xs font-extrabold flex items-center justify-center" aria-label="Reviewer settings" title="Reviewer settings">
+                    <i data-lucide="key-round" class="w-4 h-4"></i>
+                </button>
             </div>
         </header>
 
-        <!-- MAIN GRID LAYOUT -->
-        <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 min-h-0 min-w-0">
+        <!-- Showtime banner (GET /api/showtime) -->
+        <div id="showtimeBanner" class="hidden shrink-0"></div>
 
-            <!-- LEFT COLUMN: STATS & CHARTS (8 Cols on Desktop) -->
-            <div class="lg:col-span-8 flex flex-col gap-4 lg:gap-5 min-h-0 min-w-0">
+        <!-- The current view (hash route) renders here -->
+        <div id="view" class="shrink-0 min-w-0 flex flex-col gap-4 lg:gap-5"></div>
 
-                <!-- STAT CARDS ROW (3 Cards) -->
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 lg:gap-4 shrink-0">
-
-                    <!-- Card 1: Total Saved -->
-                    <div
-                        class="bg-cardDark text-white p-4 sm:p-5 rounded-3xl flex flex-col justify-between shadow-md relative hover:scale-[1.01] transition-transform duration-200">
-                        <div class="flex items-center justify-between mb-3">
-                            <div
-                                class="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-limeAccent flex items-center justify-center text-black font-bold">
-                                <i data-lucide="wallet" class="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]"></i>
-                            </div>
-                            <button class="text-gray-400 hover:text-white transition">
-                                <i data-lucide="more-vertical" class="w-4 h-4"></i>
-                            </button>
-                        </div>
-                        <div>
-                            <p class="text-gray-400 text-xs font-medium mb-0.5">Total Saved</p>
-                            <h2 class="text-xl sm:text-2xl xl:text-3xl font-extrabold tracking-tight text-white">$
-                                6556.73</h2>
-                        </div>
-                    </div>
-
-                    <!-- Card 2: Agent Cost -->
-                    <div
-                        class="bg-white text-gray-900 p-4 sm:p-5 rounded-3xl flex flex-col justify-between card-shadow border border-gray-100 hover:scale-[1.01] transition-transform duration-200">
-                        <div class="flex items-center justify-between mb-3">
-                            <div
-                                class="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-800">
-                                <i data-lucide="dollar-sign" class="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]"></i>
-                            </div>
-                            <button class="text-gray-400 hover:text-gray-700 transition">
-                                <i data-lucide="more-vertical" class="w-4 h-4"></i>
-                            </button>
-                        </div>
-                        <div>
-                            <p class="text-gray-500 text-xs font-medium mb-0.5">Agent Cost</p>
-                            <h2 class="text-xl sm:text-2xl xl:text-3xl font-extrabold tracking-tight text-gray-900">$
-                                3450.65</h2>
-                        </div>
-                    </div>
-
-                    <!-- Card 3: Total Saved -->
-                    <div
-                        class="bg-white text-gray-900 p-4 sm:p-5 rounded-3xl flex flex-col justify-between card-shadow border border-gray-100 hover:scale-[1.01] transition-transform duration-200">
-                        <div class="flex items-center justify-between mb-3">
-                            <div
-                                class="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-800">
-                                <i data-lucide="check" class="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]"></i>
-                            </div>
-                            <button class="text-gray-400 hover:text-gray-700 transition">
-                                <i data-lucide="more-vertical" class="w-4 h-4"></i>
-                            </button>
-                        </div>
-                        <div>
-                            <p class="text-gray-500 text-xs font-medium mb-0.5">Accuracy</p>
-                            <h2 class="text-xl sm:text-2xl xl:text-3xl font-extrabold tracking-tight text-gray-900">
-                                93%</h2>
-                        </div>
-                    </div>
-
-                </div>
-
-                <!-- LOWER SECTION (Hours + Transactions stacked vertically in the left column) -->
-                <div class="flex flex-col gap-4 lg:gap-5 min-h-0 min-w-0">
-
-                    <!-- EXPENSES / HOURS BAR CHART CARD (Compacted & Scooched Up) -->
-                    <div
-                        class="h-48 bg-white p-3 sm:p-4 rounded-3xl card-shadow border border-gray-100 flex flex-col justify-between shrink-0">
-                        <div class="flex items-center justify-between shrink-0 mb-1">
-                            <h3 class="font-bold text-gray-900 text-sm sm:text-base">Hours</h3>
-                            <button
-                                class="flex items-center gap-1 text-xs font-semibold text-gray-600 bg-gray-50 px-2.5 py-1 rounded-full hover:bg-gray-100 border border-gray-100">
-                                2025 <i data-lucide="chevron-down" class="w-3 h-3 text-gray-400"></i>
-                            </button>
-                        </div>
-
-                        <div class="flex-1 flex items-end justify-between px-1 gap-1.5 pt-1">
-
-                            <!-- Mar Bar -->
-                            <div onclick="selectBar(this, '$1350')"
-                                class="expense-bar-item flex flex-col items-center gap-1.5 flex-1 relative cursor-pointer group">
-                                <div id="marBarTooltip"
-                                    class="absolute -top-7 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                                    Agent: 8 hrs | Human: 42 hrs
-                                </div>
-                                <div class="flex items-end justify-center w-full gap-1.5">
-                                    <div
-                                        class="w-full max-w-[32px] h-10 sm:h-12 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                    <div id="marBar"
-                                        class="w-full max-w-[32px] h-14 sm:h-18 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                </div>
-                                <span class="text-[10px] sm:text-xs font-semibold text-gray-400">Mar</span>
-                            </div>
-
-                            <!-- Apr Bar -->
-                            <div onclick="selectBar(this, '$1420')"
-                                class="expense-bar-item flex flex-col items-center gap-1.5 flex-1 relative cursor-pointer group">
-                                <div id="aprBarTooltip"
-                                    class="absolute -top-7 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                                    Agent: 12 hrs | Human: 38 hrs
-                                </div>
-                                <div class="flex items-end justify-center w-full gap-1.5">
-                                    <div
-                                        class="w-full max-w-[32px] h-14 sm:h-18 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                    <div id="aprBar"
-                                        class="w-full max-w-[32px] h-10 sm:h-12 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                </div>
-                                <span class="text-[10px] sm:text-xs font-semibold text-gray-400">Apr</span>
-                            </div>
-
-                            <!-- May Bar -->
-                            <div onclick="selectBar(this, '$1890')"
-                                class="expense-bar-item flex flex-col items-center gap-1.5 flex-1 relative cursor-pointer group">
-                                <div id="mayBarTooltip"
-                                    class="absolute -top-7 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                                    Agent: 10 hrs | Human: 50 hrs
-                                </div>
-                                <div class="flex items-end justify-center w-full gap-1.5">
-                                    <div
-                                        class="w-full max-w-[32px] h-12 sm:h-16 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                    <div id="mayBar"
-                                        class="w-full max-w-[32px] h-16 sm:h-22 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                </div>
-                                <span class="text-[10px] sm:text-xs font-semibold text-gray-400">May</span>
-                            </div>
-
-                            <!-- Jun Bar -->
-                            <div onclick="selectBar(this, '$1100')"
-                                class="expense-bar-item flex flex-col items-center gap-1.5 flex-1 relative cursor-pointer group">
-                                <div id="junBarTooltip"
-                                    class="absolute -top-7 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                                    Agent: 6 hrs | Human: 30 hrs
-                                </div>
-                                <div class="flex items-end justify-center w-full gap-1.5">
-                                    <div
-                                        class="w-full max-w-[32px] h-8 sm:h-10 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                    <div id="junBar"
-                                        class="w-full max-w-[32px] h-6 sm:h-8 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                </div>
-                                <span class="text-[10px] sm:text-xs font-semibold text-gray-400">Jun</span>
-                            </div>
-
-                            <!-- Jul Bar (Active highlight style) -->
-                            <div
-                                class="expense-bar-item flex flex-col items-center gap-1.5 flex-1 relative cursor-pointer group">
-                                <div id="barTooltip"
-                                    class="absolute -top-7 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                                    Agent: 15 hrs | Human: 78 hrs
-                                </div>
-                                <div class="flex items-end justify-center w-full gap-1.5">
-                                    <div
-                                        class="w-full max-w-[32px] h-16 sm:h-20 rounded-full bg-limeAccent shadow-sm transition-opacity group-hover:opacity-90">
-                                    </div>
-                                    <div id="julBar"
-                                        class="bar-fill w-full max-w-[32px] h-16 sm:h-20 rounded-full bg-purpleAccent shadow-sm transition-opacity group-hover:opacity-90">
-                                    </div>
-                                </div>
-                                <span id="julLabel" class="text-[10px] sm:text-xs font-bold text-gray-900">Jul</span>
-                            </div>
-
-                            <!-- Aug Bar -->
-                            <div onclick="selectBar(this, '$1750')"
-                                class="expense-bar-item flex flex-col items-center gap-1.5 flex-1 relative cursor-pointer group">
-                                <div id="augBarTooltip"
-                                    class="absolute -top-7 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                                    Agent: 10 hrs | Human: 50 hrs
-                                </div>
-                                <div class="flex items-end justify-center w-full gap-1.5">
-                                    <div
-                                        class="w-full max-w-[32px] h-14 sm:h-16 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                    <div id="augBar"
-                                        class="w-full max-w-[32px] h-8 sm:h-10 rounded-full striped-bar group-hover:opacity-80 transition">
-                                    </div>
-                                </div>
-                                <span class="text-[10px] sm:text-xs font-semibold text-gray-400">Aug</span>
-                            </div>
-                        </div>
-                    </div>
-
-
-                    <!-- TRANSACTIONS CARD (Filtered Clean Table Layout) -->
-                    <div
-                        class="bg-white p-5 sm:p-6 rounded-3xl card-shadow border border-gray-100 flex flex-col justify-between min-h-0 min-w-0">
-                        <div class="flex flex-col sm:flex-row sm:items-center justify-between shrink-0 mb-4 gap-3">
-                            <div>
-                                <h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">
-                                    Discrepancies</h3>
-                                <p class="text-xs text-gray-400 mt-0.5 font-medium">What the deal says vs what was paid.
-                                    Click a row for the
-                                    case file.</p>
-                            </div>
-
-                            <!-- Filter Pills -->
-                            <div class="flex items-center gap-1.5 flex-wrap">
-                                <button onclick="filterDiscrepancies('all')" id="filter-btn-all"
-                                    class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full bg-black text-white transition">
-                                    All <span class="text-[10px] ml-0.5 opacity-80">9</span>
-                                </button>
-                                <button onclick="filterDiscrepancies('review')" id="filter-btn-review"
-                                    class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
-                                    Needs Review <span class="text-[10px] ml-0.5 opacity-80">2</span>
-                                </button>
-                                <button onclick="filterDiscrepancies('recoverable')" id="filter-btn-recoverable"
-                                    class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
-                                    Recoverable <span class="text-[10px] ml-0.5 opacity-80">2</span>
-                                </button>
-                                <button onclick="filterDiscrepancies('conflict')" id="filter-btn-conflict"
-                                    class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
-                                    Conflict <span class="text-[10px] ml-0.5 opacity-80">4</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Table Container -->
-                        <div class="flex flex-col min-h-0">
-
-                            <!-- Column Headers -->
-                            <div
-                                class="grid grid-cols-12 px-3 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                                <div class="col-span-2">ID</div>
-                                <div class="col-span-3">App</div>
-                                <div class="col-span-2">Check</div>
-                                <div class="col-span-2 text-right">Expected</div>
-                                <div class="col-span-2 text-right">Actual</div>
-                                <div class="col-span-1 text-right">Gap</div>
-                            </div>
-
-                            <!-- Scrollable Rows -->
-                            <div class="flex-1 overflow-y-auto custom-scroll pr-1 flex flex-col max-h-72 min-h-0 divide-y divide-gray-50"
-                                id="discrepancies-list">
-
-                                <!-- Row 1: Ubereats (Review) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="review">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-5f263921</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="uber-eats-app-.png" alt="Ubereats"
-                                                class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Ubereats</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">deposit</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$75,776.80
-                                    </div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$75,721.42
-                                    </div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$55.38</div>
-                                </div>
-
-                                <!-- Row 2: SkipTheDishes (Recoverable) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="recoverable">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-e6241d44</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="just-eat-96.png" alt="SkipTheDishes"
-                                                class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Skipthedishes</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">fee</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$0.00</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$7.50</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$7.50</div>
-                                </div>
-
-                                <!-- Row 3: Grubhub (Conflict) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="conflict">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-c3984bcc</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="grubhub-app-.png" alt="Grubhub"
-                                                class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Grubhub</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">fee</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$0.00</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$7.70</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$7.70</div>
-                                </div>
-
-                                <!-- Row 4: Doordash (Conflict) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="conflict">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-a88d8c1a</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="doordash.svg" alt="Doordash" class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Doordash</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">missing order</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$12.30</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$0.00</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$12.30</div>
-                                </div>
-
-                                <!-- Row 5: Doordash (Recoverable) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="recoverable">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-eeffc856</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="doordash.svg" alt="Doordash" class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Doordash</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">error charge</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$0.00</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$7.91</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$7.91</div>
-                                </div>
-
-                                <!-- Row 6: Ubereats (Review) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="review">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-0b079c0a</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="uber-eats-app-.png" alt="Ubereats"
-                                                class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Ubereats</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">promo</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$4.62</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$9.25</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$4.63</div>
-                                </div>
-
-                                <!-- Row 7: SkipTheDishes (Conflict) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="conflict">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-cc98812e</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="just-eat-96.png" alt="SkipTheDishes"
-                                                class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Skipthedishes</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">error charge</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$4.25</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$0.00</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$4.25</div>
-                                </div>
-
-                                <!-- Row 8: Ubereats (Conflict) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="conflict">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-af2ffa0f</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="uber-eats-app-.png" alt="Ubereats"
-                                                class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Ubereats</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">missing order</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$0.00</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$3.13</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-red-600">$3.13</div>
-                                </div>
-
-                                <!-- Row 9: Doordash (No Gap / Normal) -->
-                                <div class="disc-row grid grid-cols-12 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800"
-                                    data-category="review">
-                                    <div class="col-span-2 font-mono font-bold text-gray-900 text-xs">F-d113890a</div>
-                                    <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700">
-                                        <div
-                                            class="w-6 h-6 rounded-full bg-white border border-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                                            <img src="doordash.svg" alt="Doordash" class="w-full h-full object-cover" />
-                                        </div>
-                                        <span class="truncate">Doordash</span>
-                                    </div>
-                                    <div class="col-span-2 font-normal text-gray-500 lowercase">error charge</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$4.12</div>
-                                    <div class="col-span-2 text-right font-mono font-normal text-gray-500">$4.12</div>
-                                    <div class="col-span-1 text-right font-mono font-bold text-gray-900">$0.00</div>
-                                </div>
-
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-
-            <!-- RIGHT COLUMN: MY CARDS & CONTACTS (4 Cols on Desktop) -->
-            <div
-                class="lg:col-span-4 bg-cardDark text-white p-4 sm:p-5 lg:p-6 rounded-3xl lg:rounded-4xl flex flex-col justify-between shadow-xl min-h-0 min-w-0">
-
-                <div class="flex flex-col min-h-0">
-                    <!-- My Cards Header -->
-                    <div class="flex items-center justify-between mb-4 shrink-0">
-                        <div>
-                            <h3 class="text-lg font-bold tracking-tight">Audit Log</h3>
-                            <p class="text-xs text-gray-400 font-medium">312 Entries</p>
-                        </div>
-                    </div>
-
-                    <!-- Scrollable Audit Log List Container (Taller) -->
-                    <div
-                        class="relative w-full mb-5 shrink-0 bg-neutral-900/90 border border-neutral-800 rounded-3xl p-4 sm:p-5 shadow-xl">
-
-                        <!-- Scrollable Feed List (Increased max-h-72) -->
-                        <div class="flex flex-col gap-3 max-h-72 overflow-y-auto pr-1 text-xs no-scrollbar"
-                            style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
-
-                            <!-- Log Item 1: Daniel (Red) -->
-                            <div
-                                class="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-neutral-800/60 hover:bg-neutral-800 transition">
-                                <div class="flex items-center gap-3 min-w-0">
-                                    <div
-                                        class="w-10 h-10 rounded-xl bg-red-600 shrink-0 flex items-center justify-center text-white shadow-sm">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M12 8V4H8" />
-                                            <rect width="16" height="12" x="4" y="8" rx="2" />
-                                            <path d="M2 14h2" />
-                                            <path d="M20 14h2" />
-                                            <path d="M15 13v2" />
-                                            <path d="M9 13v2" />
-                                        </svg>
-                                    </div>
-                                    <div class="flex flex-col min-w-0 gap-0.5">
-                                        <div class="flex items-center gap-2">
-                                            <span class="font-bold text-gray-100 text-xs truncate">Daniel</span>
-                                            <span
-                                                class="text-[9px] font-extrabold px-1.5 py-0.5 bg-limeAccent/20 text-limeAccent rounded uppercase tracking-wider">Agent</span>
-                                        </div>
-                                        <p class="text-[11px] font-medium text-gray-300 truncate">Executed automated
-                                            batch payout #4092</p>
-                                    </div>
-                                </div>
-                                <span class="text-[10px] font-semibold text-gray-400 whitespace-nowrap shrink-0">10:42
-                                    AM</span>
-                            </div>
-
-                            <!-- Log Item 2: Emily (Orange) -->
-                            <div
-                                class="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-neutral-800/60 hover:bg-neutral-800 transition">
-                                <div class="flex items-center gap-3 min-w-0">
-                                    <div
-                                        class="w-10 h-10 rounded-xl bg-orange-600 shrink-0 flex items-center justify-center text-white shadow-sm">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M12 8V4H8" />
-                                            <rect width="16" height="12" x="4" y="8" rx="2" />
-                                            <path d="M2 14h2" />
-                                            <path d="M20 14h2" />
-                                            <path d="M15 13v2" />
-                                            <path d="M9 13v2" />
-                                        </svg>
-                                    </div>
-                                    <div class="flex flex-col min-w-0 gap-0.5">
-                                        <div class="flex items-center gap-2">
-                                            <span class="font-bold text-gray-100 text-xs truncate">Emily</span>
-                                            <span
-                                                class="text-[9px] font-extrabold px-1.5 py-0.5 bg-purple-500/20 text-purple-300 rounded uppercase tracking-wider">Human</span>
-                                        </div>
-                                        <p class="text-[11px] font-medium text-gray-300 truncate">Approved expense
-                                            invoice for July</p>
-                                    </div>
-                                </div>
-                                <span class="text-[10px] font-semibold text-gray-400 whitespace-nowrap shrink-0">10:35
-                                    AM</span>
-                            </div>
-
-                            <!-- Log Item 3: Ryan (Amber) -->
-                            <div
-                                class="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-neutral-800/60 hover:bg-neutral-800 transition">
-                                <div class="flex items-center gap-3 min-w-0">
-                                    <div
-                                        class="w-10 h-10 rounded-xl bg-amber-600 shrink-0 flex items-center justify-center text-white shadow-sm">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M12 8V4H8" />
-                                            <rect width="16" height="12" x="4" y="8" rx="2" />
-                                            <path d="M2 14h2" />
-                                            <path d="M20 14h2" />
-                                            <path d="M15 13v2" />
-                                            <path d="M9 13v2" />
-                                        </svg>
-                                    </div>
-                                    <div class="flex flex-col min-w-0 gap-0.5">
-                                        <div class="flex items-center gap-2">
-                                            <span class="font-bold text-gray-100 text-xs truncate">Ryan</span>
-                                            <span
-                                                class="text-[9px] font-extrabold px-1.5 py-0.5 bg-limeAccent/20 text-limeAccent rounded uppercase tracking-wider">Agent</span>
-                                        </div>
-                                        <p class="text-[11px] font-medium text-gray-300 truncate">Synched database
-                                            records & logs</p>
-                                    </div>
-                                </div>
-                                <span class="text-[10px] font-semibold text-gray-400 whitespace-nowrap shrink-0">09:18
-                                    AM</span>
-                            </div>
-
-                            <!-- Log Item 4: Sophia (Emerald) -->
-                            <div
-                                class="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-neutral-800/60 hover:bg-neutral-800 transition">
-                                <div class="flex items-center gap-3 min-w-0">
-                                    <div
-                                        class="w-10 h-10 rounded-xl bg-emerald-600 shrink-0 flex items-center justify-center text-white shadow-sm">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M12 8V4H8" />
-                                            <rect width="16" height="12" x="4" y="8" rx="2" />
-                                            <path d="M2 14h2" />
-                                            <path d="M20 14h2" />
-                                            <path d="M15 13v2" />
-                                            <path d="M9 13v2" />
-                                        </svg>
-                                    </div>
-                                    <div class="flex flex-col min-w-0 gap-0.5">
-                                        <div class="flex items-center gap-2">
-                                            <span class="font-bold text-gray-100 text-xs truncate">Sophia</span>
-                                            <span
-                                                class="text-[9px] font-extrabold px-1.5 py-0.5 bg-purple-500/20 text-purple-300 rounded uppercase tracking-wider">Human</span>
-                                        </div>
-                                        <p class="text-[11px] font-medium text-gray-300 truncate">Updated budget limit
-                                            to $1,750</p>
-                                    </div>
-                                </div>
-                                <span class="text-[10px] font-semibold text-gray-400 whitespace-nowrap shrink-0">08:50
-                                    AM</span>
-                            </div>
-
-                            <!-- Log Item 5: Zoe (Pink) -->
-                            <div
-                                class="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-neutral-800/60 hover:bg-neutral-800 transition">
-                                <div class="flex items-center gap-3 min-w-0">
-                                    <div
-                                        class="w-10 h-10 rounded-xl bg-pink-600 shrink-0 flex items-center justify-center text-white shadow-sm">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M12 8V4H8" />
-                                            <rect width="16" height="12" x="4" y="8" rx="2" />
-                                            <path d="M2 14h2" />
-                                            <path d="M20 14h2" />
-                                            <path d="M15 13v2" />
-                                            <path d="M9 13v2" />
-                                        </svg>
-                                    </div>
-                                    <div class="flex flex-col min-w-0 gap-0.5">
-                                        <div class="flex items-center gap-2">
-                                            <span class="font-bold text-gray-100 text-xs truncate">Zoe</span>
-                                            <span
-                                                class="text-[9px] font-extrabold px-1.5 py-0.5 bg-limeAccent/20 text-limeAccent rounded uppercase tracking-wider">Agent</span>
-                                        </div>
-                                        <p class="text-[11px] font-medium text-gray-300 truncate">Triggered system
-                                            security audit</p>
-                                    </div>
-                                </div>
-                                <span class="text-[10px] font-semibold text-gray-400 whitespace-nowrap shrink-0">08:12
-                                    AM</span>
-                            </div>
-
-                        </div>
-                    </div>
-                    <!-- Recent Contacts Section -->
-                    <div class="shrink-0 pt-2">
-                        <div class="flex items-center justify-between mb-3">
-                            <div>
-                                <h3 class="text-base font-bold">Agent Chain</h3>
-                                <p class="text-xs text-gray-400 font-medium">12 Agents</p>
-                            </div>
-                        </div>
-
-                        <!-- Main Container -->
-                        <div class="relative py-3">
-
-                            <!-- Connecting Arrows Overlay (SVG Loop) -->
-                            <svg class="absolute inset-0 w-full h-full pointer-events-none z-10 text-limeAccent"
-                                xmlns="http://www.w3.org/2000/svg">
-                                <defs>
-                                    <!-- Arrowhead Marker -->
-                                    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6"
-                                        markerHeight="6" orient="auto-start-reverse">
-                                        <path d="M 0 1 L 10 5 L 0 9 z" fill="currentColor" />
-                                    </marker>
-                                </defs>
-
-                                <!-- Top Row Rightward Connectors (1 -> 2 -> 3 -> 4 -> 5 -> 6) -->
-                                <!-- Adjust stroke-dasharray for optional animated/dashed line -->
-                                <g stroke="currentColor" stroke-width="2" fill="none" marker-end="url(#arrow)"
-                                    stroke-linecap="round" opacity="0.8">
-                                    <!-- Row 1 Connections (1->2, 2->3, 3->4, 4->5, 5->6) -->
-                                    <path d="M 14.5% 28% L 19% 28%" />
-                                    <path d="M 31% 28% L 35.5% 28%" />
-                                    <path d="M 47.5% 28% L 52% 28%" />
-                                    <path d="M 64% 28% L 68.5% 28%" />
-                                    <path d="M 80.5% 28% L 85% 28%" />
-
-                                    <!-- U-Turn Right: Top Row (6) -> Bottom Row (12) -->
-                                    <path d="M 94% 35% C 100% 35%, 100% 75%, 94% 75%" />
-
-                                    <!-- Row 2 Connections Leftward (12->11, 11->10, 10->9, 9->8, 8->7) -->
-                                    <path d="M 85.5% 78% L 81% 78%" />
-                                    <path d="M 69% 78% L 64.5% 78%" />
-                                    <path d="M 52.5% 78% L 48% 78%" />
-                                    <path d="M 36% 78% L 31.5% 78%" />
-                                    <path d="M 19.5% 78% L 15% 78%" />
-
-                                    <!-- U-Turn Left Loop: Bottom Row (7) back up to Top Row (1) -->
-                                    <path d="M 6% 75% C 0% 75%, 0% 35%, 6% 35%" />
-                                </g>
-                            </svg>
-
-                            <!-- Contact Avatars Grid (6 on top, 6 on bottom) -->
-                            <div class="flex flex-col gap-6 py-1 relative z-0">
-
-                                <!-- Top Row (1 to 6) -->
-                                <div class="grid grid-cols-6 gap-3">
-                                    <!-- Contact 1: Daniel (Red) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-red-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Daniel</span>
-                                    </div>
-
-                                    <!-- Contact 2: Emily (Orange) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-orange-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Emily</span>
-                                    </div>
-
-                                    <!-- Contact 3: Ryan (Amber) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-amber-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Ryan</span>
-                                    </div>
-
-                                    <!-- Contact 4: Jason (Yellow) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-yellow-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Jason</span>
-                                    </div>
-
-                                    <!-- Contact 5: Luke (Lime) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-lime-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Luke</span>
-                                    </div>
-
-                                    <!-- Contact 6: Sophia (Emerald) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-emerald-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Sophia</span>
-                                    </div>
-                                </div>
-
-                                <!-- Bottom Row (12 to 7 running backwards right-to-left to form a loop) -->
-                                <div class="grid grid-cols-6 gap-3">
-                                    <!-- Contact 7: Marcus (Teal) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-teal-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Marcus</span>
-                                    </div>
-
-                                    <!-- Contact 8: Chloe (Cyan) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-cyan-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Chloe</span>
-                                    </div>
-
-                                    <!-- Contact 9: Nathan (Blue) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Nathan</span>
-                                    </div>
-
-                                    <!-- Contact 10: Hannah (Indigo) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Hannah</span>
-                                    </div>
-
-                                    <!-- Contact 11: Liam (Purple) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-purple-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Liam</span>
-                                    </div>
-
-                                    <!-- Contact 12: Zoe (Pink) -->
-                                    <div class="flex flex-col items-center gap-1 group cursor-pointer">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-pink-600 flex items-center justify-center text-white border-2 border-transparent group-hover:border-limeAccent transition shadow-sm">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 8V4H8" />
-                                                <rect width="16" height="12" x="4" y="8" rx="2" />
-                                                <path d="M2 14h2" />
-                                                <path d="M20 14h2" />
-                                                <path d="M15 13v2" />
-                                                <path d="M9 13v2" />
-                                            </svg>
-                                        </div>
-                                        <span
-                                            class="text-[10px] font-semibold text-gray-300 truncate max-w-full">Zoe</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-                </div>
-
-            </div>
-
-        </div>
-
+        <p class="text-[11px] text-gray-400 font-medium shrink-0">All data is simulated. Agents propose, people approve, only the gatekeeper files. <span id="apiBase"></span></p>
     </main>
 
-    <!-- ================= ACTION MODAL DIALOG ================= -->
-    <div id="actionModal"
-        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 opacity-0 pointer-events-none transition-opacity duration-200">
-        <div class="bg-white rounded-3xl p-6 w-full max-w-sm card-shadow transform scale-95 transition-transform duration-200"
-            id="modalContainer">
-            <div class="flex items-center justify-between mb-4">
-                <h3 id="modalTitle" class="text-lg font-bold text-gray-900">Action Prompt</h3>
-                <button onclick="closeModal()"
-                    class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:text-black">
+    <!-- ================= FINDING / AGENT DRAWER ================= -->
+    <div id="drawer" class="fixed inset-0 z-50 hidden">
+        <div data-close-drawer class="absolute inset-0 bg-black/40 backdrop-blur-[2px]"></div>
+        <aside class="slide-in absolute right-0 top-0 h-full w-full sm:w-[640px] lg:w-[720px] bg-bgMain shadow-2xl flex flex-col">
+            <div class="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 bg-white border-b border-gray-100">
+                <h3 id="drawerTitle" class="text-lg font-extrabold text-gray-900 truncate"></h3>
+                <button data-close-drawer class="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center shrink-0" aria-label="Close">
                     <i data-lucide="x" class="w-4 h-4"></i>
                 </button>
             </div>
-            <p id="modalDesc" class="text-sm text-gray-600 mb-5">Please enter the details below to complete your
-                transaction action.</p>
-            <div class="space-y-3">
-                <input type="text" placeholder="Amount ($)"
-                    class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-purpleAccent" />
-                <button onclick="closeModal()"
-                    class="w-full py-3 bg-purpleAccent text-white font-bold rounded-2xl text-sm hover:bg-purpleAccentHover transition">Confirm</button>
+            <div id="drawerBody" class="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 space-y-4"></div>
+        </aside>
+    </div>
+
+    <!-- ================= ACTION MODAL DIALOG (how we got this, etc.) ================= -->
+    <div id="actionModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60] opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="bg-white rounded-3xl p-6 w-full max-w-lg card-shadow transform scale-95 transition-transform duration-200 max-h-[85vh] flex flex-col" id="modalContainer">
+            <div class="flex items-center justify-between mb-4 shrink-0">
+                <h3 id="modalTitle" class="text-lg font-bold text-gray-900">How we got this</h3>
+                <button data-close-modal class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:text-black" aria-label="Close">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
             </div>
+            <div id="modalBody" class="text-sm text-gray-600 overflow-y-auto custom-scroll pr-1"></div>
         </div>
     </div>
 
-    <!-- Lucide Icon Renderer & Interactions -->
-    <script>
-        lucide.createIcons();
+    <!-- ================= SETTINGS ================= -->
+    <div id="settingsModal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/40 backdrop-blur-[2px] p-4">
+        <form id="settingsForm" class="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl">
+            <h3 class="text-lg font-bold text-gray-900 mb-1">Reviewer settings</h3>
+            <p class="text-xs text-gray-500 mb-4">Kept in this browser only (localStorage). Approve / Reject send <code>Authorization: Bearer &lt;token&gt;</code> and your name as the actor in the audit log.</p>
+            <label class="block text-xs font-bold text-gray-700 mb-1" for="actorInput">Your name (actor)</label>
+            <input id="actorInput" autocomplete="off" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purpleAccent" placeholder="e.g. maja">
+            <label class="block text-xs font-bold text-gray-700 mb-1" for="tokenInput">API token</label>
+            <input id="tokenInput" type="password" autocomplete="off" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purpleAccent" placeholder="FLOCK_API_TOKEN">
+            <label class="block text-xs font-bold text-gray-700 mb-1" for="apiInput">API base URL</label>
+            <input id="apiInput" autocomplete="off" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-purpleAccent" placeholder="leave empty for automatic">
+            <p id="apiHint" class="text-[11px] text-gray-400 mb-4"></p>
+            <div class="flex justify-end gap-2">
+                <button type="button" data-close-settings class="px-4 py-2.5 rounded-2xl text-sm font-bold text-gray-600 hover:bg-gray-100">Cancel</button>
+                <button type="submit" class="px-5 py-2.5 rounded-2xl text-sm font-bold bg-purpleAccent hover:bg-purpleAccentHover text-white">Save</button>
+            </div>
+        </form>
+    </div>
 
-        // Bar chart click interaction handler
-        function selectBar(element, amount) {
-            // Clear previous active bar styles
-            document.querySelectorAll('.expense-bar-item').forEach(item => {
-                const bar = item.querySelector('.bar-fill') || item.querySelector('.striped-bar');
-                const label = item.querySelector('span');
-                const tooltip = item.querySelector('#barTooltip');
+    <div id="toast" role="status" class="fixed bottom-24 lg:bottom-6 left-1/2 -translate-x-1/2 z-[80] hidden rounded-2xl bg-cardDark text-white text-sm font-semibold px-4 py-3 shadow-xl max-w-[90vw]"></div>
 
-                if (tooltip) tooltip.remove();
-                if (bar) {
-                    bar.className = 'w-full max-w-[32px] h-' + bar.clientHeight + 'px rounded-full striped-bar group-hover:opacity-80 transition';
-                }
-                if (label) {
-                    label.className = 'text-[10px] sm:text-xs font-semibold text-gray-400';
-                }
-            });
-
-            // Highlight target bar
-            const targetBar = element.querySelector('.striped-bar') || element.querySelector('.bar-fill');
-            const targetLabel = element.querySelector('span');
-
-            if (targetBar) {
-                targetBar.className = 'bar-fill w-full max-w-[32px] ' + targetBar.className.match(/h-\d+/)[0] + ' rounded-full bg-purpleAccent shadow-sm transition-colors';
-            }
-            if (targetLabel) {
-                targetLabel.className = 'text-[10px] sm:text-xs font-bold text-gray-900';
-            }
-
-            // Add floating tooltip badge
-            const tooltip = document.createElement('div');
-            tooltip.id = 'barTooltip';
-            tooltip.className = 'absolute -top-6 bg-black text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap';
-            tooltip.innerText = amount;
-            element.appendChild(tooltip);
-        }
-
-        // Modal helpers
-        function triggerModal(title) {
-            document.getElementById('modalTitle').innerText = title;
-            const modal = document.getElementById('actionModal');
-            const container = document.getElementById('modalContainer');
-            modal.classList.remove('opacity-0', 'pointer-events-none');
-            container.classList.remove('scale-95');
-            container.classList.add('scale-100');
-        }
-
-        function closeModal() {
-            const modal = document.getElementById('actionModal');
-            const container = document.getElementById('modalContainer');
-            modal.classList.add('opacity-0', 'pointer-events-none');
-            container.classList.remove('scale-100');
-            container.classList.add('scale-95');
-        }
-    </script>
+    <script src="dashboard.js"></script>
 </body>
 
 </html>

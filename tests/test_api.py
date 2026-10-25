@@ -620,3 +620,44 @@ def test_dataset_run_source_is_a_readable_label(dataset):
     assert src == "generated: default seed 2025, 3 stores x 2 weeks"
     from flock import demo
     assert demo.source_label("ca_bagel_chain", 7, 1, 10) == "generated: ca_bagel_chain seed 7, 1 store x 10 days"
+
+
+# the web UI (frontend/) served at /, the judge market, an agent trying to decide --------------------------------------
+def test_ui_is_served_at_root_with_types_and_no_traversal(server):
+    client, _ = server
+    code, body, h = client.call("GET", "/")
+    assert code == 200 and h["Content-Type"].startswith("text/html") and b"dashboard.js" in body
+    for path, ctype in (("/dashboard.js", "text/javascript"), ("/frontend/dashboard.js", "text/javascript"),
+                        ("/styles.css", "text/css"), ("/index.html", "text/html"), ("/frontend/", "text/html"),
+                        ("/vendor/lucide-0.453.0.min.js", "text/javascript")):
+        code, _, h = client.call("GET", path)
+        assert code == 200 and h["Content-Type"].startswith(ctype), path
+    for bad in ("/../flock/api.py", "/frontend/../flock/api.py", "/frontend/%2e%2e/flock/api.py", "/%2e%2e/README.md",
+                "/vendor/..%2f..%2fflock%2fapi.py", "/.env", "/README.md", "/frontend/README.md", "/nope.html"):
+        code, out, _ = client.call("GET", bad)
+        assert code == 404 and isinstance(out, dict), bad
+    assert api.static_file(["frontend", "..", "flock", "api.py"]) is None
+    code, out = client.get("/api")
+    assert code == 200 and out["ok"] and any("/api/market" in r for r in out["routes"])
+
+
+def test_market_snapshot(server):
+    client, _ = server
+    fixtures_run(client)
+    code, m = client.get("/api/market")
+    assert code == 200 and {r["judge"] for r in m["leaderboard"]} == {"judge.strict", "judge.operator", "judge.skeptic"}
+    assert {"balance", "weight", "won", "lost", "history"} <= set(m["leaderboard"][0]) and "rule" in m
+
+
+def test_an_agent_cannot_approve_and_the_refusal_comes_back(server):
+    client, a = server
+    fixtures_run(client, demo_approve=False)
+    fid = next(f["finding_id"] for f in a.findings() if f["state"] == "JUDGED")
+    for body in ({"actor": "dispute_writer"}, {"actor": "someone", "role": "agent"}):
+        code, out = client.post(f"/api/findings/{fid}/approve", body)
+        assert code == 409 and out["denied"] is True, out
+        e = out["log_entry"]
+        assert (e["actor"], e["role"], e["action"], e["allowed"]) == (body["actor"], "agent", "approve", False)
+    assert a.store.get(fid)["state"] == "JUDGED"
+    code, out = client.post(f"/api/findings/{fid}/approve", {"actor": "maja", "reason": "checks out"})
+    assert code == 200 and out["finding"]["state"] in ("APPROVED", "FILED")
