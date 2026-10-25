@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clicky's Screen</title>
+<!--
+  Clicky's live agent screen. The viewer watches Clicky file a human-approved dispute in the sandbox portal
+  (portal.html, same origin): a cursor moves, clicks, types every field, attaches evidence, presses Submit.
+  ?finding=F-...   file that finding (or replay it if it's already filed)
+  (no finding)     queue mode: file every approved finding waiting for Clicky, one after another
+  ?speed=1|2|4     pace   ?embed=1  no page chrome (the dashboard opens this in a modal)   ?api=<url>
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --navy: #23263a; --navy-2: #2d3149; --navy-3: #3E445C; --blue: #0084FF; --sky: #61CDFF; --ice: #D2F5FF; --muted: #9aa3bd; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font-family: "Plus Jakarta Sans", system-ui, sans-serif; background: #1a1d2d; color: #fff; overflow: hidden; }
+  .wrap { display: grid; grid-template-columns: 1fr 340px; gap: 18px; height: 100vh; padding: 18px; }
+  body.embed .wrap { padding: 12px; gap: 12px; }
+  .top { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .top h1 { font-size: 20px; margin: 0; font-weight: 800; }
+  .live { display: inline-flex; align-items: center; gap: 7px; background: rgba(0,132,255,.15); color: var(--sky); font-size: 12px; font-weight: 800; padding: 5px 11px; border-radius: 999px; letter-spacing: .06em; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: #ff4d5e; box-shadow: 0 0 0 0 rgba(255,77,94,.6); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,77,94,.55); } 70% { box-shadow: 0 0 0 9px rgba(255,77,94,0); } 100% { box-shadow: 0 0 0 0 rgba(255,77,94,0); } }
+  .speed { margin-left: auto; display: flex; gap: 6px; }
+  .speed button { background: var(--navy-2); color: var(--muted); border: 0; border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .speed button.on { background: var(--blue); color: #fff; }
+  .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* the browser window */
+  .browser { flex: 1; min-height: 0; background: #e9edf5; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,.45); position: relative; }
+  .tabs { display: flex; align-items: center; gap: 8px; background: #d9dfeb; padding: 9px 12px 0; }
+  .dots { display: flex; gap: 6px; margin-right: 8px; } .dots i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; } .dots i:nth-child(2) { background: #febc2e; } .dots i:nth-child(3) { background: #28c840; }
+  .tab { background: #e9edf5; color: #2d3149; font-size: 12px; font-weight: 600; padding: 8px 14px; border-radius: 10px 10px 0 0; display: flex; align-items: center; gap: 8px; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab .spin { width: 10px; height: 10px; border: 2px solid #0084FF; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .bar { display: flex; align-items: center; gap: 10px; background: #e9edf5; padding: 8px 12px; border-bottom: 1px solid #d4dae6; }
+  .bar .nav { color: #8790a6; font-size: 15px; letter-spacing: 6px; }
+  .url { flex: 1; background: #fff; border-radius: 999px; padding: 7px 14px; font-size: 13px; color: #3E445C; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .url b { color: #13804b; }
+  .badge { background: #23263a; color: var(--sky); font-size: 11px; font-weight: 800; padding: 5px 9px; border-radius: 8px; display: flex; align-items: center; gap: 6px; }
+  .stage { position: relative; flex: 1; min-height: 0; }
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #f5f7fb; }
+  /* Clicky's cursor + click ripple + the "agent is driving" glow */
+  .glow { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 3px rgba(0,132,255,.55); border-radius: 0 0 16px 16px; opacity: 0; transition: opacity .3s; }
+  .glow.on { opacity: 1; }
+  .cursor { position: absolute; left: 0; top: 0; z-index: 5; pointer-events: none; transform: translate(-100px, -100px); will-change: transform; transition: opacity .2s; }
+  .cursor svg { filter: drop-shadow(0 3px 6px rgba(0,0,0,.35)); }
+  .cursor .tag { position: absolute; left: 20px; top: 22px; background: var(--blue); color: #fff; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 8px; white-space: nowrap; }
+  .ripple { position: absolute; z-index: 4; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 3px solid var(--blue); pointer-events: none; animation: rip .55s ease-out forwards; }
+  @keyframes rip { from { transform: scale(.4); opacity: 1; } to { transform: scale(3.2); opacity: 0; } }
+  /* side panel */
+  .side { background: var(--navy); border-radius: 22px; padding: 20px; display: flex; flex-direction: column; min-height: 0; }
+  .who { display: flex; align-items: center; gap: 12px; }
+  .bot { width: 46px; height: 46px; border-radius: 50%; background: var(--sky); display: grid; place-items: center; color: #12304f; position: relative; flex: none; }
+  .bot.work::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 3px solid var(--sky); border-top-color: transparent; animation: spin 1s linear infinite; }
+  .who b { font-size: 17px; } .who span { display: block; color: var(--muted); font-size: 12px; }
+  .case { margin-top: 16px; background: var(--navy-2); border-radius: 16px; padding: 14px 16px; }
+  .case .amt { font-size: 28px; font-weight: 800; }
+  .case .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .case .state { display: inline-block; margin-top: 8px; font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: 999px; background: rgba(97,205,255,.15); color: var(--sky); }
+  .case .state.filed { background: rgba(40,200,120,.18); color: #5fe3a1; }
+  .steps { margin-top: 16px; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+  .step { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; color: #cfd5e6; animation: in .25s ease-out; }
+  .step i { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-style: normal; margin-top: 1px; background: var(--navy-3); color: var(--muted); }
+  .step.now i { background: var(--blue); color: #fff; } .step.ok i { background: #1f7a52; color: #c9ffe4; } .step.bad i { background: #a3212f; color: #ffd6da; }
+  .step.now { color: #fff; font-weight: 600; }
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } }
+  .foot { margin-top: 12px; display: flex; gap: 8px; }
+  .foot button, .foot a { flex: 1; text-align: center; text-decoration: none; background: var(--navy-2); color: #fff; border: 0; border-radius: 12px; padding: 10px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .foot .primary { background: var(--blue); }
+  .tok { margin-top: 10px; display: none; gap: 6px; } .tok.on { display: flex; }
+  .tok input { flex: 1; min-width: 0; background: #1a1d2d; border: 1.5px solid var(--navy-3); color: #fff; border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13px; }
+  .tok button { background: var(--blue); color: #fff; border: 0; border-radius: 10px; padding: 8px 12px; font: inherit; font-weight: 700; cursor: pointer; }
+  .empty { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; color: #3E445C; font-size: 15px; padding: 30px; background: #f5f7fb; z-index: 3; }
+  .empty.on { display: flex; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; grid-template-rows: 1fr auto; overflow: auto; } body { overflow: auto; } .browser { min-height: 70vh; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="left">
+    <div class="top">
+      <h1>Clicky's screen</h1>
+      <span class="live"><i></i>LIVE</span>
+      <div class="speed" id="speed"><button data-s="1">1×</button><button data-s="2">2×</button><button data-s="4">4×</button></div>
+    </div>
+    <div class="browser">
+      <div class="tabs"><div class="dots"><i></i><i></i><i></i></div><div class="tab" id="tab"><span class="spin" id="tabspin"></span><span id="tabtitle">Sandbox portal</span></div></div>
+      <div class="bar"><span class="nav">‹ › ↻</span><div class="url" id="url"><b>🔒</b> sandbox-portal.flock.example</div><span class="badge">🖱 Clicky is driving</span></div>
+      <div class="stage" id="stage">
+        <iframe id="frame" title="Sandbox merchant portal"></iframe>
+        <div class="glow" id="glow"></div>
+        <div class="empty" id="empty"></div>
+        <div class="cursor" id="cursor">
+          <svg width="26" height="30" viewBox="0 0 26 30"><path d="M2 2 L2 25 L8.5 19 L13 28.5 L17 26.7 L12.6 17.6 L21.5 17.6 Z" fill="#0084FF" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span class="tag">Clicky</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <aside class="side">
+    <div class="who"><div class="bot" id="bot"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9l5 12 1.8-5.2L21 14Z"/><path d="M7.2 2.2 8 5.1"/><path d="m5.1 8-2.9-.8"/><path d="M14 4.1 12 6"/><path d="m6 12-1.9 2"/></svg></div>
+      <div><b>Clicky</b><span id="whoSub">files approved claims in the portal</span></div></div>
+    <div class="case" id="case"><div class="meta">Waiting for an approved claim…</div></div>
+    <div class="steps" id="steps"></div>
+    <div class="tok" id="tok"><input id="tokIn" type="password" placeholder="Presenter token or sign in on the dashboard"><button id="tokGo">Go</button></div>
+    <div class="foot"><a id="screenLink" href="#" target="_blank" style="display:none">Saved screen</a><button id="again" class="primary">Run again</button></div>
+  </aside>
+</div>
+<script src="agent-screen.js"></script>
+</body>
+</html>

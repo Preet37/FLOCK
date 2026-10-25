@@ -1319,15 +1319,20 @@ function watchClickyCard(f) {
 
 function clickyCard(f, data) {
     const filing = data.filing || f.filing || null;
+    if (f.state === 'APPROVED' && !f.portal_ref) {
+        return card('<span class="flex items-center gap-2"><i data-lucide="mouse-pointer-click" class="w-4 h-4 text-sky-600"></i> Approved: Clicky files it next</span>', `
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p class="text-sm text-gray-700">Watch Clicky open the ${esc(chanName(f.channel))} portal and file it.</p>
+            <button data-agent-screen="${esc(fidOf(f))}" class="rounded-2xl bg-[#0084FF] hover:bg-[#017AF0] text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5 shrink-0"><i data-lucide="play" class="w-4 h-4"></i> Watch Clicky file it</button>
+        </div>`);
+    }
     if (!f.portal_ref && !filing && !['FILED', 'RECOVERED'].includes(f.state)) return '';
     const ref = filing?.portal_ref || f.portal_ref;
     return card('<span class="flex items-center gap-2"><i data-lucide="mouse-pointer-click" class="w-4 h-4 text-orange-600"></i> Clicky filed it</span>', `
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <p class="text-sm text-gray-700">Claim ${ref ? `<span class="font-mono font-bold text-gray-900">${esc(ref)}</span>` : ''} in the ${esc(chanName(f.channel))} portal${filing?.filed_at ? ` at ${esc(clock(filing.filed_at))}` : ''}.</p>
-            <span class="flex gap-2 shrink-0">
-                <a href="${agentScreenUrl(f)}" target="_blank" rel="noopener" class="rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="monitor-play" class="w-4 h-4"></i> Watch Clicky file it</a>
-                <button data-screen="${esc(fidOf(f))}" class="rounded-2xl bg-cardDark hover:bg-black text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="monitor" class="w-4 h-4"></i> Confirmation</button>
-            </span>
+            <span class="flex gap-2 shrink-0"><button data-agent-screen="${esc(fidOf(f))}" class="rounded-2xl bg-[#0084FF] hover:bg-[#017AF0] text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="play" class="w-4 h-4"></i> Replay Clicky</button>
+            <button data-screen="${esc(fidOf(f))}" class="rounded-2xl bg-cardDark hover:bg-black text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="monitor" class="w-4 h-4"></i> Saved screen</button></span>
         </div>`);
 }
 
@@ -1476,6 +1481,8 @@ function renderAgentDetail(id, { data, log }) {
         card('What it does', `<p class="text-sm text-gray-700">${esc(ag.job || data?.job || '')}</p>
             ${ag.status_text ? `<p class="text-sm font-semibold text-gray-900 mt-2">${esc(ag.status_text)}</p>` : ''}
             <p class="text-xs text-gray-500 mt-2">Owner: ${esc(ag.owner || data?.owner || '—')} · ${num(ag.actions ?? entries.length)} actions · last ${esc(ago(ag.last_at))}</p>`),
+        id === 'clicky' ? card("Clicky's live screen", `<div class="flex items-center justify-between gap-3"><p class="text-sm text-gray-700">Watch Clicky file every approved claim in the sandbox portal.</p>
+            <button data-agent-screen="" class="rounded-xl bg-[#0084FF] text-white text-xs font-bold px-3 py-2 shrink-0">Open live screen</button></div>`) : '',
         id === 'clicky' ? card("Clicky's screens", filedFindings().length ? `<div class="flex flex-col gap-2">${filedFindings().slice(0, 20).map((f) => `
             <div class="flex items-center justify-between gap-3 rounded-2xl bg-lightCardBg p-3 text-sm">
                 <span class="min-w-0"><span class="font-mono font-bold">${esc(fidOf(f))}</span> <span class="text-gray-500">${esc(chanName(f.channel))} · ${money(f.gap)}</span>
@@ -1492,7 +1499,8 @@ function renderAgentDetail(id, { data, log }) {
 async function decide(id, action) {
     const reason = $('decisionReason')?.value.trim() || '';
     try {
-        const out = await post(`/api/findings/${encodeURIComponent(id)}/${action}`, { actor: settings.actor, reason });
+        // approve: Clicky files it on the live agent screen (the API leaves it APPROVED for the screen to file)
+        const out = await post(`/api/findings/${encodeURIComponent(id)}/${action}`, { actor: settings.actor, reason, ...(action === 'approve' ? { file_via: 'screen' } : {}) });
         state.refusal = null;
         state.lastDecision = { action, actor: out.actor || settings.actor, filed: out.filed || [], email: out.email || out.vendor_email || null, screen: out.screen || null };
         const em = state.lastDecision.email;
@@ -1501,8 +1509,26 @@ async function decide(id, action) {
             : `${id} rejected.`, 'ok');
         state.cache.findings = state.cache.drawer = state.cache.approvals = null;
         refreshDrawer();
+        if (action === 'approve' && out.agent_screen) openAgentScreen(id);
     } catch (e) { fail(e); }
 }
+
+// Clicky's live agent screen (agent-screen.html): the cursor files the approved claim in the sandbox portal
+function openAgentScreen(id) {
+    document.getElementById('agentScreenModal')?.remove();
+    const back = document.createElement('div');
+    back.id = 'agentScreenModal';
+    back.style.cssText = 'position:fixed;inset:0;z-index:90;background:rgba(15,18,32,.72);display:flex;align-items:center;justify-content:center;padding:18px';
+    const src = `agent-screen.html?embed=1${id ? `&finding=${encodeURIComponent(id)}` : ''}${state.base ? `&api=${encodeURIComponent(state.base)}` : ''}`;
+    back.innerHTML = `<div style="position:relative;width:min(1400px,100%);height:min(860px,94vh);border-radius:24px;overflow:hidden;box-shadow:0 30px 90px rgba(0,0,0,.5)">
+        <iframe src="${src}" style="width:100%;height:100%;border:0;background:#1a1d2d" title="Clicky's screen"></iframe>
+        <button aria-label="Close" style="position:absolute;top:14px;right:16px;width:34px;height:34px;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:18px;cursor:pointer">×</button></div>`;
+    back.querySelector('button').onclick = () => { back.remove(); state.cache.findings = state.cache.drawer = null; refreshDrawer(); };
+    document.body.appendChild(back);
+}
+window.addEventListener('message', (e) => {
+    if (e.data?.type === 'clicky-filed') { toast(`Clicky filed ${e.data.finding_id}: ${e.data.portal_ref}`, 'ok'); state.cache.findings = state.cache.drawer = state.cache.approvals = null; }
+});
 
 // Safety check (scoreboard): send an approve as an agent on a waiting finding. The gatekeeper refuses and logs it.
 async function tryAsAgent() {
@@ -1850,6 +1876,8 @@ document.addEventListener('click', (e) => {
     if (evb) return openEvidence(evb.dataset.evRef, evb.dataset.evIdx);
     const evf = t.closest('[data-ev-finding]');
     if (evf) return openFindingEvidence(evf.dataset.evFinding);
+    const live = t.closest('[data-agent-screen]');
+    if (live) return openAgentScreen(live.dataset.agentScreen);
     const scr = t.closest('[data-screen]');
     if (scr) return openScreen(scr.dataset.screen);
     if (t.closest('[data-close-drawer]')) return closeDrawer();

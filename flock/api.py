@@ -33,6 +33,9 @@ Read:
   GET  /api/benchmarks                GX10 speed, held-out benchmark, LoRA training (docs/gx10_results.json)
   GET  /api/filings/<id>/screen       the portal confirmation page Clicky saw when it filed <id> (text/html)
   GET  /api/outbox                    vendor emails sent or queued (flock/mailer.py)
+  GET  /api/clicky/queue              approved findings waiting for Clicky (the live agent screen's queue)
+  GET  /api/clicky/plan/<id>          what Clicky will type into the sandbox portal for one finding
+  POST /api/clicky/file/<id>          the sandbox portal's Submit on the agent screen: {fields} -> filed (gatekeeper)
   GET  /api/me                        the logged-in user for a session token (401 without one)
   GET  /                              the web UI (frontend/dashboard.html); /frontend/<file> and /<file> serve frontend/
 
@@ -107,6 +110,10 @@ except ImportError:  # pragma: no cover
     slack_pull = None
 
 sys.path.insert(0, str(ROOT))
+try:   # Clicky's live screen (frontend/agent-screen.html files through the sandbox portal page)
+    from flock import clicky_screen
+except Exception:  # pragma: no cover
+    clicky_screen = None
 from scripts.score import score  # noqa: E402
 
 PORTAL = ROOT / "data" / "sandbox_portal" / "disputes.jsonl"
@@ -503,13 +510,16 @@ class Api:
             after = transition(self.store, fid, action, actor,
                                reason=str(body.get("reason") or f"{action}d from the dashboard"))
             entry = self.store.log(fid)[-1]   # the human's decision, before Clicky's filing is logged
-            filed = clicky.file_approved(self.store, self.portal) if action == "approve" else []
+            # file_via "screen": leave it APPROVED; Clicky files it on the live agent screen (frontend/agent-screen.html)
+            on_screen = body.get("file_via") == "screen" and clicky_screen is not None
+            filed = clicky.file_approved(self.store, self.portal) if action == "approve" and not on_screen else []
             proposed = learner.propose(self.store)
             f = self.store.get(fid)
             screen = f"/api/filings/{fid}/screen" if (filing_screens and f.get("portal_ref")
                                                        and filing_screens.render(fid, self.dir)) else None
             return {"finding": frontend.with_risk(f), "filed": filed, "proposed": proposed,
-                    "was": after["state"], "log_entry": entry, "portal_ref": f.get("portal_ref"), "screen": screen}
+                    "was": after["state"], "log_entry": entry, "portal_ref": f.get("portal_ref"), "screen": screen,
+                    "agent_screen": f"/agent-screen.html?finding={fid}" if on_screen and action == "approve" else None}
 
     def follow_up(self, fid: str, step: str, body: dict[str, Any], user: dict[str, Any] | None = None) -> dict[str, Any]:
         """Vendor follow-up on a FILED, unpaid claim: draft (the follow_up agent), approve / reject (a human), send
@@ -832,6 +842,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, evidence.resolve(_arg(q, "ref") or "", evidence.roots(a.dir)))
                 except evidence.EvidenceError as e:
                     return self._send(400, {"error": str(e)})
+            if parts == ["api", "clicky", "queue"] and clicky_screen is not None:
+                return self._send(200, {"queue": clicky_screen.queue(a.store)})
+            if len(parts) == 4 and parts[:3] == ["api", "clicky", "plan"] and clicky_screen is not None:
+                return self._send(200, clicky_screen.plan(a.store, parts[3]))
             if parts == ["api", "benchmarks"]:
                 return self._send(200, a.benchmarks())
             if parts == ["api", "outbox"]:
@@ -999,6 +1013,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "Slack pull is not available on this server"})
                 with a.write_lock:
                     return self._send(200, slack_pull.pull(a.dir))
+            if len(parts) == 4 and parts[:3] == ["api", "clicky", "file"] and clicky_screen is not None:
+                a._not_running()
+                with a.write_lock:
+                    try:
+                        return self._send(200, clicky_screen.file(a.store, parts[3], body.get("fields"), a.portal))
+                    except clicky_screen.Mismatch as e:
+                        raise BadRequest(str(e)) from None
             if len(parts) == 4 and parts[:2] == ["api", "findings"] and parts[3] in ("approve", "reject"):
                 return self._send(200, a.decide(parts[2], parts[3], body, user))
             if len(parts) in (4, 5) and parts[:2] == ["api", "findings"] and parts[3] == "follow_up":

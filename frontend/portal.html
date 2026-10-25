@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Merchant Support (SANDBOX)</title>
+<!--
+  Sandbox merchant claim portal (SIMULATED). Clicky drives this page on the live agent screen (agent-screen.html):
+  a visible cursor signs in, opens "New dispute", types every field, attaches evidence and presses Submit.
+  Submit -> POST /api/clicky/file/<finding> (the server checks the typed form against the approved finding and
+  the gatekeeper moves APPROVED -> FILED). Not a real platform; no real brand.
+  ?platform=doordash|ubereats|grubhub|direct  ?finding=F-...  ?replay=<portal ref> (show an existing filing, no POST)
+-->
+<style>
+  :root { --brand: #0159C4; --brand-2: #0084FF; --ink: #1d2330; --muted: #6b7385; --line: #e3e7ef; --bg: #f5f7fb; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--ink); }
+  .sandbox { background: repeating-linear-gradient(45deg, #fff4d6, #fff4d6 12px, #ffe9ad 12px, #ffe9ad 24px); color: #7a4b00;
+    font-size: 12px; font-weight: 700; letter-spacing: .06em; text-align: center; padding: 5px; }
+  header { background: #fff; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 14px 28px; }
+  .logo { width: 34px; height: 34px; border-radius: 10px; background: var(--brand); color: #fff; display: grid; place-items: center; font-weight: 800; }
+  header b { font-size: 16px; } header span { color: var(--muted); font-size: 13px; }
+  header nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; color: var(--muted); }
+  main { max-width: 860px; margin: 28px auto; padding: 0 24px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 26px 28px; box-shadow: 0 6px 24px rgba(1,47,138,.05); }
+  h1 { font-size: 22px; margin: 0 0 4px; } p.sub { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+  label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 16px 0 6px; }
+  input, select, textarea { width: 100%; font: inherit; font-size: 15px; padding: 11px 13px; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); outline: none; transition: border .15s, box-shadow .15s; }
+  input:focus, select:focus, textarea:focus { border-color: var(--brand-2); box-shadow: 0 0 0 4px rgba(0,132,255,.15); }
+  textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 12px; padding: 12px 20px; font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; }
+  .btn.primary { background: var(--brand-2); color: #fff; } .btn.primary:hover { background: #017AF0; }
+  .btn.ghost { background: #eef3fb; color: var(--brand); }
+  .btn:disabled { opacity: .6; cursor: progress; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; } th { text-align: left; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 11px 6px; border-bottom: 1px solid #f0f2f6; } td.mono { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .pill { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: #e7f1ff; color: var(--brand); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; min-height: 10px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: #eef3fb; color: var(--brand); border-radius: 10px; padding: 7px 10px; font-size: 13px; font-weight: 600; }
+  .picker { position: fixed; inset: 0; background: rgba(20,26,44,.35); display: none; align-items: center; justify-content: center; }
+  .picker.on { display: flex; }
+  .picker .box { background: #fff; width: min(520px, 92vw); border-radius: 18px; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+  .file { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1.5px solid var(--line); border-radius: 12px; margin-top: 8px; cursor: pointer; font-size: 14px; }
+  .file.sel { border-color: var(--brand-2); background: #f1f7ff; }
+  .file small { color: var(--muted); margin-left: auto; }
+  .done { text-align: center; padding: 34px 20px; }
+  .check { width: 64px; height: 64px; border-radius: 50%; background: #e3f6ec; color: #13804b; display: grid; place-items: center; font-size: 34px; margin: 0 auto 14px; }
+  #portal-ref { font-family: ui-monospace, Menlo, monospace; font-size: 22px; font-weight: 800; color: var(--brand); }
+  .err { color: #b42318; font-size: 14px; margin-top: 12px; min-height: 18px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="sandbox">SANDBOX MERCHANT PORTAL · SIMULATED · NOT A REAL PLATFORM</div>
+<header>
+  <div class="logo" id="logo">M</div>
+  <div><b id="brand">Merchant Support</b><br><span>Payout disputes · sandbox</span></div>
+  <nav><span>Payouts</span><span>Disputes</span><span>Help</span></nav>
+</header>
+<main>
+  <!-- sign in -->
+  <section id="v-login" class="card">
+    <h1>Sign in</h1><p class="sub">Merchant account for the restaurant group.</p>
+    <label for="email">Work email</label><input id="email" type="email" autocomplete="off">
+    <label for="password">Password</label><input id="password" type="password" autocomplete="off">
+    <div style="margin-top:20px"><button class="btn primary" id="signin">Sign in</button></div>
+  </section>
+
+  <!-- disputes list -->
+  <section id="v-list" class="card hidden">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <div><h1>Disputes</h1><p class="sub" style="margin:0">Claims on payouts and charges</p></div>
+      <button class="btn primary" id="new-dispute" style="margin-left:auto">+ New dispute</button>
+    </div>
+    <table><thead><tr><th>Reference</th><th>Category</th><th>Amount</th><th>Filed</th></tr></thead><tbody id="list"></tbody></table>
+  </section>
+
+  <!-- new dispute form -->
+  <section id="v-new" class="card hidden">
+    <h1>New dispute</h1><p class="sub">Tell us what was paid incorrectly. Attach your records.</p>
+    <div class="row">
+      <div><label for="channel">Platform</label><select id="channel"></select></div>
+      <div><label for="category">Category</label><select id="category"></select></div>
+    </div>
+    <div class="row">
+      <div><label for="payout_id">Payout ID</label><input id="payout_id" autocomplete="off"></div>
+      <div><label for="amount">Amount disputed (USD)</label><input id="amount" inputmode="decimal" autocomplete="off"></div>
+    </div>
+    <div class="row">
+      <div><label for="merchant_ref">Your reference</label><input id="merchant_ref" autocomplete="off"></div>
+      <div><label for="order_ids">Orders / payouts</label><input id="order_ids" autocomplete="off"></div>
+    </div>
+    <label for="message">Description</label><textarea id="message"></textarea>
+    <label>Evidence</label>
+    <div class="chips" id="chips"></div>
+    <button class="btn ghost" id="attach" style="margin-top:10px">Attach files</button>
+    <div class="err" id="err"></div>
+    <div style="margin-top:18px;display:flex;gap:10px"><button class="btn primary" id="submit">Submit dispute</button></div>
+  </section>
+
+  <!-- confirmation -->
+  <section id="v-done" class="card done hidden">
+    <div class="check">✓</div>
+    <h1>Dispute submitted</h1>
+    <p class="sub">We'll review it within 5–7 business days.</p>
+    <div>Reference</div><div id="portal-ref"></div>
+    <p class="sub" id="done-sub" style="margin-top:14px"></p>
+    <button class="btn ghost" id="back">Back to disputes</button>
+  </section>
+</main>
+
+<div class="picker" id="picker">
+  <div class="box">
+    <b>Attach files</b><p class="sub" style="margin:4px 0 6px">From the merchant's records</p>
+    <div id="files"></div>
+    <div style="margin-top:16px;text-align:right"><button class="btn primary" id="attach-ok">Attach</button></div>
+  </div>
+</div>
+
+<script>
+(() => {
+    const q = new URLSearchParams(location.search);
+    const PLATFORMS = { doordash: 'DoorDash', ubereats: 'Uber Eats', grubhub: 'Grubhub', direct: 'Direct app' };
+    const CATEGORIES = { commission: 'Incorrect commission', promo: 'Promotion charged incorrectly', tax: 'Tax withheld incorrectly',
+        error_charge: 'Error charge / adjustment', deposit: 'Missing or short payout', missing_order: 'Missing order' };
+    const platform = q.get('platform') || 'doordash';
+    const finding = q.get('finding') || '';
+    const replay = q.get('replay') || '';
+    const api = (q.get('api') || '').replace(/\/$/, '');
+    const $ = (id) => document.getElementById(id);
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    $('brand').textContent = `${PLATFORMS[platform] || platform} Merchant Support`;
+    $('logo').textContent = (PLATFORMS[platform] || 'M')[0];
+    $('channel').innerHTML = Object.entries(PLATFORMS).map(([k, v]) => `<option value="${k}" ${k === platform ? 'selected' : ''}>${v}</option>`).join('');
+    $('category').innerHTML = '<option value="">Choose…</option>' + Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+
+    const show = (v) => ['login', 'list', 'new', 'done'].forEach((n) => $(`v-${n}`).classList.toggle('hidden', n !== v));
+    window.portalView = () => ['login', 'list', 'new', 'done'].find((n) => !$(`v-${n}`).classList.contains('hidden'));
+
+    async function loadList() {
+        const rows = await fetch(`${api}/api/portal`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []);
+        const mine = (Array.isArray(rows) ? rows : rows.items || []).filter((r) => (r.channel || platform) === platform && !r.kind).slice(-6).reverse();
+        $('list').innerHTML = mine.map((r) => `<tr><td class="mono">${esc(r.portal_ref)}</td><td>${esc(CATEGORIES[r.category] || r.category)}</td>
+            <td>$${Number(r.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td><td>${esc(String(r.at || '').slice(0, 10))}</td></tr>`).join('')
+            || '<tr><td colspan="4" style="color:#6b7385">No disputes yet.</td></tr>';
+    }
+
+    $('signin').onclick = async () => { show('list'); await loadList(); };
+    $('new-dispute').onclick = () => show('new');
+    $('back').onclick = async () => { show('list'); await loadList(); };
+
+    // evidence picker: the files the merchant has (agent-screen.html hands them in via window.portalFiles)
+    const attached = [];
+    $('attach').onclick = (e) => {
+        e.preventDefault();
+        const files = window.portalFiles || [];
+        $('files').innerHTML = files.map((f, i) => `<div class="file" data-i="${i}" id="file-${i}">📄 ${esc(f.name)}<small>${f.row ? `row ${esc(f.row)}` : ''}</small></div>`).join('')
+            || '<p class="sub">No files.</p>';
+        $('files').querySelectorAll('.file').forEach((el) => { el.onclick = () => el.classList.toggle('sel'); });
+        $('picker').classList.add('on');
+    };
+    $('attach-ok').onclick = () => {
+        const files = window.portalFiles || [];
+        $('files').querySelectorAll('.file.sel').forEach((el) => { const f = files[+el.dataset.i]; if (f && !attached.includes(f)) attached.push(f); });
+        $('chips').innerHTML = attached.map((f) => `<span class="chip">📎 ${esc(f.name)}</span>`).join('');
+        $('picker').classList.remove('on');
+    };
+
+    const typed = () => ({ channel: $('channel').value, category: $('category').value, payout_id: $('payout_id').value,
+        amount: $('amount').value, merchant_ref: $('merchant_ref').value, order_ids: $('order_ids').value,
+        message: $('message').value, evidence: attached.map((f) => f.ref || f.name) });
+
+    async function send(fields) {
+        if (replay) return { portal_ref: replay, replay: true };
+        if (window.parent !== window && window.parent.clickyFile) return window.parent.clickyFile(finding, fields);
+        const token = (() => { try { return localStorage.getItem('flock.token') || ''; } catch { return ''; } })();
+        const res = await fetch(`${api}/api/clicky/file/${encodeURIComponent(finding)}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ fields }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        return data;
+    }
+
+    $('submit').onclick = async (e) => {
+        e.preventDefault();
+        $('err').textContent = '';
+        const fields = typed();
+        if (!fields.category || !fields.amount) { $('err').textContent = 'Category and amount are required.'; return; }
+        $('submit').disabled = true; $('submit').textContent = 'Submitting…';
+        try {
+            const out = await send(fields);
+            $('portal-ref').textContent = out.portal_ref;
+            $('done-sub').textContent = out.replay ? 'Filed earlier; shown again.' : `Filed ${new Date().toLocaleString()}`;
+            show('done');
+            window.portalResult = out;
+        } catch (err) {
+            $('err').textContent = String(err.message || err);
+            window.portalResult = { error: String(err.message || err) };
+        } finally { $('submit').disabled = false; $('submit').textContent = 'Submit dispute'; }
+    };
+    show('login');
+})();
+</script>
+</body>
+</html>
