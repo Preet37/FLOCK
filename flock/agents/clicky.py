@@ -276,8 +276,10 @@ class BrowserFiler:
 
 
 def _record(store: Store, f: dict[str, Any], ref: str, how: str, url: str | None = None,
-            wf: dict[str, Any] | None = None, screen: str | None = None) -> None:
+            wf: dict[str, Any] | None = None, screen: str | None = None, page: str | None = None) -> None:
     receipt = {"source": "sandbox_portal", "portal_ref": ref, "via": how}
+    if page:
+        receipt["screen_page"] = page
     if url:
         receipt["url"] = url
     if screen:
@@ -289,6 +291,16 @@ def _record(store: Store, f: dict[str, Any], ref: str, how: str, url: str | None
     transition(store, f["finding_id"], "file", GATEKEEPER, patch={"portal_ref": ref},
                reason=f"Filed in sandbox portal as {ref} (via Clicky, {how}{learned})",
                evidence=list(f.get("evidence", [])) + [receipt])
+
+
+def _screen_page(store: Store, f: dict[str, Any], ref: str) -> str | None:
+    """No browser here: save the confirmation page as HTML (flock/filing_screens.py). Best effort, like snap()."""
+    try:
+        from flock import filing_screens
+        filing_screens.capture(f, ref, store.dir)
+        return f"/api/filings/{f['finding_id']}/screen"
+    except Exception:
+        return None
 
 
 def _ready(store: Store) -> list[dict[str, Any]]:
@@ -356,7 +368,7 @@ def file_approved(store: Store, portal_path: Path | None = None, mode: str | Non
             approved = _ready(store)
     for f in approved:
         ref = submit_to_sandbox(f, portal_path)
-        _record(store, f, ref, "file")
+        _record(store, f, ref, "file", page=_screen_page(store, f, ref))
         filed.append(ref)
     return filed
 
