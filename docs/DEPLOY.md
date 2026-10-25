@@ -18,6 +18,8 @@ Both read `PORT` from Railway.
 | `FLOCK_OFFLINE=1` | Offline rules for every AI role until model keys are set. |
 | `CREAO_API_KEY`, `FLOCK_*_PROVIDER=creao` | Run the AI roles as hosted CREAO agents (see README, "Run every AI role on CREAO"). |
 | `ANTHROPIC_API_KEY` | Claude as reviewer (optional). |
+| `FLOCK_JUDGE_CONCURRENCY` | Findings judged at once (default 1 offline, 6 with a live judge). CREAO pacing (`FLOCK_CREAO_RPM`) still applies across threads; results are the same as one at a time. Hosted demo: `6`. |
+| `FLOCK_LIVE_JUDGE_BUDGET` | Live judges for only the N riskiest findings per run; the rest use offline rules and say so on each finding (default: all). Hosted demo: `25` (a 78-finding CREAO job goes from ~2h to minutes). See docs/API.md, "Judging speed and the live-model budget". |
 | `FLOCK_HOSTED_MAX_STORES`, `FLOCK_HOSTED_MAX_WEEKS` | Caps for `POST /api/run {"dataset": "demo"}` (default 56 stores, 8 weeks). |
 | `FLOCK_CREAO_USD_PER_CREDIT` | Optional. Without it `GET /api/metrics` reports CREAO credits but no dollars for them. |
 | `FLOCK_HUMAN_MINUTES_PER_STORE_WEEK` | Optional override of the human baseline in `GET /api/metrics` (labelled ASSUMPTION; default 60, cited in docs/API.md). |

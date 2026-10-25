@@ -75,6 +75,12 @@ class Snapshot:
             shutil.copy2(self.into / "portal" / self.portal.name, self.portal)
 
 
+def source_label(profile: str, seed: int, stores: int, days: int) -> str:
+    """How a generated dataset is named in last_run / runs.jsonl / GET /api/health, instead of its temp folder."""
+    span = f"{days // 7} week{'s' if days // 7 != 1 else ''}" if days % 7 == 0 else f"{days} day{'s' if days != 1 else ''}"
+    return f"generated: {profile} seed {seed}, {stores} store{'s' if stores != 1 else ''} x {span}"
+
+
 def run_demo(seed: int, profile: str = generator.DEFAULT_PROFILE, weeks: int = 2, days: int | None = None,
              stores: int | None = None, trap_rate: float | None = None, keep: bool = False, confirm: bool = False,
              forget: bool = False, approve: bool = True, pace: float = 0.0, store: Store | None = None,
@@ -115,7 +121,7 @@ def run_demo(seed: int, profile: str = generator.DEFAULT_PROFILE, weeks: int = 2
         store_obj = pipeline.run(reset=True, demo_approve=approve, pace=pace, store=store, rules_path=rules,
                                  portal=portal, raw=raw, std=std, mappings=mappings, confirm=confirm,
                                  interactive=interactive, progress=progress, runs_path=runs,
-                                 label=label)
+                                 label=label, source_label=source_label(profile, seed, n_stores, days))
         print(f"\n== Scoreboard vs the freshly generated answer key ({len(world['key'])} rows) ==")
         result = scoreboard.score(store_obj, runs_path=runs, answer_key=out / "answer_key.csv")
         result.update(seed=seed, profile=prof["name"], orders=len(world["orders"]),

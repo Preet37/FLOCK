@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hmac
 import io
 import json
 import os
@@ -91,11 +92,76 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+class ThreadStdout(io.TextIOBase):
+    """sys.stdout for a threaded server: writes go to the calling thread's capture buffer if it has one, else to the
+    real stdout. Installed once (install()); a capture never swaps sys.stdout, so concurrent requests and the
+    background job each keep their own output and server logs keep reaching the terminal. Threads a job starts
+    itself (e.g. the judge pool) have no buffer of their own, so their prints go to the real stdout."""
+
+    def __init__(self, real: Any):
+        self.real, self._local = real, threading.local()
+
+    def _target(self) -> Any:
+        return getattr(self._local, "buf", None) or self.real
+
+    def write(self, s: str) -> int:
+        return self._target().write(s)
+
+    def flush(self) -> None:
+        t = self._target()
+        if hasattr(t, "flush"):
+            t.flush()
+
+    def isatty(self) -> bool:
+        t = self._target()
+        return bool(getattr(t, "isatty", lambda: False)())
+
+    def writable(self) -> bool:
+        return True
+
+    @property
+    def encoding(self) -> str:  # type: ignore[override]
+        return getattr(self.real, "encoding", "utf-8")
+
+    @contextlib.contextmanager
+    def capture(self, buf: Any):
+        """Route this thread's prints to buf for the duration (nests; restores the previous buffer)."""
+        prev = getattr(self._local, "buf", None)
+        self._local.buf = buf
+        try:
+            yield buf
+        finally:
+            self._local.buf = prev
+
+
+_stdout_lock = threading.Lock()
+
+
+def install_stdout() -> ThreadStdout:
+    """Put the ThreadStdout proxy on sys.stdout (idempotent). serve() calls it at startup; captures call it too, in
+    case sys.stdout was replaced since (pytest's capture does that), keeping the replacement as the fallback."""
+    with _stdout_lock:
+        cur = sys.stdout
+        if isinstance(cur, ThreadStdout):
+            return cur
+        proxy = ThreadStdout(cur)
+        sys.stdout = proxy
+        return proxy
+
+
 def _captured(fn, *a, **kw) -> tuple[Any, str]:
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
+    with install_stdout().capture(buf):
         out = fn(*a, **kw)
     return out, buf.getvalue()
+
+
+def dumps(payload: Any) -> bytes:
+    """Strict JSON for a response: allow_nan=False, and any NaN / inf is sent as null instead of failing."""
+    try:
+        return json.dumps(payload, default=str, allow_nan=False).encode()
+    except ValueError:
+        return json.dumps(frontend.finite(payload), default=str, allow_nan=False).encode()
 
 
 def _now() -> str:
@@ -200,7 +266,7 @@ class Api:
             rows = [f for f in rows if f["risk_label"] == want]
         if _arg(q, "sort") == "risk":
             return sorted(rows, key=lambda f: (-f["risk"], f["finding_id"]))
-        return sorted(rows, key=lambda f: f["finding_id"])
+        return sorted(rows, key=default_order)
 
     def finding(self, fid: str) -> dict[str, Any]:
         f = self.store.get(fid)
@@ -337,7 +403,7 @@ class Api:
         def work() -> None:
             t0 = time.monotonic()
             try:
-                with self.write_lock, contextlib.redirect_stdout(_Lines(job)):
+                with self.write_lock, install_stdout().capture(_Lines(job)):
                     job["result"] = fn()
                 job["status"] = "done"
             except Exception as e:  # the job reports it; the server stays up
@@ -349,6 +415,16 @@ class Api:
 
         threading.Thread(target=work, name=job_id, daemon=True).start()
         return {k: v for k, v in job.items() if k != "output"}
+
+
+# default /api/findings order: what waits on a person first, then by how far along it is, riskiest first in each group
+STATE_PRIORITY = {"JUDGED": 1, "APPROVED": 2, "FILED": 3, "CHECKED": 4, "NEW": 5, "RECOVERED": 6, "REJECTED": 7}
+
+
+def default_order(f: dict[str, Any]) -> tuple:
+    """needs_human first, then state (JUDGED, APPROVED, FILED, CHECKED, NEW, RECOVERED, REJECTED), then risk
+    (highest first), then finding_id so ties are stable."""
+    return (not f.get("needs_human"), STATE_PRIORITY.get(f.get("state"), 9), -f.get("risk", 0), f["finding_id"])
 
 
 def _needs_human(f: dict[str, Any]) -> bool:
@@ -371,7 +447,7 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write(f"api  {self.command} {self.path}  {code}  {ms:.0f}ms\n")
 
     def _send(self, code: int, payload: Any) -> None:
-        data = json.dumps(payload, default=str).encode()
+        data = dumps(payload)
         self._headers(code, "application/json", len(data))
         self.wfile.write(data)
 
@@ -394,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self._t0 = time.monotonic()
-        self._send(204, {})
+        self._headers(204, "application/json", 0)   # a 204 has no body
 
     def do_GET(self) -> None:  # noqa: N802
         self._t0 = time.monotonic()
@@ -450,7 +526,8 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         if not TOKEN:
             return True
-        return self.headers.get("Authorization", "") == f"Bearer {TOKEN}"
+        got = self.headers.get("Authorization", "").encode()
+        return hmac.compare_digest(got, f"Bearer {TOKEN}".encode())   # constant time
 
     def do_POST(self) -> None:  # noqa: N802
         self._t0 = time.monotonic()
@@ -487,6 +564,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host: str = "127.0.0.1", port: int = 8787) -> None:
+    install_stdout()   # per-thread stdout capture for jobs and the scoreboard; everything else reaches the terminal
     print(f"Flock API on http://{host}:{port}/api  (ctrl-c to stop)")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

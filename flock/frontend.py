@@ -106,6 +106,18 @@ RISK_FORMULA = ("risk = 45*D + 25*U + 20*A + 10*V, rounded, 0-100. D = ln(1+|gap
                 "balance-weighted panel confidence) (flock/market.py). Label: low < 34 <= med < 67 <= high.")
 
 
+def finite(x: Any) -> Any:
+    """NaN / inf -> None, recursively, so a response is always strict JSON (JSON.parse rejects NaN). Used by
+    flock/api.py and dashboard/app.py when json.dumps(allow_nan=False) refuses a payload."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: finite(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [finite(v) for v in x]
+    return x
+
+
 def risk(f: dict[str, Any]) -> dict[str, Any]:
     """Risk of a finding: how much money, how unsure the panel is, whether the sources conflict on authority, and how
     much a human look is worth. Pure function of the finding; see RISK_FORMULA."""
@@ -313,12 +325,17 @@ def cost_card(store: Store, run: dict[str, Any] | None) -> dict[str, Any]:
     calls = stats.get("calls", 0)
     if not calls:
         notes.append("Zero model calls: every AI role ran on offline rules (FLOCK_OFFLINE=1), which costs $0.")
+    judging = (run or {}).get("judging") or None   # flock/pipeline.py judge_plan: live-model budget + concurrency
+    if judging and judging.get("live") and judging.get("budget") is not None:
+        notes.append(f"Live-model budget: live judges on the {judging['used']} riskiest of {judging['judged']} findings "
+                     f"(FLOCK_LIVE_JUDGE_BUDGET={judging['budget']}); {judging['outside']} used offline rules ($0).")
     known = round(tok_usd + v2_usd + (credit_usd or 0.0), 6)
     total = known if not unknown else None
     return {
         "id": "cost", "title": "Agent cost", "unit": "USD",
         "value": {"usd": total, "usd_known_part": known, "complete": not unknown,
                   "credits": credits, "model_calls": calls,
+                  "live_judge_budget": judging,
                   "usd_per_1000_findings": round(total / findings * 1000, 4) if total is not None and findings else None,
                   "credits_per_1000_findings": round(credits / findings * 1000, 4) if findings and credits else None},
         "formula": "usd = local calls x $0 + server-reported tokens x list price per model + CREAO-reported "

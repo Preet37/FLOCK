@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -98,9 +100,14 @@ def hold_unread(found: list[dict], pending: list[dict]) -> list[dict]:
 
 
 def detect(fixtures: Path | None = None, progress: Progress | None = None, context: dict | None = None,
-           agents: agents_live.Tracker | None = None, **data) -> tuple[list[dict], str]:
+           agents: agents_live.Tracker | None = None, source_label: str | None = None,
+           **data) -> tuple[list[dict], str]:
+    """source_label names a dataset for people (flock.demo: "generated: <profile> seed N, S stores x W weeks") instead
+    of the std folder's path, which for a generated run is a temp folder that is gone afterwards."""
     found = detect_real(progress=progress, context=context, agents=agents, **data) if fixtures is None else []
     if found:
+        if source_label:
+            return found, source_label
         where = data.get("std")
         return found, f"real data ({where})" if where else "real data (data/std)"
     if context is not None:
@@ -122,11 +129,12 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
         fixtures: Path | None = None, raw: Path | None = None, std: Path | None = None,
         mappings: Path | None = None, confirm: bool = False, interactive: bool = False,
         progress: Progress | None = None, runs_path: Path | None = None, label: str = "",
-        attention_budget: int | None = None) -> Store:
+        attention_budget: int | None = None, source_label: str | None = None) -> Store:
     """store / rules_path / portal / fixtures default to the repo paths; tests point them at a temp dir.
     raw / std / mappings point the Formatter at another dataset (flock.demo); confirm / interactive are its
     unseen-layout question. progress defaults to a terminal bar + progress.json next to the store.
-    attention_budget defaults to env FLOCK_ATTENTION_BUDGET (10)."""
+    attention_budget defaults to env FLOCK_ATTENTION_BUDGET (10). source_label: a readable name for the data (else the
+    std folder's path)."""
     store = store or get_store()
     rules_path = Path(rules_path or learner.RULES)
     portal = Path(portal or clicky.PORTAL)
@@ -153,7 +161,7 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     try:
         with batched(store):
             info = _run(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path,
-                        jstore, attention_budget)
+                        jstore, attention_budget, source_label)
     except BaseException:
         progress.finish("failed")
         raise
@@ -179,19 +187,20 @@ def write_last_run(store: Store, info: dict) -> dict:
 
 
 def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
-         pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None) -> dict:
+         pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
+         source_label: str | None = None) -> dict:
     run_id = "RUN-" + uuid.uuid4().hex[:8]
     flock = agents_live.Tracker(store, run_id)
     try:
         return {"run_id": run_id, **_stages(store, rules_path, portal, fixtures, data, demo_approve, pace, progress,
-                                            runs_path, jstore, attention_budget, run_id, flock)}
+                                            runs_path, jstore, attention_budget, run_id, flock, source_label)}
     finally:
         flock.close()
 
 
 def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
             pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
-            run_id: str, flock: agents_live.Tracker) -> dict:
+            run_id: str, flock: agents_live.Tracker, source_label: str | None = None) -> dict:
     def move(finding_id: str, action: str, actor: Actor, **kw) -> None:
         transition(store, finding_id, action, actor, **kw)
         if pace:
@@ -199,7 +208,7 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
             time.sleep(pace)
 
     context: dict = {}
-    findings, source = detect(fixtures, progress, context, agents=flock, **data)
+    findings, source = detect(fixtures, progress, context, agents=flock, source_label=source_label, **data)
     print(f"\n== Flock run on {source}: {len(findings)} findings ==")
     volume = save_transactions(store, context, findings, source)
 
@@ -221,16 +230,24 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
     weights = market.weights(store)  # balances carried over from earlier weeks' settled bets
     todo = [f for f in store.all() if f["state"] == "CHECKED"]
     progress.stage("judge", total=len(todo), unit="findings")
+    plan = judge_plan(todo, rules)
+    judges = {}
+    for f in todo:  # spawned in order, in this thread (the tracker is not shared with the pool)
+        judges[f["finding_id"]] = flock.spawn("judge", parent=flock.owner.get(f["finding_id"]), subject=f["finding_id"],
+                                              agent_id=f"judge:{f['finding_id']}").working("3 judges voting")
+        flock.judge_of[f["finding_id"]] = judges[f["finding_id"]].id
     decisions = {}
-    for i, f in enumerate(todo, 1):
-        judge = flock.spawn("judge", parent=flock.owner.get(f["finding_id"]), subject=f["finding_id"],
-                            agent_id=f"judge:{f['finding_id']}").working("3 judges voting")
-        flock.judge_of[f["finding_id"]] = judge.id
-        d = decisions[f["finding_id"]] = panel.decide(f, rules, weights)
-        judge.done(f"{d['outcome']}: " + (", ".join(f"{v['judge'].replace('judge.', '')} {v['outcome']}"
-                                                     for v in d["votes"] if v.get("round") in (None, 2))
-                                          or d["reason"][:120]), outcome=d["outcome"])
+    for i, (f, d) in enumerate(judge_all(todo, rules, weights, plan), 1):  # results in todo order
+        decisions[f["finding_id"]] = d
+        judges[f["finding_id"]].done(f"{d['outcome']}: " + (", ".join(f"{v['judge'].replace('judge.', '')} {v['outcome']}"
+                                                                      for v in d["votes"] if v.get("round") in (None, 2))
+                                                           or d["reason"][:120]), outcome=d["outcome"])
         progress.update(i)
+    if plan["live"]:
+        print(f"judges: live models on {plan['used']} of {len(todo)} findings"
+              + (f" (FLOCK_LIVE_JUDGE_BUDGET={plan['budget']}; {plan['outside']} on offline rules)"
+                 if plan["budget"] is not None else "")
+              + f", {plan['concurrency']} at a time")
     escalations = [{**store.get(fid), **d} for fid, d in decisions.items() if d["outcome"] == "conflict"]
     attention = market.allocate_attention(escalations, attention_budget, weights)
     for fid, d in decisions.items():
@@ -282,7 +299,7 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
         jagent.done(f"drafted {len(drafted)} entries, {bad} unbalanced", drafted=len(drafted))
         print(f"Journal drafted {len(drafted)} entries (store x channel x payout), {bad} unbalanced; "
               f"waiting for a human to approve")
-    elif source.startswith("real data"):
+    elif context.get("tables"):   # real data (fixtures clear context)
         print("Journal: skipped at year scale (split detection keeps no order stories); run a week at a time to draft")
 
     teacher = flock.spawn("learner", subject="rules", agent_id="learner").working("reading human decisions")
@@ -294,7 +311,77 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
     print("flock: " + ", ".join(f"{n} {role}{'s' if n != 1 else ''}" for role, n in flock.counts.items())
           + f" ({flock.total()} agents)")
     airgap_summary(store)
-    return {"source": source, "data": volume, "demo_approve": demo_approve}
+    return {"source": source, "data": volume, "demo_approve": demo_approve,
+            "judging": {k: plan[k] for k in ("live", "concurrency", "budget", "used", "outside", "judged", "by_rule")}}
+
+
+DEFAULT_LIVE_CONCURRENCY = 6   # findings judged at once when a live judge is configured (CREAO pacing still applies)
+
+
+def _env_int(name: str) -> int | None:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        return None
+    try:
+        return max(0, int(v))
+    except ValueError:
+        print(f"[pipeline] ignoring {name}={v!r}: not a whole number")
+        return None
+
+
+def live_judges() -> bool:
+    """Would any of the three judges reach a live model on this box?"""
+    return any(llm.available(panel._route(j)) for j in panel.JUDGES)
+
+
+def judge_concurrency(live: bool) -> int:
+    """FLOCK_JUDGE_CONCURRENCY findings judged at once. Default 1 offline (nothing to wait on), 6 with a live judge."""
+    n = _env_int("FLOCK_JUDGE_CONCURRENCY")
+    return max(1, n) if n is not None else (DEFAULT_LIVE_CONCURRENCY if live else 1)
+
+
+def budget_risk(f: dict) -> tuple:
+    """Who gets the live judges first: the API's risk score before the panel votes (flock/frontend.py RISK_FORMULA:
+    |gap|, weak authority, |gap| x uncertainty), then |gap|, then finding_id so ties are stable."""
+    from flock import frontend  # frontend reads pipeline's outputs; import late to keep the module graph one-way
+    return (-frontend.risk(f)["risk"], -abs(f["gap"]), f["finding_id"])
+
+
+def judge_plan(todo: list[dict], rules: list[dict]) -> dict:
+    """Which findings get live judges this run (FLOCK_LIVE_JUDGE_BUDGET = N riskiest; unset = all) and how many are
+    judged at once. Findings an approved rule settles never call a model, so they don't use the budget. Offline
+    (no live judge configured) the budget is not applied: nothing is marked as outside it."""
+    live = live_judges()
+    budget = _env_int("FLOCK_LIVE_JUDGE_BUDGET")
+    by_rule = {f["finding_id"] for f in todo if learner.matching_rule(f, rules)}
+    panel_ids = [f for f in todo if f["finding_id"] not in by_rule]
+    if not live:
+        chosen = set()
+    elif budget is None:
+        chosen = {f["finding_id"] for f in panel_ids}
+    else:
+        chosen = {f["finding_id"] for f in sorted(panel_ids, key=budget_risk)[:budget]}
+    return {"live": live, "concurrency": judge_concurrency(live), "budget": budget if live else None,
+            "chosen": chosen, "rule_ids": by_rule, "used": len(chosen), "outside": len(panel_ids) - len(chosen) if live else 0,
+            "judged": len(todo), "by_rule": len(by_rule)}
+
+
+def judge_all(todo: list[dict], rules: list[dict], weights: dict, plan: dict):
+    """(finding, panel decision) for each finding, in todo order. With concurrency > 1 the panels run in a thread pool
+    (each panel already runs its 3 judges at once; llm paces CREAO run creates across all threads). Only decide()
+    runs in the pool; transitions, stakes and progress stay with the caller, in this same order, so the result is
+    identical to the sequential run."""
+    def one(f: dict) -> dict:
+        fid = f["finding_id"]
+        live = not plan["live"] or fid in plan["chosen"] or fid in plan["rule_ids"]
+        return panel.decide(f, rules, weights, live=live)
+
+    if plan["concurrency"] <= 1 or len(todo) <= 1:
+        for f in todo:
+            yield f, one(f)
+        return
+    with ThreadPoolExecutor(max_workers=plan["concurrency"]) as pool:
+        yield from zip(todo, pool.map(one, todo))
 
 
 def save_transactions(store: Store, context: dict, findings: list[dict], source: str) -> dict | None:
@@ -302,7 +389,7 @@ def save_transactions(store: Store, context: dict, findings: list[dict], source:
     state_dir = Path(getattr(store, "dir", None) or STATE_DIR)
     tables = context.get("tables") or {}
     try:
-        if source.startswith("real data") and tables.get("payout_lines"):
+        if tables.get("payout_lines"):   # fixtures clear context: no tables
             deposits = context.get("deposit_stories") or [s for s in context.get("stories", [])
                                                           if s.get("kind") == "deposit"]
             doc = transactions.build(tables, deposits, findings, source)

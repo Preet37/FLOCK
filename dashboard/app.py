@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, abort, jsonify, request, send_from_directory
+from flask.json.provider import DefaultJSONProvider
 
 from flock import agents_live, frontend, llm, market, portal, transactions, workflow
 from flock.agents import clicky, journal, learner, panel
@@ -176,11 +177,22 @@ def clicky_status(ws: workflow.WorkflowStore) -> dict[str, Any]:
     }
 
 
+class StrictJSON(DefaultJSONProvider):
+    """jsonify that never writes NaN / Infinity (JSON.parse rejects them): non-finite floats become null."""
+
+    def dumps(self, obj: Any, **kw: Any) -> str:
+        try:
+            return super().dumps(obj, allow_nan=False, **kw)
+        except ValueError:
+            return super().dumps(frontend.finite(obj), allow_nan=False, **kw)
+
+
 def create_app(store: Store | None = None, runs_path: Path | None = None, journal_store: JournalStore | None = None,
                exports_dir: Path | None = None, workflow_store: workflow.WorkflowStore | None = None) -> Flask:
     app = Flask(__name__, static_folder=None)
+    app.json = StrictJSON(app)
     app.config["STORE"] = store if store is not None else get_store()
-    app.config["RUNS_PATH"] = runs_path or scoreboard.RUNS
+    app.config["RUNS_PATH"] = runs_path or scoreboard.runs_for(app.config["STORE"])  # a temp store's own history
     app.config["JOURNAL"] = journal_store if journal_store is not None else get_journal_store(app.config["STORE"])
     app.config["EXPORTS"] = exports_dir or journal.EXPORTS
     app.config["WORKFLOWS"] = workflow_store if workflow_store is not None else workflow.get_workflow_store(

@@ -14,7 +14,7 @@ Machine: MacBook (darwin), Python 3.14, the worktree's own `.venv`.
 | Full year, bagel chain 56 x 52 weeks | 1,257,013 orders, **9,669/9,669 traps, 0 false alarms, 118 s** |
 | Hosted API (Railway) | All read routes up and returning valid JSON, empty at first; 30 min later 6 judged findings, 6/6 caught. Check it is filled before judging (checklist step 7) |
 | Bugs fixed | 11 (below), each with a test |
-| Bugs open | 7 written up for `flock/api.py` / `dashboard/app.py` (not mine to edit): 2 since fixed on main, 5 still open; + 2 design notes |
+| Bugs open | 7 written up for `flock/api.py` / `dashboard/app.py` (not mine to edit): 2 since fixed on main, the other 5 fixed on `preet/api-fixes`; + 2 design notes |
 
 ## What was tested
 
@@ -112,6 +112,8 @@ Two real API bugs that also end in a `JSONDecodeError` on the client are A1 and 
 `POST /api/run` is one background job at a time (409 otherwise). A2, A3, A5, A6 are **still open**; their new line
 numbers are given below. The original write-ups are kept for the record.
 
+**Status on `preet/api-fixes`:** A2, A3, A5, A6 and A7 are **fixed**, each with a test in `tests/test_api.py`; the dataset run's `source` is now a readable label too (see each item).
+
 ### A1 (FIXED on main): any unexpected error on a GET dropped the connection with an empty reply
 
 - **File (old):** `flock/api.py`, `do_GET`, lines 167-189: only `KeyError` was caught.
@@ -124,7 +126,9 @@ numbers are given below. The original write-ups are kept for the record.
   does (B5): `lines = path.read_text().split("\n"); return [json.loads(l) for l in lines[:-1] if l.strip()]`, or
   just call `portal.read_filings(PORTAL)`.
 
-### A2 (medium): `json.dumps` will emit `NaN` if a NaN ever reaches a payload
+### A2 (FIXED on `preet/api-fixes`): `json.dumps` will emit `NaN` if a NaN ever reaches a payload
+
+- **Fixed:** `api.dumps()` sends `json.dumps(..., allow_nan=False)`; if a payload holds a NaN / inf it is converted to `null` first (`frontend.finite`), so a response never fails and is always strict JSON. The dashboard's Flask app uses the same rule (`StrictJSON` provider). Test: `test_responses_are_strict_json_even_with_nan`.
 
 - **File:** `flock/api.py` line 374 on main (`data = json.dumps(payload, default=str).encode()`, was line 149);
   `dashboard/app.py` uses Flask's
@@ -134,7 +138,9 @@ numbers are given below. The original write-ups are kept for the record.
 - **Fix:** `json.dumps(payload, allow_nan=False)` inside a try; on `ValueError`, send 500 with the error, so it fails
   loudly at the source instead of in every browser.
 
-### A3 (medium): concurrent requests share `sys.stdout` through `contextlib.redirect_stdout`
+### A3 (FIXED on `preet/api-fixes`): concurrent requests share `sys.stdout` through `contextlib.redirect_stdout`
+
+- **Fixed:** `api.ThreadStdout`, a thread-local stdout proxy put on `sys.stdout` once (`serve()` at startup; `install_stdout()` is idempotent). `_captured` and the job thread register their own buffer for their thread only; every other thread's prints (server logs) go to the real stdout. Nothing swaps `sys.stdout` per request any more. Test: `test_stdout_capture_is_per_thread` (two captures + a background job printing at once, each gets only its own lines, prints from the main thread still reach stdout).
 
 - **File (main):** `flock/api.py` lines 94-98 (`_captured`), used by the scoreboard (line 222) and the fixtures run
   (272), plus the background job thread's `redirect_stdout(_Lines(job))` at line 340, all on a `ThreadingHTTPServer`.
@@ -155,19 +161,26 @@ numbers are given below. The original write-ups are kept for the record.
 - **Fix:** `RUN_LOCK = threading.Lock()`; `if not RUN_LOCK.acquire(blocking=False): return 409 {"error": "a run is
   already going"}`; release in `finally`.
 
-### A5 (low): `OPTIONS` answers 204 with a body
+### A5 (FIXED on `preet/api-fixes`): `OPTIONS` answers 204 with a body
+
+- **Fixed:** headers only, `Content-Length: 0`, no body. Test: `test_options_204_has_no_body`.
 
 - **File:** `flock/api.py` line 397 on main (was 165): `self._send(204, {})` writes `{}` and `Content-Length: 2`. A 204 must not have a
   body; strict proxies and some HTTP clients (undici) reject or warn on it.
 - **Fix:** for 204 send the headers with `Content-Length: 0` and no body.
 
-### A6 (low): docs and token check
+### A6 (FIXED on `preet/api-fixes`): docs and token check
+
+- **Fixed:** `hmac.compare_digest` on the `Authorization` header. Default `/api/findings` order is now the work queue: `needs_human` first, then state (`JUDGED, APPROVED, FILED, CHECKED, NEW, RECOVERED, REJECTED`), then risk desc, then `finding_id` (documented in docs/API.md). Tests: `test_token_compare_is_constant_time`, `test_findings_default_order_is_meaningful_and_stable`.
 
 - `/api/findings` sorts by `finding_id` (line 203 on main), and real-data ids are random (N1), so the order means
   nothing. Sort by `(check_type, channel, order_ids)` or by gap.
 - Line 453 on main (was 194): compare the token with `hmac.compare_digest(...)` rather than `==` (constant time). Low risk tonight.
 
-### A7 (low): `dashboard/app.py` line 183 has the same run-history default as B1
+### A7 (FIXED on `preet/api-fixes`): `dashboard/app.py` line 183 has the same run-history default as B1
+
+- **Fixed:** `runs_path or scoreboard.runs_for(store)`. Test: `test_dashboard_run_history_follows_a_temp_store`.
+- **Also fixed:** a dataset run's `source` (last_run, runs.jsonl, `GET /api/health`) was its temp std folder path; it is now `generated: <profile> seed <n>, <stores> stores x <weeks> weeks` (`demo.source_label`). The checks that keyed off `source.startswith("real data")` (transactions, journal skip note) now look at the run's tables. Test: `test_dataset_run_source_is_a_readable_label`.
 
 `create_app(store=<temp store>)` without `runs_path` reads the repo's `data/state/runs.jsonl`. Every test passes a
 `runs_path` so nothing breaks today. Fix: `runs_path or scoreboard.runs_for(store)` (added to `scripts/score.py` on

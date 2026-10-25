@@ -14,11 +14,11 @@ Every example below is a real response captured from a local run (`POST /api/run
 | --- | --- |
 | Base URL | `https://web-production-812b4.up.railway.app` (local: `http://127.0.0.1:8787`) |
 | Auth | Reads (GET) are open. Every POST needs `Authorization: Bearer <FLOCK_API_TOKEN>`; without it: `401`. |
-| CORS | `Access-Control-Allow-Origin: *` (or `FLOCK_CORS_ORIGIN`), headers `Content-Type, Authorization`, methods `GET, POST, OPTIONS`. Preflight `OPTIONS` answers `204`. |
-| Errors | Always JSON: `{"error": "..."}`. `400` bad input, `401` no/wrong token, `404` not found, `409` a run is in progress or the state machine refused the move, `500` a bug (the message says what broke). Never an HTML traceback. |
+| CORS | `Access-Control-Allow-Origin: *` (or `FLOCK_CORS_ORIGIN`), headers `Content-Type, Authorization`, methods `GET, POST, OPTIONS`. Preflight `OPTIONS` answers `204` with no body (`Content-Length: 0`). |
+| Errors | Always JSON: `{"error": "..."}`. `400` bad input, `401` no/wrong token, `404` not found, `409` a run is in progress or the state machine refused the move, `500` a bug (the message says what broke). Never an HTML traceback. Bodies are strict JSON: a `NaN` or infinity is sent as `null` (`JSON.parse` rejects `NaN`), on this server and on the dashboard's mirror. |
 | Runs | One at a time. A second `POST /api/run`, or a decision while a run is going, gets `409` with `"running": "<job id>"`. |
 | Money | Dollars, rounded to cents. Gaps are computed in plain Python by the checkers; no model touches a dollar. |
-| Logs | The server writes one stderr line per request: `api  GET /api/metrics  200  9ms`. |
+| Logs | The server writes one stderr line per request: `api  GET /api/metrics  200  9ms`. A run's own output goes to its job (`output_tail`), never to the terminal or to another request: stdout is a per-thread proxy installed once at startup, so concurrent requests and the background job each capture only their own prints. |
 
 ## Which endpoint feeds which panel
 
@@ -44,17 +44,19 @@ Railway health check. Cheap; safe to poll.
   "at": "2026-10-25T05:24:58+00:00",
   "auth_required_for_post": true,
   "last_run": {"run_id": "RUN-90b38f45", "label": "live demo: seed 2025, ca_bagel_chain, 12 stores x 14 days",
-               "source": "real data (...)", "finished_at": "2026-10-25T05:24:42+00:00", "seconds": 2.293},
+               "source": "generated: ca_bagel_chain seed 2025, 12 stores x 2 weeks", "finished_at": "2026-10-25T05:24:42+00:00", "seconds": 2.293},
   "counts": {"findings": 73, "needs_human": 4, "log_entries": 350, "transactions": 97},
   "running_job": null
 }
 ```
-`version` is `RAILWAY_GIT_COMMIT_SHA` (or `git rev-parse`), `null` if neither is available.
+`version` is `RAILWAY_GIT_COMMIT_SHA` (or `git rev-parse`), `null` if neither is available. `last_run.source` names the data: `fixtures/fake_findings.json`, `generated: <profile> seed <n>, <stores> stores x <weeks> weeks` for a dataset run, or `real data (<std folder>)`.
 
 ### `GET /api/findings`
 Every finding, each with a **risk score**. Query: `state`, `outcome`, `channel`, `check_type`, `risk` (`low|med|high`),
-`sort=risk` (highest first; default is by `finding_id`). `needs_human` = waiting on a person (a conflict, or a drafted
-dispute ready to approve): show the resolve buttons when it is true.
+`sort=risk` (highest first, ties by `finding_id`). The default order is the work queue: findings with
+`needs_human` first, then by state (`JUDGED`, `APPROVED`, `FILED`, `CHECKED`, `NEW`, `RECOVERED`, `REJECTED`), then
+risk (highest first), then `finding_id`, so the same data always comes back in the same order. `needs_human` = waiting
+on a person (a conflict, or a drafted dispute ready to approve): show the resolve buttons when it is true.
 ```json
 [
   {
@@ -197,7 +199,7 @@ that can't be measured is `null` and a note says why. Also `run`: the last run's
 | --- | --- | --- | --- |
 | `agent_time` | `agent_hours`, `human_hours`, `hours_saved`, `multiple` | agent = wall time of the last pipeline run (`last_run.json`, `time.monotonic` around `pipeline.run`; generating the simulated data is not counted). human = store-weeks x minutes per store-week / 60. | agent time and store-weeks: **MEASURED**. Minutes per store-week: **MEASURED** if `data/benchmarks/results.json` has a human contestant (`scripts/benchmark.py --human ... --human-minutes`), else `FLOCK_HUMAN_MINUTES_PER_STORE_WEEK`, else **ASSUMPTION: 60 min** = "reconciling one location can take an hour" (Lunchbox, vendor claim, https://lunchbox.io/third-party-disputes-the-silent-restaurant-revenue-killer), applied per week as in FLOCK_CONTEXT.md §7, which itself marks the per-week cadence unverified. Conflicts still sent to a human are counted on neither side (the card says how many). |
 | `accuracy` | `accuracy`, `caught`, `total`, `missed`, `false_alarms` | `scripts/score.py` against the run's answer key: `data/state/answer_key.csv` after a dataset run (kept by the run), else `data/answer_key.csv` (fixtures). Plus `benchmark`: per-contestant accuracy from `data/benchmarks/results.json` when present (`null` on the hosted box). | **SIMULATED**: the key comes from whoever planted the traps. |
-| `cost` | `usd`, `usd_known_part`, `complete`, `credits`, `model_calls`, `usd_per_1000_findings`, `credits_per_1000_findings` | local model calls x $0 + server-reported tokens x list price (`flock/llm.py LIST_PRICES`) + CREAO-reported tokens x the Developer Console per-model price (`llm.CREAO_USD_PER_M`, what CREAO /v2 bills) + CREAO /v1 credits x `FLOCK_CREAO_USD_PER_CREDIT`. | calls, tokens and CREAO usage are **MEASURED** per run (`llm.call_stats()` saved in `last_run.json`). Anything we cannot price (v1 credits with no rate, a model with no price, agent.creao.ai app calls that report no usage) makes `usd` `null`; `usd_known_part` is what we can price and `unknown` lists the rest. Offline rules = 0 calls = $0. The live box runs the AI roles on CREAO, so expect CREAO usage there. |
+| `cost` | `usd`, `usd_known_part`, `complete`, `credits`, `model_calls`, `live_judge_budget` (the run's `judging` record, see "Judging speed and the live-model budget"), `usd_per_1000_findings`, `credits_per_1000_findings` | local model calls x $0 + server-reported tokens x list price (`flock/llm.py LIST_PRICES`) + CREAO-reported tokens x the Developer Console per-model price (`llm.CREAO_USD_PER_M`, what CREAO /v2 bills) + CREAO /v1 credits x `FLOCK_CREAO_USD_PER_CREDIT`. | calls, tokens and CREAO usage are **MEASURED** per run (`llm.call_stats()` saved in `last_run.json`). Anything we cannot price (v1 credits with no rate, a model with no price, agent.creao.ai app calls that report no usage) makes `usd` `null`; `usd_known_part` is what we can price and `unknown` lists the rest. Offline rules = 0 calls = $0. The live box runs the AI roles on CREAO, so expect CREAO usage there. |
 | `money_saved` | `usd` (= `recovered + filed + approved + pending`), `due_from_platform_booked`, `annualized_projection` | sum of `|gap|` over findings that are money we expect back (the journal's test: recoverable, approved, filed or recovered, never rejected), split by state. `due_from_platform_booked` = debits to finding-linked "Due from Platform" lines in the drafted journal entries. Projection = usd x 52 / weeks in the data. | dollars and receivables **MEASURED** from findings and journal entries. Projection is a **PROJECTION** (the multiplier is in `inputs.projection_multiplier`) and describes the simulation's trap rate, not a real chain. Undecided conflicts are listed, not counted. Year-scale runs (> 50k rows) skip the journal, so `due_from_platform_booked` is 0 there with a note. |
 
 Real response (12 stores x 2 weeks), trimmed to one card in full:
@@ -377,6 +379,21 @@ The server is a `ThreadingHTTPServer`. Reads during a run are safe: findings are
 JSON files are replaced atomically; JSONL readers (audit log, agent feed, portal) skip a line still being written or
 damaged. One run at a time (`409`), and human decisions are refused with `409` while a run is going (a run resets the
 findings). Two decisions on the same finding at once: exactly one wins, the others get `409` from the gatekeeper.
+
+### Judging speed and the live-model budget
+
+With live judges (CREAO, Groq, ...) each finding costs 3 judge calls (+ a debate round on a split), so a 78-finding
+dataset judged one finding at a time takes about 2 hours on CREAO. Two env knobs, read at the start of each run:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `FLOCK_JUDGE_CONCURRENCY` | `1` offline, `6` when any judge is live | Findings judged at once (a thread pool around `panel.decide`). CREAO run creates are still paced to `FLOCK_CREAO_RPM` across all threads. Only the panel calls run in the pool: gatekeeper transitions, market stakes and progress stay in one thread in the same order, so results are identical to the sequential run (tested offline). |
+| `FLOCK_LIVE_JUDGE_BUDGET` | unset = every finding | The N riskiest findings (the risk formula above before the panel votes: `|gap|`, weak authority, `|gap|` x uncertainty; ties by `|gap|`, then `finding_id`) get the live judges. The rest are judged by offline rules, no model call: each of their votes has `"budget": "offline"`, the finding has `"live_budget": "outside"`, and its reason ends with `(offline rules: outside this run's live-model budget)`. Findings an approved rule settles never use the budget. Offline (no live judge) the budget is not applied. |
+
+The run prints `judges: live models on 25 of 78 findings (FLOCK_LIVE_JUDGE_BUDGET=25; 53 on offline rules), 6 at a
+time`, `last_run.json` keeps `judging: {live, concurrency, budget, used, outside, judged, by_rule}`, and the `cost`
+card of `GET /api/metrics` shows it as `value.live_judge_budget` (plus a note when a budget was applied). For a hosted
+demo: `FLOCK_JUDGE_CONCURRENCY=6`, `FLOCK_LIVE_JUDGE_BUDGET=25`.
 
 ## Smoke test
 

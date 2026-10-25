@@ -492,3 +492,131 @@ def test_dashboard_mirror(server, tmp_path):
     assert d.get("/api/agents/clicky").get_json()["has_screen"] is True
     assert d.get("/api/agents/nobody").status_code == 404
     assert d.get("/api/screens/../secret.png").status_code == 404
+
+
+# QA fixes A2, A3, A5, A6, A7 and the dataset source label ------------------------------------------------------------
+def test_stdout_capture_is_per_thread(server, capsys):
+    """A3: two captures printing at the same time each get only their own lines; a background job's output stays in
+    the job; a print from any other thread (server logs) still reaches the real stdout."""
+    import sys
+    _, a = server
+    go = threading.Barrier(3, timeout=10)
+    out = {}
+
+    def chatty(name):
+        go.wait()
+        for i in range(200):
+            print(f"{name} line {i}")
+            if i % 20 == 0:
+                time.sleep(0.001)
+        return name
+
+    def capture(name):
+        out[name] = api._captured(chatty, name)
+
+    def job():
+        go.wait()
+        for i in range(200):
+            print(f"job line {i}")
+            if i % 20 == 0:
+                time.sleep(0.001)
+        return "ok"
+
+    started = a.start("fixtures", {}, job)
+    threads = [threading.Thread(target=capture, args=(n,)) for n in ("left", "right")]
+    for t in threads:
+        t.start()
+    print("server log while capturing")
+    for t in threads:
+        t.join()
+    end = time.monotonic() + 10
+    while a.jobs[started["job_id"]]["status"] == "running" and time.monotonic() < end:
+        time.sleep(0.01)
+    for name in ("left", "right"):
+        result, text = out[name]
+        assert result == name
+        assert text.splitlines() == [f"{name} line {i}" for i in range(200)]
+    assert a.jobs[started["job_id"]]["output"] == [f"job line {i}" for i in range(200)]
+    print("server log after")
+    real = capsys.readouterr().out
+    assert "server log while capturing" in real and "server log after" in real
+    assert "left line" not in real and "right line" not in real and "job line" not in real
+    assert isinstance(sys.stdout, api.ThreadStdout)   # installed once; never swapped back and forth
+
+
+def test_scoreboard_text_is_captured_per_request(server):
+    client, _ = server
+    fixtures_run(client)
+    code, s = client.get("/api/score")
+    assert code == 200 and s["text"].startswith("caught 6/6")
+
+
+def test_responses_are_strict_json_even_with_nan(server, monkeypatch, tmp_path):
+    """A2: NaN / inf never reach the wire (JSON.parse rejects them); they are sent as null."""
+    assert api.dumps({"a": float("nan"), "b": [1.5, float("inf")], "c": {"d": -float("inf")}}) == \
+        b'{"a": null, "b": [1.5, null], "c": {"d": null}}'
+    client, a = server
+    monkeypatch.setattr(a, "health", lambda: {"status": "ok", "gap": float("nan")})
+    c = http.client.HTTPConnection("127.0.0.1", client.port, timeout=10)
+    c.request("GET", "/api/health")
+    raw = c.getresponse().read()
+    c.close()
+
+    def refuse(name):
+        raise AssertionError(f"non-standard JSON constant {name}")
+
+    assert json.loads(raw, parse_constant=refuse) == {"status": "ok", "gap": None}
+    from dashboard.app import create_app
+    d = create_app(JsonStore(tmp_path / "dash"), runs_path=tmp_path / "runs.jsonl")
+    with d.app_context():
+        assert json.loads(d.json.dumps({"x": float("nan")}), parse_constant=refuse) == {"x": None}
+
+
+def test_options_204_has_no_body(server):
+    """A5: a 204 must not carry a body."""
+    client, _ = server
+    c = http.client.HTTPConnection("127.0.0.1", client.port, timeout=10)
+    c.request("OPTIONS", "/api/run")
+    r = c.getresponse()
+    assert r.status == 204 and r.getheader("Content-Length") == "0" and r.read() == b""
+    c.close()
+
+
+def test_token_compare_is_constant_time(server, monkeypatch):
+    """A6: the token is checked with hmac.compare_digest."""
+    client, _ = server
+    seen = []
+    real = api.hmac.compare_digest
+    monkeypatch.setattr(api.hmac, "compare_digest", lambda x, y: seen.append((x, y)) or real(x, y))
+    assert client.post("/api/run", {"dataset": "mystery"})[0] == 400
+    assert client.call("POST", "/api/run", b"{}", {"Authorization": "Bearer x"})[0] == 401
+    want = f"Bearer {TOKEN}".encode()
+    assert seen == [(want, want), (b"Bearer x", want)]
+
+
+def test_findings_default_order_is_meaningful_and_stable(server):
+    """A6: needs_human first, then state priority, then risk (highest first), then finding_id."""
+    client, _ = server
+    fixtures_run(client, demo_approve=False)
+    rows = client.get("/api/findings")[1]
+    keys = [(not f["needs_human"], api.STATE_PRIORITY[f["state"]], -f["risk"], f["finding_id"]) for f in rows]
+    assert keys == sorted(keys)
+    assert rows[0]["needs_human"] and not rows[-1]["needs_human"]
+    assert [f["finding_id"] for f in client.get("/api/findings")[1]] == [f["finding_id"] for f in rows]  # stable
+
+
+def test_dashboard_run_history_follows_a_temp_store(tmp_path):
+    """A7: create_app(<temp store>) without runs_path must not read or write the repo's data/state/runs.jsonl."""
+    from dashboard.app import create_app
+    from flock.store import STATE_DIR
+    d = create_app(JsonStore(tmp_path / "state"))
+    assert d.config["RUNS_PATH"] == tmp_path / "state" / "runs.jsonl"
+    assert create_app(JsonStore(STATE_DIR)).config["RUNS_PATH"].resolve() == (STATE_DIR / "runs.jsonl").resolve()
+
+
+def test_dataset_run_source_is_a_readable_label(dataset):
+    client, a, job = dataset
+    src = client.get("/api/health")[1]["last_run"]["source"]
+    assert src == "generated: default seed 2025, 3 stores x 2 weeks"
+    from flock import demo
+    assert demo.source_label("ca_bagel_chain", 7, 1, 10) == "generated: ca_bagel_chain seed 7, 1 store x 10 days"

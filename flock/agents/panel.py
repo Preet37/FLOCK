@@ -24,6 +24,10 @@ decide() can take the judges' balance shares as weights: the average confidence 
 with a better track record counts for more. Unanimity is still required and the guardrails below still apply, so
 weights can only move a unanimous call across THRESHOLD, never overrule a disagreement or a guardrail.
 
+Live-model budget (flock/pipeline.py, FLOCK_LIVE_JUDGE_BUDGET): a run can give the live judges to only its N riskiest
+findings. decide(..., live=False) is how the rest are judged: offline rules for all three votes, no debate, no reviewer,
+each vote marked budget="offline" and the reason saying "offline rules: outside this run's live-model budget".
+
 Two code guardrails sit on top of the judges, because they are policy, not judgment:
   - a gap within TOLERANCE is never disputed (penny rounding), and never sent for a second opinion
   - a deal-term finding with no contract, amendment or authorized email behind it is never auto-disputed
@@ -50,6 +54,7 @@ TERM_CHECKS = {"commission", "promo", "tax", "error_charge", "fee"}   # need a d
 DEAL_AUTHORITY = {"contract", "amendment", "auth_email"}       # documents that can set a deal term
 WEAK_AUTHORITY = {"unauth_email", "call_note"}
 OUTCOMES = ("correct", "recoverable", "conflict")
+BUDGET_NOTE = "offline rules: outside this run's live-model budget"
 
 JUDGES = {
     "judge.strict": "You are a strict auditor. Only call 'recoverable' if the evidence clearly proves the platform broke the deal.",
@@ -145,7 +150,10 @@ def _brief(v: dict[str, Any]) -> dict[str, Any]:
     return {"judge": v["judge"], "outcome": v["outcome"], "confidence": v["confidence"], "reason": v["reason"]}
 
 
-def vote(judge: str, f: dict[str, Any]) -> dict[str, Any]:
+def vote(judge: str, f: dict[str, Any], live: bool = True) -> dict[str, Any]:
+    if not live:  # outside the run's live-model budget: offline rules, said plainly on the vote
+        v = _offline_vote(judge, f)
+        return {**v, "judge": judge, "budget": "offline", "reason": f"[{BUDGET_NOTE}] {v['reason']}"}
     r = _route(judge)
     got, err = llm.call_json(JUDGES[judge] + "\n" + SYSTEM, json.dumps(_payload(f)), r=r)
     call = _parse_call(got)
@@ -165,7 +173,7 @@ def revise(judge: str, f: dict[str, Any], own: dict[str, Any], others: list[dict
     None when this judge can't debate (offline, or its first vote already fell back to offline rules).
     """
     r = _route(judge)
-    if own.get("fallback") or not llm.available(r):
+    if own.get("fallback") or own.get("budget") == "offline" or not llm.available(r):
         return None
     user = json.dumps({"finding": _payload(f), "your_vote": _brief(own), "other_judges": [_brief(o) for o in others]})
     got, err = llm.call_json(JUDGES[judge] + "\n" + SYSTEM + "\n" + DEBATE, user, r=r)
@@ -233,10 +241,12 @@ def weighted_mean(votes: list[dict[str, Any]], weights: dict[str, float] | None 
 
 
 def decide(f: dict[str, Any], rules: list[dict[str, Any]] | None = None,
-           weights: dict[str, float] | None = None) -> dict[str, Any]:
+           weights: dict[str, float] | None = None, live: bool = True) -> dict[str, Any]:
     """Returns the patch for the 'judge' transition: outcome, confidence, votes, reason (+ review_memo on a split).
 
     weights: judge -> balance share from flock.market.weights(); None means every judge counts the same.
+    live=False: outside the run's live-model budget; offline rules only (no model call), marked on votes and reason.
+    Pure apart from model calls, so the pipeline can run decide() for several findings at once.
     """
     rule = learner.matching_rule(f, rules)
     if rule:
@@ -244,7 +254,7 @@ def decide(f: dict[str, Any], rules: list[dict[str, Any]] | None = None,
                 "reason": f"Applied approved rule {rule['rule_id']}: {rule['description']}"}
 
     with ThreadPoolExecutor(max_workers=len(JUDGES)) as pool:  # judges are independent; run them at once
-        first = list(pool.map(lambda j: vote(j, f), JUDGES))
+        first = list(pool.map(lambda j: vote(j, f) if live else vote(j, f, live=False), JUDGES))
     final, record, debated = first, first, ""
     if len({v["outcome"] for v in first}) > 1:
         second = _debate(f, first)
@@ -281,6 +291,9 @@ def decide(f: dict[str, Any], rules: list[dict[str, Any]] | None = None,
         reason += f" ({len(fell_back)} of 3 judges used offline rules after an API error: {fell_back[0]['fallback']})"
 
     patch = {"outcome": outcome, "confidence": avg, "votes": record, "reason": reason}
+    if not live:
+        patch.update(reason=f"{reason} ({BUDGET_NOTE})", live_budget="outside")
+        return patch  # no reviewer memo or audit second opinion either: both are model calls
     if outcome == "conflict" and split:
         text = memo(f, final)  # the reviewer explains the split to the human; it never breaks the tie
         if text:
