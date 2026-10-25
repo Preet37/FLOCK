@@ -18,3 +18,6 @@ data/benchmarks/
 data/training/
 results/*
 !results/README.md
+
+data/demos/
+data/workflows/

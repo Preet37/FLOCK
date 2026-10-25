@@ -1,0 +1,303 @@
+{
+  "workflow_id": "WF-file_dispute-v1",
+  "name": "file_dispute",
+  "version": 1,
+  "state": "DRAFT",
+  "learned_from": "D-20261024-212212",
+  "learned_at": "2026-10-25T04:22:14+00:00",
+  "portal_layout": "v1",
+  "portal_url": "http://127.0.0.1:58777",
+  "shown_finding": "F-0001",
+  "labeled_by": "template",
+  "steps": [
+    {
+      "n": 1,
+      "phase": "login",
+      "action": "goto",
+      "path": "/login",
+      "target": null,
+      "describe": "Open /login"
+    },
+    {
+      "n": 2,
+      "phase": "login",
+      "action": "fill",
+      "path": "/login",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Username",
+        "role": "textbox",
+        "text": null,
+        "name": "username",
+        "id": "username",
+        "placeholder": null,
+        "css": "#username"
+      },
+      "source": {
+        "kind": "env",
+        "name": "FLOCK_PORTAL_USER",
+        "default": "sandbox"
+      },
+      "screenshot": "step-02.png",
+      "describe": "Type the portal username (from FLOCK_PORTAL_USER) into \u201cUsername\u201d"
+    },
+    {
+      "n": 3,
+      "phase": "login",
+      "action": "fill",
+      "path": "/login",
+      "target": {
+        "tag": "input",
+        "type": "password",
+        "label": "Password",
+        "role": "textbox",
+        "text": null,
+        "name": "password",
+        "id": "password",
+        "placeholder": null,
+        "css": "#password"
+      },
+      "source": {
+        "kind": "env",
+        "name": "FLOCK_PORTAL_PASS",
+        "secret": true
+      },
+      "screenshot": "step-03.png",
+      "describe": "Type the portal password (from FLOCK_PORTAL_PASS, never stored) into \u201cPassword\u201d"
+    },
+    {
+      "n": 4,
+      "phase": "login",
+      "action": "click",
+      "path": "/login",
+      "target": {
+        "tag": "button",
+        "type": "submit",
+        "label": null,
+        "role": "button",
+        "text": "Sign in",
+        "name": null,
+        "id": "login-btn",
+        "placeholder": null,
+        "css": "#login-btn"
+      },
+      "navigates": true,
+      "next_path": "/disputes/new",
+      "screenshot": "step-04.png",
+      "describe": "Click \u201cSign in\u201d and wait for the next page"
+    },
+    {
+      "n": 5,
+      "phase": "file",
+      "action": "select",
+      "path": "/disputes/new",
+      "target": {
+        "tag": "select",
+        "type": null,
+        "label": "Sales channel",
+        "role": "combobox",
+        "text": null,
+        "name": "channel",
+        "id": "channel",
+        "placeholder": null,
+        "css": "#channel"
+      },
+      "source": {
+        "kind": "finding",
+        "field": "channel",
+        "format": {}
+      },
+      "demo_value": "doordash",
+      "demo_option": "doordash",
+      "screenshot": "step-05.png",
+      "describe": "Pick the finding's sales channel in \u201cSales channel\u201d"
+    },
+    {
+      "n": 6,
+      "phase": "file",
+      "action": "fill",
+      "path": "/disputes/new",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Order ID(s), comma separated",
+        "role": "textbox",
+        "text": null,
+        "name": "order_ids",
+        "id": "order_ids",
+        "placeholder": null,
+        "css": "#order_ids"
+      },
+      "source": {
+        "kind": "finding",
+        "field": "order_ids",
+        "format": {
+          "join": ", "
+        }
+      },
+      "demo_value": "ORD-1001",
+      "screenshot": "step-06.png",
+      "describe": "Type the finding's order IDs into \u201cOrder ID(s), comma separated\u201d"
+    },
+    {
+      "n": 7,
+      "phase": "file",
+      "action": "fill",
+      "path": "/disputes/new",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Amount disputed (USD)",
+        "role": "textbox",
+        "text": null,
+        "name": "amount",
+        "id": "amount",
+        "placeholder": null,
+        "css": "#amount"
+      },
+      "source": {
+        "kind": "finding",
+        "field": "amount",
+        "format": {
+          "prefix": "$"
+        }
+      },
+      "demo_value": "$2.50",
+      "screenshot": "step-07.png",
+      "describe": "Type the finding's dispute amount into \u201cAmount disputed (USD)\u201d"
+    },
+    {
+      "n": 8,
+      "phase": "file",
+      "action": "select",
+      "path": "/disputes/new",
+      "target": {
+        "tag": "select",
+        "type": null,
+        "label": "Category",
+        "role": "combobox",
+        "text": null,
+        "name": "category",
+        "id": "category",
+        "placeholder": null,
+        "css": "#category"
+      },
+      "source": {
+        "kind": "finding",
+        "field": "category",
+        "format": {}
+      },
+      "demo_value": "commission",
+      "demo_option": "Incorrect commission",
+      "screenshot": "step-08.png",
+      "describe": "Pick the finding's dispute category in \u201cCategory\u201d"
+    },
+    {
+      "n": 9,
+      "phase": "file",
+      "action": "fill",
+      "path": "/disputes/new",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Your internal reference (optional)",
+        "role": "textbox",
+        "text": null,
+        "name": "merchant_ref",
+        "id": "merchant_ref",
+        "placeholder": null,
+        "css": "#merchant_ref"
+      },
+      "source": {
+        "kind": "finding",
+        "field": "finding_id",
+        "format": {}
+      },
+      "demo_value": "F-0001",
+      "screenshot": "step-09.png",
+      "describe": "Type the finding's finding ID into \u201cYour internal reference (optional)\u201d"
+    },
+    {
+      "n": 10,
+      "phase": "file",
+      "action": "fill",
+      "path": "/disputes/new",
+      "target": {
+        "tag": "textarea",
+        "type": null,
+        "label": "Message and evidence",
+        "role": "textbox",
+        "text": null,
+        "name": "message",
+        "id": "message",
+        "placeholder": null,
+        "css": "#message"
+      },
+      "source": {
+        "kind": "finding",
+        "field": "dispute_draft",
+        "format": {}
+      },
+      "demo_value": "Hello DoorDash merchant support,\n\nWe're disputing a commission on order(s) ORD-1001. Expected $4.00, charged $6.50, a difference of $2.50, based on the evidence below.\n\nEvidence:\n1. data/raw/doordash/payouts_wk1.csv row 14 (commission charged 6.50 on gross 20.00)\n2. data/raw/contracts/doordash_msa.pdf: \"Marketplace commission: 20% of subtotal\"\n\nPlease credit the difference on our next payout. Thank you.",
+      "screenshot": "step-10.png",
+      "describe": "Type the finding's approved dispute message into \u201cMessage and evidence\u201d"
+    },
+    {
+      "n": 11,
+      "phase": "file",
+      "action": "click",
+      "path": "/disputes/new",
+      "target": {
+        "tag": "button",
+        "type": "submit",
+        "label": null,
+        "role": "button",
+        "text": "Submit dispute",
+        "name": null,
+        "id": "submit-btn",
+        "placeholder": null,
+        "css": "#submit-btn"
+      },
+      "navigates": true,
+      "next_path": "/disputes/SBX-3F1D5D",
+      "screenshot": "step-11.png",
+      "describe": "Click \u201cSubmit dispute\u201d and wait for the next page"
+    },
+    {
+      "n": 12,
+      "phase": "file",
+      "action": "read_ref",
+      "path": "/disputes/SBX-3F1D5D",
+      "target": {
+        "tag": "p",
+        "type": null,
+        "label": null,
+        "role": null,
+        "text": null,
+        "name": null,
+        "id": "portal-ref",
+        "placeholder": null,
+        "css": "#portal-ref"
+      },
+      "pattern": "^SBX-[A-Z0-9]{6}$",
+      "demo_value": "SBX-3F1D5D",
+      "screenshot": "step-12.png",
+      "describe": "Read back the portal's reference number from the confirmation page"
+    }
+  ],
+  "fields": {
+    "channel": 5,
+    "order_ids": 6,
+    "amount": 7,
+    "category": 8,
+    "finding_id": 9,
+    "dispute_draft": 10
+  },
+  "constants": [],
+  "unused_fields": [],
+  "video": "video.webm",
+  "trace": "trace.zip",
+  "hash": "1b6b5f17c4f7d55a57a2446897a2ec7a1bda6345f2171ff4a0c7882608c9648f",
+  "warnings": []
+}

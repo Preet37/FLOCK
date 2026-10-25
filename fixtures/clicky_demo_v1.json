@@ -1,0 +1,246 @@
+{
+  "demo_id": "D-20261024-212212",
+  "recorded_at": "2026-10-25T04:22:14+00:00",
+  "portal_url": "http://127.0.0.1:58777",
+  "portal_layout": "v1",
+  "finished": "reference_seen",
+  "shown": {
+    "finding_id": "F-0001",
+    "channel": "doordash",
+    "order_ids": [
+      "ORD-1001"
+    ],
+    "gap": 2.5,
+    "check_type": "commission",
+    "dispute_draft": "Hello DoorDash merchant support,\n\nWe're disputing a commission on order(s) ORD-1001. Expected $4.00, charged $6.50, a difference of $2.50, based on the evidence below.\n\nEvidence:\n1. data/raw/doordash/payouts_wk1.csv row 14 (commission charged 6.50 on gross 20.00)\n2. data/raw/contracts/doordash_msa.pdf: \"Marketplace commission: 20% of subtotal\"\n\nPlease credit the difference on our next payout. Thank you.",
+    "expected": 4.0,
+    "actual": 6.5
+  },
+  "events": [
+    {
+      "kind": "goto",
+      "path": "/login",
+      "seq": 1,
+      "at": 1792902132842
+    },
+    {
+      "kind": "fill",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Username",
+        "role": "textbox",
+        "text": null,
+        "name": "username",
+        "id": "username",
+        "placeholder": null,
+        "css": "#username"
+      },
+      "value": "sandbox",
+      "secret": false,
+      "path": "/login",
+      "at": 1792902132896,
+      "seq": 2,
+      "screenshot": "step-02.png"
+    },
+    {
+      "kind": "fill",
+      "target": {
+        "tag": "input",
+        "type": "password",
+        "label": "Password",
+        "role": "textbox",
+        "text": null,
+        "name": "password",
+        "id": "password",
+        "placeholder": null,
+        "css": "#password"
+      },
+      "value": null,
+      "secret": true,
+      "path": "/login",
+      "at": 1792902132981,
+      "seq": 3,
+      "screenshot": "step-03.png"
+    },
+    {
+      "kind": "click",
+      "target": {
+        "tag": "button",
+        "type": "submit",
+        "label": null,
+        "role": "button",
+        "text": "Sign in",
+        "name": null,
+        "id": "login-btn",
+        "placeholder": null,
+        "css": "#login-btn"
+      },
+      "path": "/login",
+      "at": 1792902132981,
+      "seq": 4,
+      "navigated_to": "/disputes/new",
+      "screenshot": "step-04.png"
+    },
+    {
+      "kind": "select",
+      "target": {
+        "tag": "select",
+        "type": null,
+        "label": "Sales channel",
+        "role": "combobox",
+        "text": null,
+        "name": "channel",
+        "id": "channel",
+        "placeholder": null,
+        "css": "#channel"
+      },
+      "value": "doordash",
+      "option_text": "doordash",
+      "path": "/disputes/new",
+      "at": 1792902133101,
+      "seq": 5,
+      "screenshot": "step-05.png"
+    },
+    {
+      "kind": "fill",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Order ID(s), comma separated",
+        "role": "textbox",
+        "text": null,
+        "name": "order_ids",
+        "id": "order_ids",
+        "placeholder": null,
+        "css": "#order_ids"
+      },
+      "value": "ORD-1001",
+      "secret": false,
+      "path": "/disputes/new",
+      "at": 1792902133145,
+      "seq": 6,
+      "screenshot": "step-06.png"
+    },
+    {
+      "kind": "fill",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Amount disputed (USD)",
+        "role": "textbox",
+        "text": null,
+        "name": "amount",
+        "id": "amount",
+        "placeholder": null,
+        "css": "#amount"
+      },
+      "value": "$2.50",
+      "secret": false,
+      "path": "/disputes/new",
+      "at": 1792902133191,
+      "seq": 7,
+      "screenshot": "step-07.png"
+    },
+    {
+      "kind": "select",
+      "target": {
+        "tag": "select",
+        "type": null,
+        "label": "Category",
+        "role": "combobox",
+        "text": null,
+        "name": "category",
+        "id": "category",
+        "placeholder": null,
+        "css": "#category"
+      },
+      "value": "commission",
+      "option_text": "Incorrect commission",
+      "path": "/disputes/new",
+      "at": 1792902133191,
+      "seq": 8,
+      "screenshot": "step-08.png"
+    },
+    {
+      "kind": "fill",
+      "target": {
+        "tag": "input",
+        "type": null,
+        "label": "Your internal reference (optional)",
+        "role": "textbox",
+        "text": null,
+        "name": "merchant_ref",
+        "id": "merchant_ref",
+        "placeholder": null,
+        "css": "#merchant_ref"
+      },
+      "value": "F-0001",
+      "secret": false,
+      "path": "/disputes/new",
+      "at": 1792902133297,
+      "seq": 9,
+      "screenshot": "step-09.png"
+    },
+    {
+      "kind": "fill",
+      "target": {
+        "tag": "textarea",
+        "type": null,
+        "label": "Message and evidence",
+        "role": "textbox",
+        "text": null,
+        "name": "message",
+        "id": "message",
+        "placeholder": null,
+        "css": "#message"
+      },
+      "value": "Hello DoorDash merchant support,\n\nWe're disputing a commission on order(s) ORD-1001. Expected $4.00, charged $6.50, a difference of $2.50, based on the evidence below.\n\nEvidence:\n1. data/raw/doordash/payouts_wk1.csv row 14 (commission charged 6.50 on gross 20.00)\n2. data/raw/contracts/doordash_msa.pdf: \"Marketplace commission: 20% of subtotal\"\n\nPlease credit the difference on our next payout. Thank you.",
+      "secret": false,
+      "path": "/disputes/new",
+      "at": 1792902133396,
+      "seq": 10,
+      "screenshot": "step-10.png"
+    },
+    {
+      "kind": "click",
+      "target": {
+        "tag": "button",
+        "type": "submit",
+        "label": null,
+        "role": "button",
+        "text": "Submit dispute",
+        "name": null,
+        "id": "submit-btn",
+        "placeholder": null,
+        "css": "#submit-btn"
+      },
+      "path": "/disputes/new",
+      "at": 1792902133396,
+      "seq": 11,
+      "navigated_to": "/disputes/SBX-3F1D5D",
+      "screenshot": "step-11.png"
+    },
+    {
+      "kind": "reference",
+      "target": {
+        "tag": "p",
+        "type": null,
+        "label": null,
+        "role": null,
+        "text": null,
+        "name": null,
+        "id": "portal-ref",
+        "placeholder": null,
+        "css": "#portal-ref"
+      },
+      "value": "SBX-3F1D5D",
+      "path": "/disputes/SBX-3F1D5D",
+      "at": 1792902133427,
+      "seq": 12,
+      "screenshot": "step-12.png"
+    }
+  ],
+  "video": "video.webm",
+  "trace": "trace.zip"
+}

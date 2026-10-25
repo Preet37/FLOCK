@@ -10,6 +10,9 @@ Journal entries work the same way: approve / reject are gatekeeper transitions (
 person's Actor, and "export" has the gatekeeper post every approved entry to a CSV in data/exports/.
 The Flock view polls GET /api/agents?since=<cursor> (flock/agents_live.py folds the store's agent feed): only agents
 that changed since the cursor come back, and past a few hundred per role they are pooled, so it stays light.
+The Clicky view shows the workflow Clicky learned from a human's demonstration (flock/workflow.py): plain-English
+steps with screenshots, which finding field feeds each, its state, and the recording. Approving it is a gatekeeper
+transition (machine=workflow.WORKFLOW) with the person's Actor; only a human may.
 """
 from __future__ import annotations
 
@@ -18,12 +21,13 @@ import csv
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 from flask import Flask, abort, jsonify, request, send_from_directory
 
-from flock import agents_live, llm, market
+from flock import agents_live, llm, market, portal, workflow
 from flock.agents import clicky, journal, learner, panel
 from flock.gatekeeper import Denied, transition
 from flock.models import JE_TRANSITIONS, JOURNAL, TRANSITIONS, Actor
@@ -145,16 +149,48 @@ def airgap_status(store: Store) -> dict[str, Any]:
     return {"enforced": llm.airgap(), "last_run": last, "line": line, "routes": routes}
 
 
+DEMO_FILE = re.compile(r"step-\d{2,3}\.png|video\.webm|trace\.zip")
+
+
+def clicky_status(ws: workflow.WorkflowStore) -> dict[str, Any]:
+    """The learned workflow for the Clicky view: steps in plain English, what feeds each, its state, the recording."""
+    wf = ws.current()
+    replay, stop = clicky.learned_status(ws)
+    demo = None
+    if wf and wf.get("learned_from"):
+        d = workflow.demo_dir(wf["learned_from"])
+        base = f"/api/clicky/demos/{wf['learned_from']}/"
+        demo = {"demo_id": wf["learned_from"], "exists": d.exists(),
+                "video": base + "video.webm" if (d / "video.webm").exists() else None,
+                "trace": base + "trace.zip" if (d / "trace.zip").exists() else None,
+                "trace_path": str(d / "trace.zip"), "base": base}
+    history = [{k: w.get(k) for k in ("workflow_id", "version", "state", "learned_from", "learned_at", "portal_layout",
+                                      "approved_by", "stale_reason")}
+               for w in sorted(ws.all(), key=lambda w: w.get("version", 0), reverse=True)]
+    return {
+        "workflow": wf, "demo": demo, "history": history, "log": ws.log()[-40:],
+        "uses": "learned" if replay else ("stopped" if stop else "hard-coded"), "stop": stop,
+        "needs_demo": bool(wf and wf["state"] == "STALE"), "needs_approval": bool(wf and wf["state"] == "DRAFT"),
+        "mode": os.environ.get("FLOCK_CLICKY_MODE", "file"), "layout": portal.layout_name(),
+        "missing_required": workflow.missing_required(wf) if wf else [],
+    }
+
+
 def create_app(store: Store | None = None, runs_path: Path | None = None, journal_store: JournalStore | None = None,
-               exports_dir: Path | None = None) -> Flask:
+               exports_dir: Path | None = None, workflow_store: workflow.WorkflowStore | None = None) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.config["STORE"] = store if store is not None else get_store()
     app.config["RUNS_PATH"] = runs_path or scoreboard.RUNS
     app.config["JOURNAL"] = journal_store if journal_store is not None else get_journal_store(app.config["STORE"])
     app.config["EXPORTS"] = exports_dir or journal.EXPORTS
+    app.config["WORKFLOWS"] = workflow_store if workflow_store is not None else workflow.get_workflow_store(
+        app.config["STORE"])
 
     def st() -> Store:
         return app.config["STORE"]
+
+    def wfs() -> workflow.WorkflowStore:
+        return app.config["WORKFLOWS"]
 
     def js() -> JournalStore:
         return app.config["JOURNAL"]
@@ -223,7 +259,50 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
     @app.post("/api/file-approved")
     def api_file():
         """Hand APPROVED disputes to Clicky; each filing is a gatekeeper transition."""
-        return jsonify(filed=clicky.file_approved(st()))
+        return jsonify(filed=clicky.file_approved(st(), wstore=wfs()))
+
+    # Clicky's learned workflow -------------------------------------------------------
+    @app.get("/api/clicky")
+    def api_clicky():
+        return jsonify(clicky_status(wfs()))
+
+    @app.post("/api/clicky/<action>")
+    def api_clicky_decide(action: str):
+        """A person approves (or rejects) the learned workflow. The gatekeeper refuses anyone but a human, logs it
+        with the workflow's hash, and refuses steps that changed since Clicky learned them."""
+        if action not in HUMAN_ACTIONS:
+            return jsonify(error=f"the dashboard only does {' / '.join(HUMAN_ACTIONS)}"), 400
+        b = body()
+        name = str(b.get("actor") or "").strip()
+        if not name:
+            return jsonify(error="say who you are: 'actor' is required"), 400
+        actor = Actor(id=name, role=str(b.get("role") or "human"))
+        wf = wfs().current()
+        if wf is None:
+            return jsonify(error="no learned workflow yet: python -m flock.agents.clicky record"), 404
+        reason = str(b.get("reason") or "").strip() or "via the dashboard"
+        try:
+            if action == "approve":
+                after = workflow.approve(wfs(), actor, wf["workflow_id"], reason=reason)
+            else:
+                after = transition(wfs(), wf["workflow_id"], "reject", actor, reason=reason,
+                                   evidence=[{"workflow_hash": wf.get("hash")}], machine=workflow.WORKFLOW)
+        except Denied as e:
+            return jsonify(error=str(e), log_entry=wfs().log(wf["workflow_id"])[-1]), 403
+        return jsonify(workflow=after, log_entry=wfs().log(wf["workflow_id"])[-1])
+
+    @app.get("/api/clicky/demos/<demo_id>/<name>")
+    def api_clicky_demo_file(demo_id: str, name: str):
+        """A recording's screenshots, video and trace (data/demos/<demo_id>/), nothing else."""
+        if not DEMO_FILE.fullmatch(name):
+            abort(404, "not a recording file")
+        try:
+            d = workflow.demo_dir(demo_id)
+        except ValueError:
+            abort(404, "bad demo id")
+        if not (d / name).is_file():
+            abort(404, "no such recording file")
+        return send_from_directory(d, name)
 
     @app.get("/api/rules")
     def api_rules():
