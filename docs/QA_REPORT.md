@@ -7,14 +7,14 @@ Machine: MacBook (darwin), Python 3.14, the worktree's own `.venv`.
 
 | | |
 | --- | --- |
-| Test suite (default, `pytest`) | **496 passed, 7 skipped, 16 s** (was 472 + 2 skipped before this branch) |
-| Everything (`FLOCK_SLOW=1 FLOCK_TEST_BROWSER=1 pytest`) | **503 passed, 0 skipped, 48 s**, including both real-browser Clicky tests (Playwright Chromium 156) |
+| Test suite (default, `pytest`) | **519 passed, 7 skipped, 26 s** on top of main 7b0f2ee (the 7 skipped are the slow and browser tests) |
+| Everything (`FLOCK_SLOW=1 FLOCK_TEST_BROWSER=1 pytest`) | **526 passed, 0 skipped, 59 s**, including both real-browser Clicky tests (Playwright Chromium 156) |
 | Quickstart | Output unchanged: 6/6 caught, Week 1: 2 to a human, Week 2: 0 |
 | Live seed demos | 15 runs over 3 profiles/source mixes: **every trap caught, 0 false alarms** |
 | Full year, bagel chain 56 x 52 weeks | 1,257,013 orders, **9,669/9,669 traps, 0 false alarms, 118 s** |
 | Hosted API (Railway) | All read routes up and returning valid JSON, empty at first; 30 min later 6 judged findings, 6/6 caught. Check it is filled before judging (checklist step 7) |
 | Bugs fixed | 11 (below), each with a test |
-| Bugs open | 7 in `flock/api.py` / `dashboard/app.py` (not mine to edit) + 2 design notes |
+| Bugs open | 7 written up for `flock/api.py` / `dashboard/app.py` (not mine to edit): 2 since fixed on main, 5 still open; + 2 design notes |
 
 ## What was tested
 
@@ -55,7 +55,7 @@ FLOCK_TEST_BROWSER=1 pytest tests/test_clicky.py tests/test_clicky_learn.py   # 
 | `flock.demo --seed 4821 --weeks 52` (12 x 52) | 9.7 s | 477/477 |
 | `flock.demo --seed 4821 --profile ca_bagel_chain --weeks 52` (56 x 52, slack/email/notes on) | **118 s** | 9,669/9,669, all 22 trap types |
 | `scripts/benchmark.py` (rules, seeds 101-110, bagel 2 weeks) | 41 s | 3,676/3,676, 0 false alarms |
-| Default `pytest` / everything | 16 s / 48 s | all pass |
+| Default `pytest` / everything | 26 s / 59 s | all pass |
 
 Every demo run above: 0 false alarms. The README says 84 s for the full year; on this laptop it is 118 s with the
 Slack/email/notes sources on. Budget two minutes for that on stage, or show the 2-week run live.
@@ -107,9 +107,14 @@ So: pipe curl straight into the parser (or use `print -r` / `printf '%s'`), neve
 
 Two real API bugs that also end in a `JSONDecodeError` on the client are A1 and A2 below.
 
-### A1 (high): any unexpected error on a GET drops the connection with an empty reply
+**Status after rebasing on main `7b0f2ee` (`preet/frontend-api` merged, api.py now 499 lines):** A1 and A4 are
+**fixed on main**: `do_GET` now catches everything and answers JSON, `_jsonl` skips a partial last line, and
+`POST /api/run` is one background job at a time (409 otherwise). A2, A3, A5, A6 are **still open**; their new line
+numbers are given below. The original write-ups are kept for the record.
 
-- **File:** `flock/api.py`, `do_GET`, lines 167-189: only `KeyError` is caught.
+### A1 (FIXED on main): any unexpected error on a GET dropped the connection with an empty reply
+
+- **File (old):** `flock/api.py`, `do_GET`, lines 167-189: only `KeyError` was caught.
 - **Repro:** run `flock.api`, then (a) append half a line to `data/sandbox_portal/disputes.jsonl` (Clicky mid-append)
   and `curl /api/portal`, or (b) move `data/answer_key.csv` and `curl /api/score`. Result: `curl: (52) Empty reply
   from server`, HTTP 000, 0 bytes; the server prints a traceback. A frontend gets `JSONDecodeError: Expecting value:
@@ -121,7 +126,8 @@ Two real API bugs that also end in a `JSONDecodeError` on the client are A1 and 
 
 ### A2 (medium): `json.dumps` will emit `NaN` if a NaN ever reaches a payload
 
-- **File:** `flock/api.py` line 149 (`data = json.dumps(payload).encode()`); `dashboard/app.py` uses Flask's
+- **File:** `flock/api.py` line 374 on main (`data = json.dumps(payload, default=str).encode()`, was line 149);
+  `dashboard/app.py` uses Flask's
   `jsonify`, same default.
 - **Status:** not seen in any run tonight (scenario + strict-JSON test pass). But Python's default writes `NaN`,
   which `JSON.parse` rejects, so one pandas NaN in a future source would blank the whole findings list.
@@ -130,15 +136,18 @@ Two real API bugs that also end in a `JSONDecodeError` on the client are A1 and 
 
 ### A3 (medium): concurrent requests share `sys.stdout` through `contextlib.redirect_stdout`
 
-- **File:** `flock/api.py` lines 91-95 (`_captured`), used by `scoreboard()` (124) and `run()` (139) on a
-  `ThreadingHTTPServer`.
-- **Repro:** `POST /api/run` (seconds of pipeline output) while the UI polls `GET /api/score`. `redirect_stdout`
-  swaps the process-wide `sys.stdout`; the two contexts exit out of order, so the score text can contain pipeline lines
-  and `sys.stdout` can be left pointing at a dead `StringIO` (server logs vanish).
-- **Fix:** a module-level `threading.Lock()` around `_captured`, or call `score(verbose=False)` (the scoreboard
-  already returns everything as data) and build `text` from the result.
+- **File (main):** `flock/api.py` lines 94-98 (`_captured`), used by the scoreboard (line 222) and the fixtures run
+  (272), plus the background job thread's `redirect_stdout(_Lines(job))` at line 340, all on a `ThreadingHTTPServer`.
+- **Repro:** start a job (`POST /api/run?wait=0`) while the UI polls `GET /api/score`. `redirect_stdout` swaps the
+  process-wide `sys.stdout`. If the score request enters before the job and exits during it, the job's output goes to
+  the terminal instead of `job["output"]`, the score `text` picks up pipeline lines, and when the job exits it puts
+  back the score's dead `StringIO`, so server logs vanish for good. This is worse now that runs are background
+  threads.
+- **Fix:** have the scoreboard call `score(..., verbose=False)` (it already returns everything as data) and build
+  `text` from the result, with no redirect. For the job, pass a `progress`/printer into `pipeline.run` instead of
+  swapping `sys.stdout`, or at least hold one module-level lock across every `redirect_stdout`.
 
-### A4 (medium): two `POST /api/run` at once run two pipelines on the same files
+### A4 (FIXED on main: `run_lock`, 409): two `POST /api/run` at once ran two pipelines on the same files
 
 - **File:** `flock/api.py` line 139 (`Api.run`).
 - **Repro:** double-click "Run" in a UI: both requests reset and write `data/state` concurrently (interleaved log,
@@ -148,15 +157,15 @@ Two real API bugs that also end in a `JSONDecodeError` on the client are A1 and 
 
 ### A5 (low): `OPTIONS` answers 204 with a body
 
-- **File:** `flock/api.py` line 165: `self._send(204, {})` writes `{}` and `Content-Length: 2`. A 204 must not have a
+- **File:** `flock/api.py` line 397 on main (was 165): `self._send(204, {})` writes `{}` and `Content-Length: 2`. A 204 must not have a
   body; strict proxies and some HTTP clients (undici) reject or warn on it.
 - **Fix:** for 204 send the headers with `Content-Length: 0` and no body.
 
 ### A6 (low): docs and token check
 
-- `flock/api.py` line 8 says `/api/findings` is "newest id first"; line 116 sorts ascending, and real-data ids are
-  random (N1), so neither order means anything. Sort by `(check_type, channel, order_ids)` or document "by id".
-- Line 194: compare the token with `hmac.compare_digest(...)` rather than `==` (constant time). Low risk tonight.
+- `/api/findings` sorts by `finding_id` (line 203 on main), and real-data ids are random (N1), so the order means
+  nothing. Sort by `(check_type, channel, order_ids)` or by gap.
+- Line 453 on main (was 194): compare the token with `hmac.compare_digest(...)` rather than `==` (constant time). Low risk tonight.
 
 ### A7 (low): `dashboard/app.py` line 183 has the same run-history default as B1
 
@@ -237,7 +246,8 @@ python -m dashboard.app                                    # http://127.0.0.1:50
 
 # 7. hosted API: if /api/findings is [], fill it; then check reads
 curl -X POST -H "Authorization: Bearer $FLOCK_API_TOKEN" -H "Content-Type: application/json" \
-     -d '{"reset": true, "forget": true, "demo_approve": true}' https://web-production-812b4.up.railway.app/api/run
+     -d '{"reset": true, "forget": true, "demo_approve": true}' "https://web-production-812b4.up.railway.app/api/run?wait=0"
+# 202 + a job id: poll GET /api/jobs/<id> until "done" (CREAO judges take minutes; without ?wait=0 Railway returns 502)
 curl -s https://web-production-812b4.up.railway.app/api/score | python3 -c 'import json,sys; print(json.load(sys.stdin)["text"])'
 # expect "caught 6/6 traps". Parse with a pipe like this, never `echo "$json"` in zsh (it breaks \n escapes).
 ```
