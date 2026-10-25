@@ -45,7 +45,35 @@
       "creation_run": "adf40fb9-e358-4d3d-a732-8ee2e60101db"
     }
   },
-  "apps": {},
+  "apps": {
+    "judge.strict": {
+      "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "name": "Flock Judge",
+      "page": "https://agent.creao.ai/apps/9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "inputs": [
+        "instructions",
+        "request"
+      ]
+    },
+    "judge.operator": {
+      "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "name": "Flock Judge",
+      "page": "https://agent.creao.ai/apps/9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "inputs": [
+        "instructions",
+        "request"
+      ]
+    },
+    "judge.skeptic": {
+      "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "name": "Flock Judge",
+      "page": "https://agent.creao.ai/apps/9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "inputs": [
+        "instructions",
+        "request"
+      ]
+    }
+  },
   "apps_url": "https://agent.creao.ai",
   "account": "thabhelo.duve@talladega.edu"
 }
