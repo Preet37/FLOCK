@@ -1,3 +1,33 @@
+# Client login and vendor email
+
+## Login for the finance team (`flock/auth.py`)
+
+Reviewers sign in with a username and password instead of pasting `FLOCK_API_TOKEN`. A reviewer's session can approve
+and reject; the audit log records the signed-in user's name (a name sent by the browser is ignored). A viewer can
+sign in and read, not decide. Sessions last 12 hours (`data/state/sessions.json`, stored by token hash). Five wrong
+passwords in five minutes lock that username for the rest of the window.
+
+**Demo login (simulated restaurant, for the team and the judges' walkthrough):**
+
+| Username | Password | Name | Role |
+| --- | --- | --- | --- |
+| `noahs-finance` | `bagels-reconcile-2026` | Preet Karia | reviewer |
+
+The password lives only here. The repo stores its pbkdf2-sha256 hash (`data/users.example.json`).
+
+**Your own users on Railway:** set `FLOCK_USERS` to a JSON list; it replaces the example file.
+
+```bash
+python -m flock.auth hash 'a-strong-password'      # prints pbkdf2_sha256$200000$<salt>$<hash>
+```
+```json
+[{"username": "maja", "password_hash": "pbkdf2_sha256$200000$...", "name": "Maja", "role": "reviewer", "org": "Ringtide"}]
+```
+
+API: `POST /api/login {"username", "password"}` → `{token, user, expires_at}`; send `Authorization: Bearer <token>`
+on writes. `GET /api/me` → the user (401 without a session). `POST /api/logout`. `FLOCK_API_TOKEN` keeps working for
+scripts and agents (then the body's `actor` is used, as before).
+
 # Vendor follow-up email
 
 When a human approves a vendor follow-up and it is sent, Flock emails it with `flock/mailer.py`. With no mail settings

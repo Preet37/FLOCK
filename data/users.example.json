@@ -1,0 +1,9 @@
+[
+  {
+    "username": "noahs-finance",
+    "password_hash": "pbkdf2_sha256$200000$51374b05012e872603f88008bf5f6ca0$dfbc4a8a5744a019e78953afc9974e610ba43a9662a188f47d3ba75e6b865f8e",
+    "name": "Preet Karia",
+    "role": "reviewer",
+    "org": "Ringtide Bagels (simulated)"
+  }
+]
