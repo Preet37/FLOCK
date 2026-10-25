@@ -117,6 +117,12 @@
             <a href="#/scoreboard" data-nav="scoreboard" title="Scoreboard + judge market" aria-label="Scoreboard" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
                 <i data-lucide="trophy" class="w-5 h-5 stroke-[2]"></i>
             </a>
+            <a href="#/learns" data-nav="learns" title="Flock learns" aria-label="Flock learns" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="graduation-cap" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="agent-screen.html" title="Clicky: the live filing screen" aria-label="Clicky" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="mouse-pointer-click" class="w-5 h-5 stroke-[2]"></i>
+            </a>
             <a href="#/benchmarks" data-nav="benchmarks" title="Benchmarks + GX10" aria-label="Benchmarks" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
                 <i data-lucide="flask-conical" class="w-5 h-5 stroke-[2]"></i>
             </a>
@@ -133,6 +139,8 @@
         <a href="theater.html" class="p-2 hover:text-white rounded-xl" aria-label="Agent theater"><i data-lucide="network" class="w-6 h-6"></i></a>
         <a href="#/sources" data-nav="sources" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Sources"><i data-lucide="inbox" class="w-6 h-6"></i></a>
         <a href="#/scoreboard" data-nav="scoreboard" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Scoreboard"><i data-lucide="trophy" class="w-6 h-6"></i></a>
+        <a href="#/learns" data-nav="learns" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Flock learns"><i data-lucide="graduation-cap" class="w-6 h-6"></i></a>
+        <a href="agent-screen.html" class="p-2 hover:text-white rounded-xl" aria-label="Clicky"><i data-lucide="mouse-pointer-click" class="w-6 h-6"></i></a>
         <a href="#/benchmarks" data-nav="benchmarks" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Benchmarks"><i data-lucide="flask-conical" class="w-6 h-6"></i></a>
     </nav>
 
@@ -158,6 +166,9 @@
                 <div id="liveStatus" class="hidden sm:flex items-center gap-2 bg-white rounded-full px-3 h-9 sm:h-10 text-xs font-bold text-gray-600 border border-gray-200/50 shadow-sm">
                     <span class="w-2 h-2 rounded-full bg-gray-300"></span> Connecting
                 </div>
+                <a id="runPill" href="theater.html" target="_blank" rel="noopener" class="hidden items-center gap-2 rounded-full bg-cardDark text-white text-xs font-bold px-3 h-9 sm:h-10 shadow-sm" title="Agents are working on a new month: watch them">
+                    <span class="w-2 h-2 rounded-full bg-limeAccent pulse-dot"></span><span id="runPillText">Running</span>
+                </a>
                 <button data-live-run id="liveRunBtn" class="flex items-center gap-1.5 rounded-full bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-xs sm:text-sm px-3 sm:px-4 h-9 sm:h-10 shadow-sm transition" title="Generate a fresh month of data and run every agent on it, live">
                     <i data-lucide="play" class="w-4 h-4"></i><span class="hidden md:inline">Run a new month live</span><span class="md:hidden">Run live</span>
                 </button>
@@ -177,9 +188,6 @@
                 </button>
             </div>
         </header>
-
-        <!-- Live run progress (POST /api/run {"dataset":"live"} -> /api/jobs/<id>) -->
-        <div id="jobPanel" class="hidden shrink-0"></div>
 
         <!-- Showtime banner (GET /api/showtime) -->
         <div id="showtimeBanner" class="hidden shrink-0"></div>

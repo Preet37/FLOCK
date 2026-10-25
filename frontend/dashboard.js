@@ -25,7 +25,7 @@ const settings = {
 const state = {
     log: [], findings: [], agents: null, score: null, metrics: null, payouts: null, showtime: null, market: null,
     connectors: null, payout: null, findingFilter: 'all', seenLog: 0, drawer: null, online: null, refusal: null,
-    lastDecision: null, cache: {}, base: '', approvals: null, outbox: null, job: null, benchmarks: null, safety: null,
+    lastDecision: null, cache: {}, base: '', approvals: null, outbox: null, running: null, rules: null, job: null, benchmarks: null, safety: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -163,6 +163,12 @@ async function pollFast() {
 
 async function pollSlow() {
     try {
+        // A run in progress writes half-finished numbers: keep what's on screen, show the pill, refresh once when it ends
+        const health = await tryGet('/api/health');
+        const running = health?.running_job || null;
+        renderRunPill(running);
+        if (running) { state.running = running; return; }
+        if (state.running) { state.running = null; state.cache = {}; toast('New month finished. The dashboard is up to date.', 'ok'); }
         const [findings, metrics, score, payouts, showtime, market, connectors, approvals, outbox] = await Promise.all([
             tryGet('/api/findings'), tryGet('/api/metrics'), tryGet('/api/score'), tryGet('/api/payouts'),
             tryGet('/api/showtime'), tryGet('/api/market'), tryGet('/api/connectors'), tryGet('/api/approvals'), tryGet('/api/outbox'),
@@ -170,12 +176,14 @@ async function pollSlow() {
         const r = route();
         if (findings && changed('findings', findings)) { state.findings = findings; if (r.name === 'overview') renderFindings(); }
         if (changed('approvals', { approvals, n: state.findings.length })) { state.approvals = approvals; renderQueueCount(); if (r.name === 'overview') renderApprovals(); }
-        if (changed('metrics', { metrics, score })) { state.metrics = metrics; state.score = score; if (r.name === 'overview') { renderMetrics(); renderHours(); } if (r.name === 'scoreboard') renderScoreboard(); }
+        if (metrics && score) save('flock.lastGood', JSON.stringify({ metrics, score }));
+        if (changed('metrics', { metrics, score })) { state.metrics = metrics ?? state.metrics; state.score = score ?? state.score; if (r.name === 'overview') { renderMetrics(); renderHours(); } if (r.name === 'scoreboard') renderScoreboard(); if (r.name === 'learns') renderLearns(); }
         if (payouts && changed('payouts', payouts)) { state.payouts = payouts; if (r.name === 'lumpsums') renderLumpSums(); }
         if (changed('showtime', showtime)) { state.showtime = showtime && showtime.json ? showtime.json : null; renderBanner(); }
         if (market && changed('market', market)) { state.market = market; if (r.name === 'scoreboard') renderScoreboard(); }
         if (outbox) state.outbox = outbox.messages || [];
         if (r.name === 'benchmarks' && !state.benchmarks) loadBenchmarks();
+        if (r.name === 'learns') loadRules();
         if (connectors && changed('connectors', connectors)) { state.connectors = connectors; if (r.name === 'sources') renderSources(); }
         if (r.name === 'payout') loadPayout(r.id);
         if (state.drawer) refreshDrawer();
@@ -278,6 +286,7 @@ const TITLES = {
     theater: ['Judge theater', 'Judges vote, bet and debate; people decide; Clicky files'],
     sources: ['Sources / Inbox', 'Slack and email batches the connectors brought in, judged against the contracts'],
     scoreboard: ['Scoreboard', 'Answer key, learning curve and the judge market'],
+    learns: ['Flock learns', 'Every call you make teaches it the next one'],
     benchmarks: ['Benchmarks', 'Same findings, every contestant, scored on held-out seeds: rules, local models on the GX10, our tuned judge'],
 };
 
@@ -313,6 +322,7 @@ function renderView(r) {
     else if (r.name === 'theater') { renderTheaterShell(); theaterStart(theater.mode); }
     else if (r.name === 'sources') { v.innerHTML = '<div id="sources"></div>'; renderSources(); }
     else if (r.name === 'scoreboard') { v.innerHTML = '<div id="scoreboard"></div>'; renderScoreboard(); }
+    else if (r.name === 'learns') { v.innerHTML = '<div id="learns"></div>'; renderLearns(); loadRules(); }
     else if (r.name === 'benchmarks') { v.innerHTML = '<div id="benchmarks"></div>'; renderBenchmarks(); loadBenchmarks(); }
     else renderOverviewShell();
     renderBanner();
@@ -612,7 +622,7 @@ function renderHours() {
 }
 
 function shortMonth(s) {
-    const m = String(s || '').match(/^([A-Z][a-z]+) (\d{4})$/);
+    const m = String(s || '').match(/([A-Z][a-z]+) (\d{4})/);
     return m ? `${m[1].slice(0, 3)} ${m[2].slice(2)}` : String(s || '').slice(0, 10);
 }
 
@@ -783,7 +793,7 @@ function agentStatus(ag) {
     if (['error', 'failed'].includes(st)) return 'error';
     if (['idle', 'waiting', 'pending', ''].includes(st) || !st) {
         const recent = ag.last_at && (Date.now() - new Date(ag.last_at).getTime()) < 8000;
-        if (recent && state.job && !state.job.finished) return 'working';
+        if (recent && state.running) return 'working';
         if (ag.actor === 'clicky' && filedFindings().length) return 'done';
         return ag.actions ? 'done' : 'idle';
     }
@@ -797,20 +807,63 @@ function agentStatusText(ag, st) {
     return 'idle';
 }
 
+// Eight agents people can follow; each groups the pipeline steps it runs (the drawer lists them)
+const AGENT_GROUPS = [
+    { key: 'intake', name: 'Intake', icon: 'download', members: ['collector', 'formatter'] },
+    { key: 'matcher', name: 'Matcher', icon: 'git-compare-arrows', members: ['matcher'] },
+    { key: 'deal_keeper', name: 'Deal Keeper', icon: 'file-text', members: ['deal_keeper'], model: true },
+    { key: 'checkers', name: 'Checkers', icon: 'calculator', members: ['checkers', 'anomaly'] },
+    { key: 'judges', name: 'Judges', icon: 'scale', members: ['panel', 'investigator', 'ranker'], model: true, note: 'spawns 3 judges per case' },
+    { key: 'writer', name: 'Writer', icon: 'pen-line', members: ['dispute_writer', 'follow_up'], model: true },
+    { key: 'clicky', name: 'Clicky', icon: 'mouse-pointer-click', members: ['clicky', 'gatekeeper'] },
+    { key: 'learner', name: 'Learner', icon: 'graduation-cap', members: ['learner', 'journal'] },
+];
+const PROVIDER_BADGE = { CREAO: 'bg-[#0084FF] text-white', GX10: 'bg-[#4A4FD8] text-white', code: 'bg-gray-500 text-white' };
+function providerOf(p) {
+    const v = String(p || '').toLowerCase();
+    if (/creao/.test(v)) return 'CREAO';
+    if (/local|gx10|ollama|vllm/.test(v)) return 'GX10';
+    return v ? 'code' : null;
+}
+function groupProvider(g, members) {
+    const named = members.map((a) => providerOf(a.provider)).filter(Boolean);
+    const model = named.find((p) => p !== 'code');
+    if (model) return model;
+    if (named.length) return 'code';
+    if (!g.model) return 'code';
+    // no provider field: the run's model calls say which backend the model roles used
+    const by = (state.metrics?.cards || []).find((c) => c.id === 'cost')?.inputs?.by_provider || {};
+    if (by.creao || by.creaoapp) return 'CREAO';
+    if (by.local) return 'GX10';
+    return 'code';
+}
+function groupState(members) {
+    const st = members.map(agentStatus);
+    if (st.includes('working')) return 'working';
+    if (st.includes('done')) return 'done';
+    return 'idle';
+}
+const groupMembers = (g) => g.members.map((m) => (state.agents?.agents || []).find((a) => a.actor === m)).filter(Boolean);
+
 function renderAgents() {
     const el = $('agentChain');
     if (!el || !state.agents) return;
     const list = state.agents.agents || [];
-    const working = list.filter((a) => agentStatus(a) === 'working').length;
-    $('agentCount').textContent = working ? `${working} working now` : `${list.length} agents`;
-    const html = `<div class="grid grid-cols-5 gap-x-2 gap-y-3">${list.map((ag, i) => {
-        const st = agentStatus(ag);
-        return `<button data-agent="${esc(ag.actor)}" class="flex flex-col items-center gap-1 group min-w-0" title="${esc(ag.name)}: ${esc(agentStatusText(ag, st))}">
-            <div class="relative w-11 h-11 rounded-full ${AGENT_COLORS[i % AGENT_COLORS.length]} flex items-center justify-center text-white border-2 ${st === 'working' ? 'border-limeAccent' : 'border-transparent'} group-hover:border-limeAccent transition shadow-sm">
-                <i data-lucide="bot" class="w-5 h-5"></i>
-                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-cardDark ${STATUS_DOT[st] || 'bg-gray-500'}"></span>
+    const groups = AGENT_GROUPS.map((g) => ({ g, members: groupMembers(g) })).filter((x) => x.members.length);
+    const working = groups.filter((x) => groupState(x.members) === 'working').length;
+    $('agentCount').textContent = working ? `${working} working now` : `${groups.length} agents`;
+    const html = `<div class="grid grid-cols-4 gap-x-2 gap-y-4">${groups.map(({ g, members }) => {
+        const st = groupState(members), prov = groupProvider(g, members);
+        const text = members.map((a) => a.status_text).filter(Boolean)[0] || '';
+        return `<button data-agent-group="${g.key}" class="flex flex-col items-center gap-1.5 group min-w-0" title="${esc(g.name)}${g.note ? ` (${g.note})` : ''}: ${esc(text)}">
+            <div class="relative w-12 h-12 rounded-full ${st === 'idle' ? 'bg-navy-2' : 'bg-purpleAccent'} flex items-center justify-center text-white transition shadow-sm
+                ${st === 'working' ? 'ring-4 ring-limeAccent/70 animate-pulse' : st === 'done' ? 'ring-2 ring-limeAccent/60' : 'opacity-70'} group-hover:ring-4 group-hover:ring-limeAccent">
+                <i data-lucide="${g.icon}" class="w-5 h-5"></i>
+                ${st === 'done' ? '<span class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 text-cardDark flex items-center justify-center"><i data-lucide="check" class="w-3 h-3 stroke-[3]"></i></span>' : ''}
+                ${g.key === 'judges' ? '<span class="absolute -top-1 -left-1 text-[9px] font-extrabold bg-white text-cardDark rounded-full px-1">×3</span>' : ''}
             </div>
-            <span class="text-[10px] font-semibold text-gray-300 truncate max-w-full">${esc(String(ag.name).split(' ')[0])}</span>
+            <span class="text-[11px] font-semibold text-gray-200 leading-tight text-center">${esc(g.name)}</span>
+            ${prov ? `<span class="text-[9px] font-extrabold uppercase tracking-wide rounded px-1.5 py-0.5 ${PROVIDER_BADGE[prov]}">${prov}</span>` : ''}
         </button>`;
     }).join('')}</div>`;
     if (changed('agentHtml', html)) { el.innerHTML = html; icons(); }
@@ -1143,6 +1196,17 @@ function drawTheater() {
 
 /* ---------------- sources / inbox (GET /api/connectors) ---------------- */
 
+// Messages in the same Slack thread (or email chain) sit together; a lone message is its own group
+function threads(claims) {
+    const groups = new Map();
+    claims.forEach((c) => {
+        const key = c.thread_ts || (String(c.locator || '').match(/thread_ts=(\S+)/) || [])[1] || c.in_reply_to || c.locator || Math.random();
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(c);
+    });
+    return [...groups.entries()];
+}
+
 function renderSources() {
     const el = $('sources');
     if (!el) return;
@@ -1156,7 +1220,9 @@ function renderSources() {
         ${cardHead(`<span class="inline-flex items-center gap-2"><span class="w-9 h-9 rounded-full ${b.source === 'slack' ? 'bg-purpleAccent' : 'bg-sky-600'} text-white inline-flex items-center justify-center"><i data-lucide="${b.source === 'slack' ? 'slack' : 'mail'}" class="w-4 h-4"></i></span>${esc(label(b.source))} from ${esc(b.connector)}</span>`,
             `${esc(clock(b.at))} · ${num(b.items)} item(s) · ${num((b.claims || []).length)} deal claim(s)${b.superseded ? ` · ${num(b.superseded)} superseded` : ''}${b.ignored ? ` · ${num(b.ignored)} ignored (no deal term)` : ''}`,
             b.simulated ? pill('bg-sky-100 text-sky-800', 'simulated') : '')}
-        <div class="flex flex-col gap-3">${(b.claims || []).map((c) => `
+        <div class="flex flex-col gap-3">${threads(b.claims || []).map(([key, cs]) => `
+            ${cs.length > 1 ? `<p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mt-1">Thread · ${cs.length} messages</p>` : ''}
+            <div class="${cs.length > 1 ? 'border-l-2 border-purpleAccent/30 pl-3 flex flex-col gap-2' : ''}">${cs.map((c) => `
             <div class="rounded-2xl bg-lightCardBg p-4" data-claim>
                 <div class="flex flex-wrap items-center gap-2 mb-2">
                     ${c.binding ? pill('bg-emerald-100 text-emerald-800', 'Binding') : pill('bg-red-100 text-red-700', 'Not binding')}
@@ -1165,9 +1231,9 @@ function renderSources() {
                     <span class="text-xs text-gray-400">${esc(c.effective_from || '')}${c.effective_to && c.effective_to !== c.effective_from ? ` → ${esc(c.effective_to)}` : ''}</span>
                 </div>
                 <p class="text-sm text-gray-900 leading-relaxed">“${esc(c.quote)}”</p>
-                <p class="text-xs text-gray-500 mt-2"><b class="text-gray-700">${esc(c.sender || 'unknown sender')}</b> · ${esc(c.authority_basis || '')} · <span class="font-mono">${esc(c.locator || '')}</span></p>
-            </div>`).join('') || '<p class="text-sm text-gray-400">No deal claims in this batch.</p>'}
-            ${(b.unread || []).length ? `<p class="text-xs text-amber-700">Couldn't read: ${esc(b.unread.join(', '))}</p>` : ''}
+                <p class="text-xs text-gray-500 mt-2"><b class="text-gray-700">${esc(c.sender || 'unknown sender')}</b> · ${esc(c.authority_basis || '')}</p>
+            </div>`).join('')}</div>`).join('') || '<p class="text-sm text-gray-400">No deal claims in this batch.</p>'}
+            ${(b.unread || []).length ? `<p class="text-xs text-amber-700">${num(b.unread.length)} message${b.unread.length === 1 ? ' needs' : 's need'} the reader agent</p>` : ''}
         </div>`)).join('')}</div>`;
     icons();
 }
@@ -1229,6 +1295,7 @@ function renderScoreboard() {
 
 function openDrawer(kind, id) {
     if (!state.drawer || state.drawer.id !== id) { state.refusal = null; state.lastDecision = null; }
+    state.cache.drawer = null;
     state.drawer = { kind, id };
     state.cache.drawer = null;
     $('drawer').classList.remove('hidden');
@@ -1253,6 +1320,11 @@ async function refreshDrawer() {
             if (state.drawer !== d) return;
             if (!changed('drawer', { data, refusal: state.refusal, last: state.lastDecision })) return;
             renderFindingDetail(data);
+        } else if (d.kind === 'group') {
+            const g = AGENT_GROUPS.find((x) => x.key === d.id);
+            const members = g ? groupMembers(g) : [];
+            if (!changed('drawer', { g: d.id, members })) return;
+            renderGroupDetail(g, members);
         } else {
             const data = await tryGet(`/api/agents/${encodeURIComponent(d.id)}`);
             if (state.drawer !== d) return;
@@ -1472,6 +1544,24 @@ function collectImages(obj, out = []) {
     return out;
 }
 
+function renderGroupDetail(g, members) {
+    if (!g) return;
+    const prov = groupProvider(g, members);
+    $('drawerTitle').textContent = g.name;
+    $('drawerBody').innerHTML = [
+        card(`<span class="flex items-center gap-2">${esc(g.name)}${prov ? `<span class="text-[10px] font-extrabold rounded px-1.5 py-0.5 ${PROVIDER_BADGE[prov]}">${prov}</span>` : ''}${g.note ? `<span class="text-xs text-gray-400 font-semibold">${esc(g.note)}</span>` : ''}</span>`,
+            `<div class="flex flex-col gap-2">${members.map((a) => {
+                const st = agentStatus(a);
+                return `<button data-agent="${esc(a.actor)}" class="w-full text-left rounded-2xl bg-lightCardBg hover:bg-gray-100 p-3 flex items-start gap-3">
+                    <span class="mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_DOT[st] || 'bg-gray-400'}"></span>
+                    <span class="min-w-0"><span class="block text-sm font-bold text-gray-900">${esc(a.name)}</span>
+                    <span class="block text-xs text-gray-600">${esc(a.status_text || a.job || '')}</span></span></button>`;
+            }).join('')}</div>`),
+        g.key === 'clicky' ? card("Clicky's live screen", `<div class="flex items-center justify-between gap-3"><p class="text-sm text-gray-700">Watch Clicky file approved claims.</p>
+            <a href="agent-screen.html" target="_blank" rel="noopener" class="rounded-xl bg-purpleAccent text-white text-xs font-bold px-3 py-2 shrink-0">Open</a></div>`) : '',
+    ].join('');
+}
+
 function renderAgentDetail(id, { data, log }) {
     const ag = (state.agents?.agents || []).find((a) => a.actor === id) || {};
     $('drawerTitle').textContent = ag.name || id;
@@ -1578,79 +1668,31 @@ async function followUp(id, step) {
 
 /* ---------------- live run: a fresh month, every agent, on screen (POST /api/run {"dataset":"live"}) ---------------- */
 
-async function startLiveRun() {
-    if (state.job && !state.job.finished) return toast('A live run is already going.', '');
+// The theater starts the run itself (?run=1) and shows it; the dashboard keeps the last finished numbers until it ends
+function startLiveRun() {
+    const api = state.base && state.base !== location.origin ? `&api=${encodeURIComponent(state.base)}` : '';
+    window.open(`theater.html?run=1${api}`, '_blank', 'noopener');
+}
+
+async function renderRunPill(jobId) {
+    const pillEl = $('runPill');
+    if (!jobId) { pillEl.classList.replace('flex', 'hidden'); $('liveRunBtn').classList.remove('hidden'); return; }
+    let label = 'Running';
     try {
-        const job = await post('/api/run?wait=0', { dataset: 'live' });
-        trackJob(job);
-        toast('New month generated. The agents are on it.', 'ok');
-    } catch (e) {
-        if (e instanceof ApiError && e.status === 409 && e.data.running) return trackJob({ job_id: e.data.running, status: 'running' });
-        if (e instanceof ApiError && e.status === 400) return toast(`This backend can't run a live month yet (${e.message}).`, 'error');
-        fail(e);
-    }
+        const j = await get(`/api/jobs/${encodeURIComponent(jobId)}`);
+        const pr = j.progress || {};
+        if (pr.total) label = `Running · ${Math.min(99, Math.round(100 * (pr.done || 0) / pr.total))}%`;
+    } catch { /* the pill still says Running */ }
+    $('runPillText').textContent = label;
+    pillEl.classList.replace('hidden', 'flex');
+    $('liveRunBtn').classList.add('hidden');
 }
 
-function trackJob(job) {
-    const id = job.job_id || job.id;
-    if (!id) return;
-    state.job = { id, status: job.status || 'running', started: Date.now(), finished: false, data: job };
-    renderJob();
-    pollJob();
-}
-
-async function pollJob() {
-    const j = state.job;
-    if (!j || j.finished) return;
+function loadCachedMetrics() {
     try {
-        const d = await get(`/api/jobs/${encodeURIComponent(j.id)}`);
-        j.data = d; j.status = d.status;
-        if (d.status !== 'running') {
-            j.finished = true;
-            Object.keys(state.cache).forEach((k) => { if (k !== 'bannerHtml') state.cache[k] = null; });
-            const res = d.result || {};
-            toast(d.status === 'done' ? `${res.month || 'New month'} done in ${duration(d.seconds)}: ${num(res.findings)} findings, ${num(res.approvals ?? res.to_human)} need you.` : `Live run ${d.status}: ${d.error || ''}`, d.status === 'done' ? 'ok' : 'error');
-            setTimeout(() => { if (state.job === j) { state.job = null; renderJob(); } }, 20000);
-        }
-    } catch (e) {
-        if (e instanceof ApiError && e.status === 404) { j.finished = true; j.status = 'lost (server restarted)'; }
-    }
-    renderJob();
-    if (!j.finished) setTimeout(pollJob, 1500);
-}
-
-function renderJob() {
-    const el = $('jobPanel');
-    const j = state.job;
-    $('liveRunBtn').classList.toggle('opacity-60', !!(j && !j.finished));
-    if (!j) { el.classList.add('hidden'); el.innerHTML = ''; return; }
-    const d = j.data || {}, pr = d.progress || {};
-    const frac = pr.total ? Math.min(1, (pr.done || 0) / pr.total) : null;
-    const stages = pr.stages || [];
-    const tail = (d.output_tail || []).slice(-3);
-    const secs = d.seconds ?? Math.round((Date.now() - j.started) / 1000);
-    el.classList.remove('hidden');
-    el.innerHTML = `<div class="bg-cardDark text-white rounded-3xl p-4 sm:p-5 shadow-md" data-test="job-panel">
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div class="flex items-center gap-3 min-w-0">
-                <div class="w-10 h-10 rounded-full ${j.finished ? (j.status === 'done' ? 'bg-limeAccent text-black' : 'bg-red-600') : 'bg-purpleAccent'} flex items-center justify-center shrink-0">
-                    <i data-lucide="${j.finished ? (j.status === 'done' ? 'check' : 'triangle-alert') : 'loader'}" class="w-5 h-5 ${j.finished ? '' : 'animate-spin'}"></i></div>
-                <div class="min-w-0">
-                    <p class="text-[11px] font-bold uppercase tracking-wider text-limeAccent">Live run · <span class="font-mono">${esc(j.id)}</span> · ${esc(duration(secs))}</p>
-                    <p class="text-sm sm:text-base font-bold truncate">${j.finished ? (j.status === 'done' ? 'Done: findings, approvals and metrics are refreshed' : `Stopped: ${esc(j.status)}`)
-                        : esc(pr.stage ? `${label(pr.stage)}${pr.total ? ` · ${num(pr.done)}/${num(pr.total)} ${esc(pr.unit || '')}` : ''}` : 'Generating a new month of data…')}</p>
-                </div>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-                <a href="#/theater" data-th-live class="rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold text-sm px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="clapperboard" class="w-4 h-4"></i> Watch the agents</a>
-                ${j.finished ? '<button data-job-close class="rounded-2xl bg-white/10 hover:bg-white/20 px-3 py-2.5" aria-label="Dismiss"><i data-lucide="x" class="w-4 h-4"></i></button>' : ''}
-            </div>
-        </div>
-        ${frac != null && !j.finished ? `<div class="h-1.5 rounded-full bg-white/10 mt-3"><div class="h-1.5 rounded-full bg-limeAccent transition-all" style="width:${Math.round(frac * 100)}%"></div></div>` : ''}
-        ${stages.length ? `<div class="flex flex-wrap gap-1.5 mt-3">${stages.map((st) => `<span class="text-[11px] font-semibold rounded-full bg-white/10 px-2.5 py-1">${esc(label(st.name))} ${st.total ? `${num(st.done)}/${num(st.total)}` : ''}</span>`).join('')}</div>` : ''}
-        ${tail.length ? `<div class="mt-3 font-mono text-[11px] text-gray-400 space-y-0.5">${tail.map((l) => `<div class="truncate">${esc(l)}</div>`).join('')}</div>` : ''}
-    </div>`;
-    icons();
+        const c = JSON.parse(store('flock.lastGood') || 'null');
+        if (c && !state.metrics) { state.metrics = c.metrics; state.score = c.score; }
+    } catch { /* nothing cached */ }
 }
 
 /* ---------------- benchmarks (GET /api/benchmarks) ---------------- */
@@ -1682,65 +1724,138 @@ function benchRows(d) {
     }).filter((r) => r.name);
 }
 
+// Three columns people compare: our tuned model on the GX10, a frontier model, today's finance team
+function benchHeadline(d, rows) {
+    const hd = d.headline;
+    if (hd && (Array.isArray(hd) || typeof hd === 'object')) {
+        const list = Array.isArray(hd) ? hd : Object.entries(hd).map(([key, v]) => ({ key, ...v }));
+        return list.map((c) => ({ title: c.title || c.label || c.name || label(c.key), rows: c }));
+    }
+    const tuned = rows.find((r) => r.kind === 'tuned' || /tuned|flock-judge-v1/i.test(r.name));
+    const frontier = rows.find((r) => r.kind === 'frontier' || /claude|haiku|creao|frontier/i.test(r.name));
+    const fromRow = (r) => r ? { accuracy: r.accuracy, false_alarms: r.false_alarms } : {};
+    return [
+        { title: 'Our tuned model (GX10)', rows: { ...fromRow(tuned), on_site: true } },
+        { title: 'Frontier model (Claude Haiku 4.5 via CREAO)', rows: { ...fromRow(frontier), on_site: false } },
+        { title: "Today's finance team", rows: { on_site: true } },
+    ];
+}
+const BENCH_ROWS = [
+    ['accuracy', 'Accuracy', (v) => accPct(v)],
+    ['false_alarms', 'False alarms', (v) => num(v)],
+    ['time_per_month', 'Time per month', (v) => typeof v === 'number' ? hrs(v) : esc(v)],
+    ['cost_per_month', 'Cost per month', (v) => typeof v === 'number' ? moneyCard(v) : esc(v)],
+    ['on_site', 'Data stays on-site', (v) => v === true ? 'Yes' : v === false ? 'No' : esc(v)],
+];
+function benchCell(c, key) {
+    const v = c.rows[key] ?? c.rows[{ time_per_month: 'hours_per_month', cost_per_month: 'usd_per_month', on_site: 'data_on_site' }[key]];
+    return v == null ? '<span class="text-gray-400 font-semibold">not measured</span>' : BENCH_ROWS.find((b) => b[0] === key)[2](v);
+}
+
 function renderBenchmarks() {
     const el = $('benchmarks');
     if (!el) return;
     const d = state.benchmarks;
     if (!d) { el.innerHTML = whiteCard(empty('Loading benchmarks…')); return icons(); }
     if (d.error) {
-        el.innerHTML = whiteCard(`${cardHead('Benchmarks', 'GET /api/benchmarks')}${empty(d.error === 'missing' ? 'This backend does not serve /api/benchmarks yet. Results live in docs/gx10_results.md until it does.' : esc(d.error), 'flask-conical')}`);
+        el.innerHTML = whiteCard(`${cardHead('Benchmarks')}${empty(d.error === 'missing' ? 'This backend does not serve /api/benchmarks yet.' : esc(d.error), 'flask-conical')}`);
         return icons();
     }
     const rows = benchRows(d).sort((a, b) => (b.accuracy ?? -1) - (a.accuracy ?? -1));
+    const models = rows.filter((r) => !(r.kind === 'rules' || /^rules/i.test(r.name)));
+    const cols = benchHeadline(d, rows);
     const head = d.speed?.headline || {};
-    const g = d.gx10 || { ...(d.machine || {}), ...(head.speedup ? { speedup: head.speedup, mac_p50_s: head.mac_p50_s, gx10_p50_s: head.gx10_p50_s } : {}) };
-    const tr = d.training || {};
-    const best = rows.find((r) => r.kind === 'tuned' || /tuned|flock-judge-v1/i.test(r.name)) || rows[0];
     const bar = (r) => {
-        const w = Math.round(100 * (r.accuracy || 0));
-        const tuned = /tuned|flock-judge-v1/i.test(r.name), rules = /^rules/i.test(r.name);
+        const tuned = r.kind === 'tuned' || /tuned|flock-judge-v1/i.test(r.name);
         return `<div class="flex items-center gap-3 text-xs sm:text-sm">
-            <span class="w-40 sm:w-64 shrink-0 truncate font-semibold ${tuned ? 'text-gray-900' : 'text-gray-600'}" title="${esc(r.name)}">${esc(r.name)}</span>
-            <div class="flex-1 h-4 rounded-full bg-lightCardBg overflow-hidden"><div class="h-4 rounded-full ${tuned ? 'bg-limeAccent border border-black/10' : rules ? 'bg-cardDark' : 'bg-purpleAccent/70'}" style="width:${w}%"></div></div>
-            <span class="w-24 text-right font-mono font-bold tabular-nums">${r.caught != null && r.total != null ? `${num(r.caught)}/${num(r.total)}` : pct(r.accuracy)}</span></div>`;
+            <span class="w-40 sm:w-72 shrink-0 font-semibold ${tuned ? 'text-gray-900' : 'text-gray-600'}">${esc(r.name)}</span>
+            <div class="flex-1 h-4 rounded-full bg-lightCardBg overflow-hidden"><div class="h-4 rounded-full ${tuned ? 'bg-purpleAccent' : 'bg-limeAccent'}" style="width:${Math.round(100 * (r.accuracy || 0))}%"></div></div>
+            <span class="w-20 text-right font-mono font-bold tabular-nums">${accPct(r.accuracy)}</span></div>`;
     };
-    const kv = (o) => Object.entries(o).filter(([, v]) => v != null && typeof v !== 'object').map(([k, v]) => `
-        <div class="flex justify-between gap-3 py-1.5 border-b border-white/10 text-xs"><span class="text-gray-400">${esc(label(k))}</span><span class="font-semibold text-right">${esc(typeof v === 'number' ? num(v) : v)}</span></div>`).join('');
     el.innerHTML = `
-        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
-            ${best ? statCard({ label: 'Best model judge', value: esc(best.caught != null ? `${num(best.caught)}/${num(best.total)}` : pct(best.accuracy)), sub: esc(best.name), icon: 'trophy', dark: true }) : ''}
-            ${statCard({ label: 'Contestants', value: num(rows.length), sub: esc(d.seeds ? `held-out seeds ${d.seeds}` : d.benchmark?.findings ? `${num(d.benchmark.findings)} findings each` : 'same findings for each'), icon: 'users' })}
-            ${statCard({ label: 'False alarms (all contestants)', value: num(rows.reduce((t, r) => t + (r.false_alarms || 0), 0)), sub: 'flagged when the answer key says fine', icon: 'shield-check' })}
-            ${g.speedup || g.speedup_vs_mac ? statCard({ label: 'GX10 vs a laptop', value: `${esc(g.speedup || g.speedup_vs_mac)}×`, sub: g.mac_p50_s ? `${g.gx10_p50_s} s vs ${g.mac_p50_s} s per finding` : 'faster per finding', icon: 'cpu' }) : ''}
-        </div>
-        ${whiteCard(`${cardHead('Traps caught by contestant', 'held-out seeds, same findings for every contestant')}<div class="flex flex-col gap-2.5">${rows.map(bar).join('') || empty('No results yet.')}</div>`, 'mb-4 lg:mb-5')}
-        ${whiteCard(`${cardHead('Results', 'Every contestant judged the same findings')}
-            <div class="overflow-x-auto"><table class="w-full text-left text-xs sm:text-sm min-w-[640px]">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-5 mb-4 lg:mb-5">${cols.map((c, i) => `
+            <section class="${i === 0 ? 'bg-cardDark text-white shadow-md' : 'bg-white card-shadow border border-gray-100'} rounded-3xl p-5 sm:p-6">
+                <h3 class="font-extrabold text-base sm:text-lg leading-snug mb-4">${esc(c.title)}</h3>
+                ${BENCH_ROWS.map(([key, lbl]) => `<div class="flex items-center justify-between gap-3 py-2 border-b ${i === 0 ? 'border-white/10' : 'border-gray-100'} text-sm">
+                    <span class="${i === 0 ? 'text-gray-400' : 'text-gray-500'}">${lbl}</span><span class="font-extrabold tabular-nums text-right">${benchCell(c, key)}</span></div>`).join('')}
+            </section>`).join('')}</div>
+        ${whiteCard(`<div class="flex items-center justify-between gap-3 mb-4"><h3 class="font-extrabold text-gray-900 text-base sm:text-lg">Model judges on the same cases</h3>
+            <button data-how-text="Rules are hand-written for the traps we already know, so they score perfectly on them and are left out of this chart (they're in the table below). The models handle new wording no rule was written for." class="w-8 h-8 rounded-full text-gray-400 hover:text-gray-800 hover:bg-gray-100 flex items-center justify-center" aria-label="About this chart"><i data-lucide="more-vertical" class="w-4 h-4"></i></button></div>
+            <div class="flex flex-col gap-2.5">${models.map(bar).join('') || empty('No results yet.')}</div>
+            ${head.speedup ? `<p class="text-xs text-gray-500 mt-4">The GX10 judges ${esc(head.speedup)}× faster than a laptop (${esc(head.gx10_p50_s)} s vs ${esc(head.mac_p50_s)} s per case).</p>` : ''}`, 'mb-4 lg:mb-5')}
+        <details class="bg-white rounded-3xl card-shadow border border-gray-100 p-5 sm:p-6">
+            <summary class="cursor-pointer font-extrabold text-gray-900">All contestants</summary>
+            <div class="overflow-x-auto mt-4"><table class="w-full text-left text-xs sm:text-sm min-w-[640px]">
                 <thead class="text-gray-400 text-[11px] uppercase tracking-wider"><tr class="border-b border-gray-100">
                     <th class="py-2 pr-3">Contestant</th><th class="py-2 pr-3 text-right">Accuracy</th><th class="py-2 pr-3 text-right">Caught</th><th class="py-2 pr-3 text-right">False alarms</th>
-                    <th class="py-2 pr-3 text-right">To a human</th><th class="py-2 pr-3 text-right">p50 s/finding</th><th class="py-2 text-right">$ / 1k findings</th></tr></thead>
-                <tbody class="divide-y divide-gray-50">${rows.map((r) => `<tr class="${/tuned|flock-judge-v1/i.test(r.name) ? 'bg-limeAccent/15' : ''}">
-                    <td class="py-2 pr-3 font-bold text-gray-900">${esc(r.name)}${r.status && r.status !== 'ok' ? ` ${pill('bg-gray-100 text-gray-600', r.status)}` : ''}</td>
+                    <th class="py-2 pr-3 text-right">To a human</th><th class="py-2 pr-3 text-right">s / case</th><th class="py-2 text-right">$ / 1k cases</th></tr></thead>
+                <tbody class="divide-y divide-gray-50">${rows.map((r) => `<tr>
+                    <td class="py-2 pr-3 font-bold text-gray-900">${esc(r.name)}</td>
                     <td class="py-2 pr-3 text-right tabular-nums">${accPct(r.accuracy)}</td>
                     <td class="py-2 pr-3 text-right font-mono tabular-nums">${r.caught != null ? `${num(r.caught)}/${num(r.total)}` : '—'}</td>
                     <td class="py-2 pr-3 text-right tabular-nums">${num(r.false_alarms)}</td>
                     <td class="py-2 pr-3 text-right tabular-nums">${num(r.to_human)}</td>
                     <td class="py-2 pr-3 text-right tabular-nums">${r.p50 != null ? Number(r.p50).toFixed(r.p50 < 0.01 ? 3 : 1) : '—'}</td>
-                    <td class="py-2 text-right tabular-nums">${r.cost != null ? money(r.cost) : '—'}</td></tr>`).join('')}</tbody></table></div>`, 'mb-4 lg:mb-5')}
-        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-5">
-            <section class="bg-cardDark text-white rounded-3xl p-5 sm:p-6 shadow-md">
-                <h3 class="font-extrabold text-lg flex items-center gap-2"><i data-lucide="cpu" class="w-5 h-5 text-limeAccent"></i> The GX10</h3>
-                <p class="text-xs text-gray-400 mt-1 mb-3">${esc(g.summary || 'NVIDIA GB10 box on the team tailnet, Ollama over an SSH tunnel: judging runs with nothing leaving the network.')}</p>
-                ${kv(g) || '<p class="text-sm text-gray-500">No GX10 details in this response.</p>'}
-            </section>
-            <section class="bg-white rounded-3xl p-5 sm:p-6 card-shadow border border-gray-100">
-                <h3 class="font-extrabold text-lg text-gray-900 flex items-center gap-2"><i data-lucide="graduation-cap" class="w-5 h-5 text-purpleAccent"></i> Fine-tuning our judge</h3>
-                <p class="text-xs text-gray-400 mt-1 mb-3">${esc(tr.summary || 'flock-judge-v1: a LoRA on Qwen2.5-7B trained on the judge’s own verdict format, served from the GX10.')}</p>
-                <div class="text-gray-900">${Object.entries(tr).filter(([k, v]) => k !== 'summary' && v != null && typeof v !== 'object').map(([k, v]) => `
-                    <div class="flex justify-between gap-3 py-1.5 border-b border-gray-100 text-xs"><span class="text-gray-500">${esc(label(k))}</span><span class="font-semibold text-right">${esc(typeof v === 'number' ? num(v) : v)}</span></div>`).join('') || '<p class="text-sm text-gray-400">No training details in this response.</p>'}</div>
-            </section>
-        </div>`;
+                    <td class="py-2 text-right tabular-nums">${r.cost != null ? money(r.cost) : '—'}</td></tr>`).join('')}</tbody></table></div>
+            ${d.training ? `<p class="text-xs text-gray-500 mt-4"><b>Fine-tuning:</b> ${esc(d.training.model || '')} = ${esc(d.training.method || '')} on ${esc(d.training.base || '')}, ${esc(d.training.minutes ?? '')} min on the GX10.</p>` : ''}
+        </details>`;
     icons();
+}
+
+/* ---------------- Flock learns (GET /api/rules, /api/score runs) ---------------- */
+
+async function loadRules() {
+    const d = await tryGet('/api/rules');
+    if (changed('rules', d)) { state.rules = d; if (route().name === 'learns') renderLearns(); }
+}
+
+function ruleCard(r, proposed) {
+    const id = r.rule_id || r.id || '';
+    const settle = r.outcome === 'correct';
+    const when = r.approved_at || r.created_at || r.proposed_at;
+    const uses = r.uses ?? r.applied ?? r.times_applied ?? r.applied_count;
+    const n = r.evidence_count ?? (r.precedents || []).length;
+    return `<div class="bg-white rounded-3xl p-5 card-shadow border ${proposed ? 'border-dashed border-purpleAccent/50' : 'border-gray-100'} flex flex-col gap-3" data-rule="${esc(id)}">
+        <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-extrabold text-purpleAccent">Rule ${esc(id)}</span>
+            ${proposed ? pill('bg-purpleAccent/10 text-purpleAccent', 'proposed') : uses != null ? pill('bg-limeAccent/30 text-gray-900', `used ${num(uses)}×`) : ''}
+        </div>
+        <div class="flex items-center gap-2.5">${r.channel ? chanBadge(r.channel, 'w-8 h-8 text-[10px]') : ''}
+            <p class="text-base font-extrabold text-gray-900 leading-snug">${esc(chanName(r.channel))} ${esc(label(r.check_type || ''))}
+                <span class="text-gray-400 font-bold">→</span> <span class="${settle ? 'text-emerald-700' : 'text-red-600'}">${settle ? 'settle automatically' : 'claim it automatically'}</span></p></div>
+        <p class="text-xs text-gray-500">${n ? `learned from ${num(n)} of your decisions` : 'learned from your decisions'}${when ? ` · ${esc(new Date(when).toLocaleDateString([], { month: 'short', day: 'numeric' }))}` : ''}</p>
+        ${proposed ? `<button data-rule-approve="${esc(id)}" class="rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm py-2">Approve rule</button>` : ''}
+    </div>`;
+}
+
+function renderLearns() {
+    const el = $('learns');
+    if (!el) return;
+    const runs = state.score?.runs || [];
+    const first = runs[0], last = runs[runs.length - 1];
+    const approved = state.rules?.approved || [], proposed = state.rules?.proposed || [];
+    el.innerHTML = `
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
+            ${statCard({ label: 'Hand-offs to you', value: first && last ? `${num(first.to_human)} → ${num(last.to_human)}` : '—', sub: first && last ? `${shortMonth(first.label)} → ${shortMonth(last.label)}` : '', icon: 'trending-down', dark: true })}
+            ${statCard({ label: 'Rules learned', value: num(approved.length), sub: proposed.length ? `${num(proposed.length)} waiting for you` : '', icon: 'graduation-cap' })}
+            ${statCard({ label: 'Settled by rules', value: num(state.score?.by_rule), sub: 'no one had to look', icon: 'check' })}
+        </div>
+        ${whiteCard(`${cardHead('Hand-offs to a human, month by month')}<div id="curveLearn" class="h-56"></div>`, 'mb-4 lg:mb-5')}
+        ${proposed.length ? `<h3 class="font-extrabold text-gray-900 text-lg mb-3">Waiting for your OK</h3><div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-5">${proposed.map((r) => ruleCard(r, true)).join('')}</div>` : ''}
+        <h3 class="font-extrabold text-gray-900 text-lg mb-3">What it learned</h3>
+        ${approved.length ? `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">${approved.map((r) => ruleCard(r, false)).join('')}</div>`
+            : whiteCard(empty('No rules yet. Decide a few hand-offs and the Learner proposes one.', 'graduation-cap'))}`;
+    renderCurve('curveLearn', true);
+    icons();
+}
+
+async function approveRule(id) {
+    try {
+        await post(`/api/rules/${encodeURIComponent(id)}/approve`, { actor: settings.actor });
+        toast(`Rule ${id} approved. Next month it settles these on its own.`, 'ok');
+        state.cache.rules = null;
+        loadRules();
+    } catch (e) { fail(e); }
 }
 
 /* ---------------- Clicky's screen ---------------- */
@@ -1868,10 +1983,11 @@ document.addEventListener('click', (e) => {
     if (t.closest('[data-logout]')) return logout();
     if (!t.closest('#userMenu')) toggleUserMenu(false);
     if (t.closest('[data-live-run]')) return startLiveRun();
-    if (t.closest('[data-job-close]')) { state.job = null; return renderJob(); }
     if (t.closest('[data-th-live]')) { theater.mode = 'live'; return; }
     if (t.closest('[data-token-cancel]')) return finishToken(null);
     if (t.closest('[data-close-screen]') || t.id === 'screenModal') return closeScreen();
+    const ra = t.closest('[data-rule-approve]');
+    if (ra) return approveRule(ra.dataset.ruleApprove);
     const evb = t.closest('[data-ev-ref]');
     if (evb) return openEvidence(evb.dataset.evRef, evb.dataset.evIdx);
     const evf = t.closest('[data-ev-finding]');
@@ -1882,6 +1998,8 @@ document.addEventListener('click', (e) => {
     if (scr) return openScreen(scr.dataset.screen);
     if (t.closest('[data-close-drawer]')) return closeDrawer();
     if (t.closest('[data-close-modal]') || t.id === 'actionModal') return closeModal();
+    const howt = t.closest('[data-how-text]');
+    if (howt) return openModal('About this chart', `<p class="text-sm text-gray-700 leading-relaxed">${esc(howt.dataset.howText)}</p>`);
     const how = t.closest('[data-how]');
     if (how) return showHow(how.dataset.how);
     const ff = t.closest('[data-ffilter]');
@@ -1904,6 +2022,8 @@ document.addEventListener('click', (e) => {
         location.hash = `#/finding/${encodeURIComponent(f.dataset.finding)}`;
         return;
     }
+    const ag = t.closest('[data-agent-group]');
+    if (ag) return openDrawer('group', ag.dataset.agentGroup);
     const a = t.closest('[data-agent]');
     if (a) return openDrawer('agent', a.dataset.agent);
 });
@@ -1927,8 +2047,8 @@ $('tokenForm').onsubmit = (e) => { e.preventDefault(); finishToken($('tokenOnce'
     state.base = settings.api;
     $('apiBase').textContent = `API: ${settings.api}`;
     await checkAuth();
+    loadCachedMetrics();
     onRoute();
     pollFast();
     pollSlow();
-    tryGet('/api/health').then((h) => { if (h?.running_job) trackJob({ job_id: h.running_job, status: 'running' }); });
 })();
