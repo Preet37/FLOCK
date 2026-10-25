@@ -74,11 +74,34 @@ def foreign_amounts(text: str, f: dict[str, Any]) -> list[str]:
     return [m for m in DOLLARS.findall(text) if _cents(m) not in known]
 
 
+SHOW_ORDERS = 10   # a rolled-up finding (flock/rollup.py) can cover a thousand orders; the message names the payout
+
+
+def orders_text(f: dict[str, Any]) -> str:
+    ids = f["order_ids"]
+    if len(ids) <= SHOW_ORDERS:
+        return f"order(s) {', '.join(ids)}"
+    where = f" in payout {f['rollup']['payout_id']}" if f.get("rollup") else ""
+    return (f"{len(ids):,} orders{where} ({', '.join(ids[:SHOW_ORDERS])} and {len(ids) - SHOW_ORDERS:,} more; "
+            "the full list is attached to the claim)")
+
+
+def _brief(f: dict[str, Any]) -> dict[str, Any]:
+    """What the writer model sees: the finding's facts, with a long order list cut to its first ids and a count."""
+    out = {k: f[k] for k in ("channel", "check_type", "order_ids", "expected", "actual", "gap", "evidence")}
+    if len(f["order_ids"]) > SHOW_ORDERS:
+        out["order_ids"] = f["order_ids"][:SHOW_ORDERS]
+        out["order_count"] = len(f["order_ids"])
+        if f.get("rollup"):
+            out["payout_id"] = f["rollup"]["payout_id"]
+    return out
+
+
 def draft(f: dict[str, Any]) -> str:
     text = llm.ask_text(
         "Write a short, polite, factual dispute to a delivery platform's merchant support on behalf of a restaurant. "
         "Use only the facts given. Cite each piece of evidence by its source file. Under 120 words. No em dashes.",
-        json.dumps({k: f[k] for k in ("channel", "check_type", "order_ids", "expected", "actual", "gap", "evidence")}),
+        json.dumps(_brief(f)),
         r=llm.route("writer"),
     )
     if text and (bad := foreign_amounts(text, f)):
@@ -91,7 +114,7 @@ def draft(f: dict[str, Any]) -> str:
         return no_em_dashes(text)
     return no_em_dashes(
         f"Hello {PLATFORM_NAME.get(f['channel'], f['channel'])} merchant support,\n\n"
-        f"We're disputing a {f['check_type'].replace('_', ' ')} on order(s) {', '.join(f['order_ids'])}. "
+        f"We're disputing a {f['check_type'].replace('_', ' ')} on {orders_text(f)}. "
         f"Expected ${f['expected']:.2f}, charged ${f['actual']:.2f}, a difference of ${abs(f['gap']):.2f}, "
         f"based on the evidence below.\n\n{_evidence_block(f)}\n\nPlease credit the difference on our next payout. Thank you."
     )

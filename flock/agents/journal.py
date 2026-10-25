@@ -153,10 +153,12 @@ class _Disputes:
                 else:
                     for k in ids:
                         self.unlinked[(f["channel"], k)] = f
-            elif ids and is_open(f):
-                self.pool[(ids[0], ct)].append([f["finding_id"], cents(f["gap"])])
+            elif ids and is_open(f):   # a rolled-up finding (flock/rollup.py) claims each order's own gap
+                for oid, gap in ((f.get("rollup") or {}).get("parts") or {ids[0]: f["gap"]}).items():
+                    self.pool[(oid, ct)].append([f["finding_id"], cents(gap)])
             elif ids and is_pending(f):
-                self.pending[(ids[0], ct)].append(f["finding_id"])
+                for oid in (f.get("rollup") or {}).get("parts") or [ids[0]]:
+                    self.pending[(oid, ct)].append(f["finding_id"])
 
     def take(self, order_id: str | None, check_type: str, amount: int) -> list[tuple[str, int]]:
         """[(finding_id, cents)] of `amount` that open findings dispute; the rest is expense."""

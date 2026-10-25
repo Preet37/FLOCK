@@ -5,6 +5,7 @@
   python generator/generate.py --seed 7 --traps 7,10,16 --stores 2 --days 3
   python generator/generate.py --seed 42 --write-answer-key               # ALSO overwrite data/answer_key.csv
   python generator/generate.py --profile ca_bagel_chain --weeks 52        # another (simulated) company, a full year
+  python generator/generate.py --scenario demo_month --seed 7             # the 3-minute demo's month (section 6)
 
 Company profiles (profiles/<name>.json) hold every company-specific fact: name, stores and cities, channels,
 orders per store per day by channel, menu (average ticket), seasonality, dayparts, catering, contracts per
@@ -1243,6 +1244,298 @@ def pin_xlsx(data: bytes, path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# 6. Scenarios: one calendar month with a handful of hand-placed incidents (the 3-minute demo, flock/showtime.py)
+#    demo_month   the month on stage: ~100K orders across 56 stores and 4 channels collapse into ~20 weekly
+#                 lump-sum deposits. One big, realistic error (DoorDash keeps charging the pre-amendment commission
+#                 at 3 stores for the whole month) plus a few small ones. Dollar impact is computed from the data
+#                 and written to scenario.json; nothing here states a dollar figure.
+#    prior_month  the months before it (--plan 0..3, oldest first): the same company and the same small incidents,
+#                 no amendment yet, and a schedule of rep promises that lets the Learner learn month over month.
+# ---------------------------------------------------------------------------------------------------------------
+
+SCENARIOS = ("demo_month", "prior_month")
+DEMO_MONTH = "2026-09"
+SCENARIO_PROFILE = "ca_bagel_chain"
+OLD_RATE, NEW_RATE = 0.25, 0.20          # DoorDash commission before / after the amendment (simulated terms)
+BIG_ERROR_STORES = 3
+UE_UNAUTHORIZED_REP = ["Drew Castillo (simulated)", "drew.castillo@ubereats.example", "Merchant Success Associate"]
+# incident -> count. gh_unauth / ue_unauth: a rep NOT on the contract's authorized contacts promises a fee waiver for
+# one store-day (trap 15, a human decides); no_pos = trap 4, refund_stuck = trap 13. The Learner proposes a rule once
+# the same call repeats twice in one month, so prior months repeat a different pattern each month and the Uber Eats
+# promise never repeats: it still goes to a human on the demo month.
+SMALL = {"short_deposit": 1, "bogo": 1, "late_error": 1, "sold_never_paid": 1, "legit_error": 1}
+DEMO_PLAN = {"big_error": True, **SMALL, "gh_unauth": 1, "ue_unauth": 1}
+PRIOR_PLANS = [
+    {**SMALL, "gh_unauth": 2, "no_pos": 1, "refund_stuck": 1, "ue_unauth": 1},
+    {**SMALL, "gh_unauth": 1, "no_pos": 2, "refund_stuck": 1, "ue_unauth": 1},
+    {**SMALL, "gh_unauth": 1, "no_pos": 1, "refund_stuck": 2, "ue_unauth": 1},
+    {**SMALL, "gh_unauth": 1, "no_pos": 1, "refund_stuck": 1, "ue_unauth": 1},
+]
+INCIDENT_TRAP = {"big_error": 7, "short_deposit": 6, "bogo": 8, "late_error": 10, "sold_never_paid": 3,
+                 "legit_error": 16, "gh_unauth": 15, "ue_unauth": 15, "no_pos": 4, "refund_stuck": 13}
+INCIDENT_LABEL = {
+    "big_error": "DoorDash keeps charging the pre-amendment commission at 3 stores all month",
+    "short_deposit": "an Uber Eats weekly deposit lands short of its statement",
+    "bogo": "an Uber Eats BOGO charged 100% to the store (deal says 50/50)",
+    "late_error": "a DoorDash error charge for a complaint made after the 72-hour window",
+    "sold_never_paid": "a DoorDash order sold but never paid",
+    "legit_error": "a legitimate DoorDash error charge (must NOT be disputed)",
+    "gh_unauth": "a Grubhub rep with no authority promises a fee waiver for one store-day",
+    "ue_unauth": "an Uber Eats rep with no authority promises a fee waiver for one store-day",
+    "no_pos": "an Uber Eats order paid that the register never rang up",
+    "refund_stuck": "a direct-app refund stuck at 'initiated', no money moved",
+}
+
+
+def month_span(month: str) -> tuple[date, int]:
+    """'2026-09' -> (date(2026, 9, 1), 30)."""
+    import calendar
+
+    try:
+        y, m = (int(x) for x in str(month).split("-"))
+        return date(y, m, 1), calendar.monthrange(y, m)[1]
+    except (ValueError, TypeError):
+        raise SystemExit(f"--month must look like 2026-09, not {month!r}") from None
+
+
+def shift_month(month: str, k: int) -> str:
+    start, _ = month_span(month)
+    n = start.year * 12 + start.month - 1 + k
+    return f"{n // 12:04d}-{n % 12 + 1:02d}"
+
+
+def scenario_plan(scenario: str, plan: int | None = None) -> dict:
+    if scenario == "demo_month":
+        return dict(DEMO_PLAN)
+    if scenario == "prior_month":
+        i = 0 if plan is None else int(plan)
+        return dict(PRIOR_PLANS[min(max(i, 0), len(PRIOR_PLANS) - 1)])
+    raise SystemExit(f"unknown --scenario {scenario!r}; pick one of: {', '.join(SCENARIOS)}")
+
+
+def scenario_profile(profile: dict, big_error: bool) -> dict:
+    """The bagel chain with DoorDash at OLD_RATE; on the demo month an amendment cuts it to NEW_RATE from day 1."""
+    import copy
+
+    p = copy.deepcopy(profile)
+    dd = p["contracts"].get("doordash")
+    if dd:
+        dd["commission"] = OLD_RATE
+        am = dd.get("amendment") or {"amendment_id": f"{dd['contract_id']}-A1", "tier": "Partner Basic (simulated)"}
+        if big_error:
+            dd["amendment"] = {**am, "commission": NEW_RATE, "signed_days_before": 9}
+        else:
+            dd.pop("amendment", None)
+    return p
+
+
+def build_scenario(seed: int, scenario: str = "demo_month", month: str | None = None, n_stores: int | None = None,
+                   profile: dict | str | None = None, plan: int | None = None,
+                   sources: list[str] | str | None = None) -> dict:
+    """One calendar month of the bagel chain with the scenario's incidents. Same seed + args = same world."""
+    incidents = scenario_plan(scenario, plan)
+    base = load_profile(profile or SCENARIO_PROFILE)
+    prof = scenario_profile(base, incidents.get("big_error", False))
+    month = month or DEMO_MONTH
+    start, days = month_span(month)
+    n_stores = n_stores or prof["default_stores"]
+    rng = random.Random(f"{seed}:{scenario}:{month}")
+    xrng = random.Random(f"{seed}:{prof['name']}:{month}")
+    stores = make_stores(rng, xrng, prof, n_stores)
+    contracts = build_contracts(start, days, prof)
+    am = contracts.get("doordash", {}).get("amendment")
+    if am:   # in force for the whole month, signed the week before it started
+        am["effective_from"] = start
+        am["signed"] = start - timedelta(days=prof["contracts"]["doordash"]["amendment"].get("signed_days_before", 9))
+    orders = make_orders(rng, xrng, stores, start, days, contracts, prof)
+    seen_ids: dict[str, set] = {}
+    lo, hi = prof.get("delivery_minutes", [28, 55])
+    for o in orders:
+        o["truth"] = true_payout(o, contracts)
+        o["actual"] = dict(o["truth"])
+        o["in_pos"], o["in_payout"] = True, True
+        o["errors"] = []
+        seen = seen_ids.setdefault(o["channel"], set()) if o["channel"] in PLATFORMS else None
+        o["platform_order_id"] = platform_id(rng, o["channel"], seen)
+        o["delivered_at"] = o["placed_at"] + timedelta(minutes=rng.randint(lo, hi))
+    world = {"seed": seed, "start": start, "days": days, "weeks": (days + 6) // 7, "stores": stores,
+             "contracts": contracts, "orders": orders, "key": [], "emails": [], "refunds": [], "deposit_traps": {},
+             "dup_order_ids": [], "unseen_layout_week": None, "profile": prof, "trap_counts": {},
+             "sources": resolve_sources(prof, sources), "slack": [], "notes": []}
+    incident_rows = plant_scenario(rng, world, incidents)
+    plant_source_traps(random.Random(f"{seed}:sources:{month}"), world, [])   # contacts lists + Slack noise only
+    if am:
+        world["emails"].append(amendment_email(contracts["doordash"], prof))
+    world["emails"].sort(key=lambda e: e["date"])
+    build_payouts(rng, world)
+    world["key"].sort(key=lambda r: (r["trap_no"], r["order_id"]))
+    world["scenario"] = scenario_summary(world, scenario, month, plan, incidents, incident_rows)
+    return world
+
+
+def plant_scenario(rng: random.Random, world: dict, plan: dict) -> dict[str, list[str]]:
+    """Plant each incident on its own orders (never two on one order, so the answer key stays one row per order).
+    Returns incident -> the answer-key order ids it wrote."""
+    orders, c, profile = world["orders"], world["contracts"], world["profile"]
+    reasons = profile["error_reasons"]
+    tax = {s["store_id"]: s["tax_rate"] for s in world["stores"]}
+    used: set[str] = set()
+    rows: dict[str, list[str]] = {}
+    by_ch: dict[str, list[dict]] = {}
+    by_slot: dict[tuple, list[dict]] = {}
+    for o in orders:
+        by_ch.setdefault(o["channel"], []).append(o)
+        by_slot.setdefault((o["channel"], o["store_id"], o["day"]), []).append(o)
+
+    def key(incident: str, order_id: str, amount: float) -> None:
+        no = INCIDENT_TRAP[incident]
+        trap_type, outcome = TRAPS[no]
+        world["key"].append({"trap_no": no, "order_id": order_id, "trap_type": trap_type,
+                             "expected_outcome": outcome, "amount": f"{money(amount):.2f}"})
+        rows.setdefault(incident, []).append(order_id)
+
+    big_stores: list[str] = []
+    if plan.get("big_error") and c.get("doordash", {}).get("amendment"):
+        big_stores = sorted(rng.sample(sorted(s["store_id"] for s in world["stores"]),
+                                       min(BIG_ERROR_STORES, len(world["stores"]))))
+        for o in by_ch.get("doordash", []):
+            if o["store_id"] in big_stores:
+                used.add(o["order_id"])
+                o["actual"]["commission"] = money(o["subtotal"] * c["doordash"]["commission"])   # the old tier
+                key("big_error", o["order_id"], o["actual"]["commission"] - o["truth"]["commission"])
+    world["big_error_stores"] = big_stores
+
+    def one(channel: str, pred=lambda o: True) -> dict | None:
+        pool = [o for o in by_ch.get(channel, []) if o["order_id"] not in used and o["store_id"] not in big_stores
+                and pred(o)]
+        if not pool:
+            return None
+        o = pool[rng.randrange(len(pool))]
+        used.add(o["order_id"])
+        return o
+
+    for incident, ch, rep in (("gh_unauth", "grubhub", profile["unauthorized_rep"]),
+                              ("ue_unauth", "ubereats", UE_UNAUTHORIZED_REP)):
+        if ch not in c or not c[ch].get("fee_name"):
+            continue
+        for _ in range(plan.get(incident, 0)):
+            slots = sorted(k for k, os_ in by_slot.items() if k[0] == ch and k[1] not in big_stores
+                           and not any(o["order_id"] in used for o in os_))
+            if not slots:
+                break
+            _, store_id, day = slots[rng.randrange(len(slots))]
+            for o in by_slot[(ch, store_id, day)]:
+                used.add(o["order_id"])          # not binding: the truth keeps the fee; the money at stake is the fee
+                key(incident, o["order_id"], o["actual"]["other_fees"])
+            world["emails"].append(waiver_email(rng, c[ch], ch, store_id, day, False, world["stores"],
+                                                {**profile, "unauthorized_rep": rep}, dated_slug=True))
+    for _ in range(plan.get("sold_never_paid", 0)):
+        if (o := one("doordash")):
+            o["in_payout"] = False
+            key("sold_never_paid", o["order_id"], net_of(o["truth"]))
+    for _ in range(plan.get("no_pos", 0)):
+        if (o := one("ubereats")):
+            o["in_pos"] = False
+            world["key"].append({"trap_no": 4, "order_id": o["platform_order_id"], "trap_type": TRAPS[4][0],
+                                 "expected_outcome": TRAPS[4][1], "amount": f"{net_of(o['truth']):.2f}"})
+            rows.setdefault("no_pos", []).append(o["platform_order_id"])
+    for _ in range(plan.get("bogo", 0)):
+        if "ubereats" in c and (o := one("ubereats")):
+            p = c["ubereats"]["promo"]
+            if o["promo_code"] != p["code"]:
+                o["promo_code"] = p["code"]
+                o["items"] += [tuple(x) for x in p.get("adds_items", [])]
+                o["subtotal"] = money(sum(x for _, x in o["items"]))
+                o["tax"] = money(o["subtotal"] * tax[o["store_id"]])
+                o["truth"] = true_payout(o, c)
+                o["actual"] = dict(o["truth"])
+            o["actual"]["promo_merchant_funded"] = money(p["discount"])
+            key("bogo", o["order_id"], o["actual"]["promo_merchant_funded"] - o["truth"]["promo_merchant_funded"])
+    for _ in range(plan.get("late_error", 0)):
+        if (o := one("doordash")):
+            amt = money(rng.uniform(6, 14))
+            o["errors"].append(error_line(rng, o, amt, reasons["late"], hours=rng.randint(80, 120)))
+            key("late_error", o["order_id"], amt)
+    for _ in range(plan.get("legit_error", 0)):
+        if (o := one("doordash")):
+            amt = money(rng.uniform(4, 12))
+            o["errors"].append(error_line(rng, o, amt, reasons["legit"], hours=rng.randint(1, 30)))
+            o["truth"]["error_charge"] = amt
+            key("legit_error", o["order_id"], 0.0)
+    for _ in range(plan.get("refund_stuck", 0)):
+        if (o := one("direct_app")):
+            amt = money(min(o["subtotal"], rng.choice(profile["refund_amounts"])))
+            world["refunds"].append({"refund_id": f"RF-{rng.randint(10000, 99999)}", "order_id": o["order_id"],
+                                     "amount": amt, "status": "initiated",
+                                     "initiated_at": o["placed_at"] + timedelta(hours=2), "completed_at": None})
+            key("refund_stuck", o["order_id"], amt)
+    if plan.get("short_deposit") and "ubereats" in by_ch:
+        weeks = sorted(rng.sample(range(world["weeks"]), min(plan["short_deposit"], world["weeks"])))
+        world["deposit_traps"]["ubereats"] = [("short", w, money(rng.uniform(40, 120))) for w in weeks]
+    for o in orders:
+        o["actual"]["net"] = net_of(o["actual"])
+    return rows
+
+
+def scenario_summary(world: dict, scenario: str, month: str, plan: int | None, incidents: dict,
+                     incident_rows: dict[str, list[str]]) -> dict:
+    """Everything the cheat sheet states, computed from the generated world: volumes, each incident's rows and
+    dollars, the big error per weekly payout, and every lump sum's expected (by the deal) vs deposited amount."""
+    key_amount = {r["order_id"]: float(r["amount"]) for r in world["key"]}
+    short = [r for r in world["key"] if r["trap_no"] == 6]
+    if short:
+        incident_rows["short_deposit"] = [r["order_id"] for r in short]
+    expected_net: dict[str, float] = {}
+    unpaid_net: dict[str, float] = {}
+    for o in world["orders"]:   # what each lump sum should be by the deal in force: the true net of every order
+        expected_net[o["payout_id"]] = money(expected_net.get(o["payout_id"], 0.0) + net_of(o["truth"]))
+        if not o["in_payout"]:  # sold, never paid: owed in this lump sum, but on no statement line
+            unpaid_net[o["payout_id"]] = money(unpaid_net.get(o["payout_id"], 0.0) + net_of(o["truth"]))
+    lumps = []
+    for d in sorted(world["deposits"], key=lambda d: (d["date"], d["channel"])):
+        exp = money(sum(expected_net.get(p, 0.0) for p in d["payout_ids"]))
+        lumps.append({"deposit_id": d["deposit_id"], "channel": d["channel"], "payout_ids": d["payout_ids"],
+                      "date": d["date"].isoformat(), "deposited": d["amount"], "expected_by_deal": exp,
+                      "shortfall": money(exp - d["amount"]),
+                      "unpaid_net": money(sum(unpaid_net.get(p, 0.0) for p in d["payout_ids"]))})
+    out = []
+    for name, count in incidents.items():
+        if not count or name not in INCIDENT_TRAP:
+            continue
+        ids = incident_rows.get(name, [])
+        no = INCIDENT_TRAP[name]
+        out.append({"incident": name, "what": INCIDENT_LABEL[name], "trap_no": no, "trap_type": TRAPS[no][0],
+                    "expected_outcome": TRAPS[no][1], "planted": count, "rows": len(ids),
+                    "amount": money(sum(key_amount.get(i, 0.0) for i in ids))})
+    by_payout: dict[str, float] = {}
+    big_ids = set(incident_rows.get("big_error", []))
+    for o in world["orders"]:
+        if o["order_id"] in big_ids:
+            by_payout[o["payout_id"]] = money(by_payout.get(o["payout_id"], 0.0) + key_amount[o["order_id"]])
+    chans: dict[str, int] = {}
+    for o in world["orders"]:
+        chans[o["channel"]] = chans.get(o["channel"], 0) + 1
+    big = None
+    if big_ids:
+        big = {"stores": world["big_error_stores"], "orders": len(big_ids), "old_rate": OLD_RATE, "new_rate": NEW_RATE,
+               "amendment_effective": world["contracts"]["doordash"]["amendment"]["effective_from"].isoformat(),
+               "overcharge": money(sum(by_payout.values())), "by_payout": dict(sorted(by_payout.items()))}
+    return {"scenario": scenario, "plan": plan, "month": month, "seed": world["seed"],
+            "company": world["profile"]["brand"], "simulated": True, "stores": len(world["stores"]),
+            "period_start": world["start"].isoformat(),
+            "period_end": (world["start"] + timedelta(days=world["days"] - 1)).isoformat(),
+            "orders": len(world["orders"]), "orders_by_channel": chans, "payouts": len(world["payouts"]),
+            "deposits": len(world["deposits"]), "deposited": money(sum(d["amount"] for d in world["deposits"])),
+            "expected_by_deal": money(sum(x["expected_by_deal"] for x in lumps)),
+            "shortfall": money(sum(x["shortfall"] for x in lumps)),
+            "incidents": out, "big_error": big, "lump_sums": lumps, "answer_key_rows": len(world["key"])}
+
+
+def write_scenario(world: dict, out: Path) -> None:
+    write_json(out / "scenario.json", world["scenario"])
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------------------------------------------
 
@@ -1265,19 +1558,27 @@ def prepare_out(out: Path) -> None:
 
 def generate(seed: int = 42, stores: int | None = 12, days: int = 14, traps: list[int] | None = None,
              out: Path = ROOT / "generator" / "out", profile: str | dict | None = None,
-             trap_rate: float | None = None, progress=None, sources: list[str] | str | None = None) -> dict:
-    """stores=None = the profile's own store count. Returns the world (orders, key, ...)."""
-    traps = sorted(TRAPS) if traps is None else traps
-    prof = load_profile(profile)
+             trap_rate: float | None = None, progress=None, sources: list[str] | str | None = None,
+             scenario: str | None = None, month: str | None = None, plan: int | None = None) -> dict:
+    """stores=None = the profile's own store count. Returns the world (orders, key, ...).
+    scenario (demo_month / prior_month): one calendar month (`month`, default DEMO_MONTH) with the scenario's
+    incidents instead of traps 1-22; days, traps and trap_rate are ignored and scenario.json is written too."""
     if progress:
         progress.stage("generate", total=6, unit="steps")
-    world = build_world(seed, stores or prof["default_stores"], days, traps, prof, trap_rate, sources)
+    if scenario:
+        world = build_scenario(seed, scenario, month, stores, profile or SCENARIO_PROFILE, plan, sources)
+    else:
+        traps = sorted(TRAPS) if traps is None else traps
+        prof = load_profile(profile)
+        world = build_world(seed, stores or prof["default_stores"], days, traps, prof, trap_rate, sources)
     if progress:
         progress.advance(1)
     out = Path(out)
     prepare_out(out)
     render(world, out, progress)
     write_answer_key(world["key"], out / "answer_key.csv")
+    if scenario:
+        write_scenario(world, out)
     return world
 
 
@@ -1295,10 +1596,18 @@ def main() -> None:
                     help="deal-source formats, comma list of json,email,slack,notes (default: the profile's "
                          "'deal_sources'; json only for the default profile). email = .eml instead of .json")
     ap.add_argument("--mini", action="store_true", help="first milestone: 1 store x 1 day, traps 3,7,16")
+    ap.add_argument("--scenario", choices=SCENARIOS, default=None,
+                    help="one calendar month with hand-placed incidents instead of traps 1-22 (the 3-minute demo; "
+                         "--profile defaults to ca_bagel_chain, --weeks/--days/--traps are ignored)")
+    ap.add_argument("--month", default=None, help=f"scenario month, YYYY-MM (default {DEMO_MONTH})")
+    ap.add_argument("--plan", type=int, default=None, help="prior_month: which month's incidents, 0 (oldest) to 3")
     ap.add_argument("--out", default=str(ROOT / "generator" / "out"))
     ap.add_argument("--write-answer-key", action="store_true",
                     help="ALSO overwrite data/answer_key.csv (the demo scoreboard uses it)")
     a = ap.parse_args()
+    if a.scenario:
+        scenario_cli(a)
+        return
     prof = load_profile(a.profile)
     stores, days = a.stores or prof["default_stores"], a.days or a.weeks * 7
     traps = sorted(TRAPS) if a.traps == "all" else [int(t) for t in a.traps.split(",") if t.strip()]
@@ -1319,6 +1628,32 @@ def main() -> None:
     print(f"  traps planted: {planted} ({len(world['key'])} answer key rows)")
     if skipped:
         print(f"  traps skipped (need more stores/days, e.g. 2 and 5 need --weeks 2): {skipped}")
+    if a.write_answer_key:
+        write_answer_key(world["key"], ROOT / "data" / "answer_key.csv")
+        print("  wrote data/answer_key.csv (restore the demo key with: git checkout data/answer_key.csv)")
+
+
+def scenario_cli(a: argparse.Namespace) -> None:
+    profile = a.profile if a.profile != DEFAULT_PROFILE else SCENARIO_PROFILE
+    world = generate(a.seed, a.stores, out=Path(a.out), profile=profile, sources=a.sources, scenario=a.scenario,
+                     month=a.month, plan=a.plan)
+    sc = world["scenario"]
+    print(f"{a.scenario} seed {a.seed}: {sc['company']} (simulated), {sc['stores']} stores, "
+          f"{sc['period_start']} to {sc['period_end']} -> {a.out}")
+    print(f"  {sc['orders']:,} orders ({', '.join(f'{ch} {n:,}' for ch, n in sc['orders_by_channel'].items())}) "
+          f"-> {sc['deposits']} lump-sum bank deposits (${sc['deposited']:,.2f})")
+    print(f"  by the deals in force those deposits should total ${sc['expected_by_deal']:,.2f}: "
+          f"short ${sc['shortfall']:,.2f}")
+    for inc in sc["incidents"]:
+        print(f"  - {inc['what']}: trap {inc['trap_no']} {inc['expected_outcome']}, {inc['rows']} answer-key rows, "
+              f"${inc['amount']:,.2f} at stake")
+    if sc["big_error"]:
+        b = sc["big_error"]
+        print(f"  big error: stores {', '.join(b['stores'])}, {b['orders']:,} DoorDash orders charged "
+              f"{b['old_rate']:.0%} instead of {b['new_rate']:.0%} (amendment effective {b['amendment_effective']}): "
+              f"${b['overcharge']:,.2f}; by weekly payout: "
+              + ", ".join(f"{p} ${v:,.2f}" for p, v in b["by_payout"].items()))
+    print(f"  {sc['answer_key_rows']:,} answer key rows; scenario.json has every number above")
     if a.write_answer_key:
         write_answer_key(world["key"], ROOT / "data" / "answer_key.csv")
         print("  wrote data/answer_key.csv (restore the demo key with: git checkout data/answer_key.csv)")

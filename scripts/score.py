@@ -39,11 +39,11 @@ def answer_key_for(store: Store | None = None) -> Path:
 
 
 def history(path: Path = RUNS) -> list[dict]:
-    """Pipeline runs since the last --forget, labelled Week 1, Week 2, ..."""
+    """Pipeline runs since the last --forget, labelled Week 1, Week 2, ... (or the run's period, e.g. "May 2026")."""
     if not path.exists():
         return []
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-    return [{**r, "label": f"Week {i}"} for i, r in enumerate(rows, 1)]
+    return [{**r, "label": r.get("period") or f"Week {i}"} for i, r in enumerate(rows, 1)]
 
 
 def runs_for(store: Store | None = None) -> Path:

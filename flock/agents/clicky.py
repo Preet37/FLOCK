@@ -361,6 +361,33 @@ def file_approved(store: Store, portal_path: Path | None = None, mode: str | Non
     return filed
 
 
+def send_follow_ups(store: Store, portal_path: Path | None = None) -> list[str]:
+    """Send every human-approved vendor follow-up (flock/agents/follow_up.py) to the sandbox portal, then the
+    gatekeeper records it as SENT with the portal's reference. File mode only: the portal's form is for new disputes,
+    so a follow-up is appended to the portal's filings as kind 'follow_up', pointing at the claim it chases."""
+    sent = []
+    for f in store.all():
+        fu = f.get("follow_up") or {}
+        if f["state"] != "FILED" or fu.get("state") != "APPROVED":
+            continue
+        ref = portal.new_ref()
+        at = portal.now()
+        portal.append_filing(Path(portal_path or PORTAL), {
+            "portal_ref": ref, "at": at, "kind": "follow_up", "follows": fu["claim_ref"], "channel": f["channel"],
+            "order_ids": f["order_ids"], "amount": float(fu["amount"]),
+            "category": f["check_type"] if f["check_type"] in portal.CATEGORIES else "commission",
+            "merchant_ref": f["finding_id"], "message": fu["draft"], "via": "clicky-file",
+        })
+        transition(store, f["finding_id"], "send_follow_up", GATEKEEPER,
+                   patch={"follow_up": {**fu, "state": "SENT", "sent_ref": ref, "sent_at": at, "sent_via": "clicky-file"}},
+                   reason=f"Follow-up on claim {fu['claim_ref']} sent in the sandbox portal as {ref} (via Clicky, file); "
+                          f"approved by {fu.get('approved_by')}",
+                   evidence=list(f.get("evidence", [])) + [{"source": "sandbox_portal", "portal_ref": ref,
+                                                            "follows": fu["claim_ref"], "via": "clicky-file"}])
+        sent.append(ref)
+    return sent
+
+
 # CLI: record a demonstration, learn, show, approve -------------------------------------------------------------
 def demo_finding(store: Store, finding_id: str | None = None) -> dict[str, Any]:
     """The finding the human files while Clicky watches: the one asked for, else an approved or drafted dispute
