@@ -590,6 +590,17 @@ def runs_default(store: Store) -> Path:
     return Path(d) / "runs.jsonl"
 
 
+def rule_counts(rows: list[dict]) -> dict[str, int]:
+    """rule_id -> findings an approved rule settled in this run (from the panel's reason line)."""
+    out: dict[str, int] = {}
+    for f in rows:
+        reason = f.get("reason", "")
+        if reason.startswith("Applied approved rule "):
+            rid = reason.split("Applied approved rule ", 1)[1].split(":", 1)[0].strip()
+            out[rid] = out.get(rid, 0) + 1
+    return out
+
+
 def record_run(store: Store, source: str, runs_path: Path | None = None, rules_path: Path | None = None,
                period: str | None = None) -> dict:
     """One line per run so the scoreboard can show week 1 vs week 2 human hand-offs.
@@ -606,6 +617,7 @@ def record_run(store: Store, source: str, runs_path: Path | None = None, rules_p
         "to_human": sum(1 for f in rows if f.get("outcome") == "conflict"),
         "by_rule": sum(1 for f in rows if f.get("reason", "").startswith("Applied approved rule")),
         "learned_rules": len(learner.approved_rules(rules_path)),
+        "by_rule_ids": rule_counts(rows),
     }
     if period:
         entry["period"] = period

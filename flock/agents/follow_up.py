@@ -106,9 +106,31 @@ def compose(store: Store, f: dict[str, Any], today: date | None = None) -> dict[
         f"for it has been recorded on our side.\n\n"
         f"Please credit ${amount:.2f} on our next payout, or tell us what else you need to close it.\n\n"
         f"Evidence summary: {summary}\n\nThank you.")
+    wrote = model_text(text, ref, amount)
     return {"state": "DRAFT", "claim_ref": ref, "filed_on": filed_on, "amount": amount, "channel": f["channel"],
-            "platform": platform, "evidence_summary": summary, "draft": text, "drafted_by": ACTOR.id,
-            "drafted_at": _now()}
+            "platform": platform, "evidence_summary": summary, "draft": wrote or text, "drafted_by": ACTOR.id,
+            "drafted_with": "writer model" if wrote else "template", "drafted_at": _now()}
+
+
+def model_text(template: str, ref: str | None, amount: float) -> str | None:
+    """The writer model (FLOCK_WRITER_PROVIDER, e.g. CREAO) rewords the template for a person to read. Kept only if
+    it names the claim reference and the exact amount and states no other dollar figure; else None (the template)."""
+    import re
+    from flock import llm
+    r = llm.route("writer")
+    if not ref or not llm.available(r):
+        return None
+    try:
+        text = llm.ask_text("Rewrite this payment follow-up to a delivery platform's merchant support so it reads "
+                            "naturally and politely. Keep every fact, the claim reference and the dollar amount exactly. "
+                            "Add no new facts or amounts. Under 120 words. No em dashes.", template, max_tokens=300, r=r)
+    except Exception:
+        return None
+    if not text or ref not in text or f"{amount:.2f}" not in text:
+        return None
+    if {m.replace(",", "") for m in re.findall(r"\$([\d,]+\.\d{2})", text)} - {f"{amount:.2f}"}:
+        return None
+    return no_em_dashes(text.strip())
 
 
 def due(store: Store, days: int | None = None, today: date | None = None) -> list[dict[str, Any]]:

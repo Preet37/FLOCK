@@ -91,10 +91,37 @@ def propose(store: Store, rules_path: Path | None = None) -> list[dict[str, Any]
                 "description": f"{channel} {check_type.replace('_', ' ')} backed by {', '.join(auth) or 'no document'}: "
                                f"{'always dispute' if decision == 'recoverable' else 'accept, do not dispute'}",
             })
+    for rule in proposed:
+        rule["rationale"], rule["rationale_by"] = rationale(rule, by_id)
     path = _proposed_path(store)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(proposed, indent=2))
     return proposed
+
+
+def rationale(rule: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> tuple[str, str]:
+    """One or two sentences a person reads before approving the rule: the writer model (e.g. CREAO) when it is
+    configured, else a template. Only wording: the rule's match and outcome are fixed above, and a human approves it."""
+    n = rule["evidence_count"]
+    auth = ", ".join(rule["authority"]) or "no document"
+    plain = (f"Humans made the same call {n} times on {rule['channel']} {rule['check_type'].replace('_', ' ')} findings "
+             f"backed by {auth}: {'disputed' if rule['outcome'] == 'recoverable' else 'accepted the charge'}. "
+             "Approving this lets Flock settle the next one the same way and say so.")
+    try:
+        from flock import llm
+        r = llm.route("writer")
+        if llm.available(r):
+            facts = {"rule": rule["description"], "precedents": [
+                {k: by_id.get(i, {}).get(k) for k in ("finding_id", "channel", "check_type", "gap", "reason")}
+                for i in rule["precedents"][:5]]}
+            text = llm.ask_text("In two short sentences, explain to a restaurant's finance reviewer why this rule was "
+                                "proposed, from these precedents only. No numbers that are not given. No em dashes.",
+                                json.dumps(facts, default=str), max_tokens=160, r=r)
+            if text and text.strip():
+                return text.strip().replace("\u2014", ", "), "writer model"
+    except Exception:
+        pass
+    return plain, "template"
 
 
 def approve(rule_id: str, approver: Actor = CLI_HUMAN, store: Store | None = None,
