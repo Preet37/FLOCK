@@ -55,12 +55,12 @@ def test_get_store_defaults_to_json(monkeypatch, tmp_path):
     assert isinstance(get_store(tmp_path), JsonStore)
 
 
-def test_get_store_spacetime_is_a_clear_stub(monkeypatch):
+def test_get_store_spacetime_is_a_real_backend(monkeypatch, tmp_path):
+    """FLOCK_STORE=spacetime builds the HTTP-backed store (no network until the first call); details in tests/test_spacetime.py."""
     monkeypatch.setenv("FLOCK_STORE", "spacetime")
-    with pytest.raises(NotImplementedError, match="audit_log"):
-        get_store()
-    with pytest.raises(NotImplementedError):
-        SpacetimeStore()
+    monkeypatch.setenv("SPACETIME_STATE_DIR", str(tmp_path))
+    s = get_store()
+    assert isinstance(s, SpacetimeStore) and isinstance(s, Store)
 
 
 def test_get_store_rejects_unknown(monkeypatch):
