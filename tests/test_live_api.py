@@ -184,3 +184,29 @@ def test_live_panels_finish_after_the_fast_ones(monkeypatch):
     plan = {"live": True, "chosen": {"F-0", "F-3"}, "rule_ids": set(), "concurrency": 3}
     got = [f["finding_id"] for f, _ in pipeline.judge_all(todo, [], {}, plan)]
     assert got[:3] == ["F-1", "F-2", "F-4"] and set(got[3:]) == {"F-0", "F-3"}
+
+
+def test_live_drafts_are_capped_concurrent_and_time_out(monkeypatch):
+    import time as _t
+    from flock import llm, pipeline
+    from flock.agents import dispute_writer
+    todo = [{"finding_id": f"F-{i}", "gap": float(100 - i), "channel": "doordash"} for i in range(10)]
+    monkeypatch.setattr(llm, "available", lambda r=None: True)
+    monkeypatch.setenv("FLOCK_LIVE_WRITER_BUDGET", "3")
+    monkeypatch.setenv("FLOCK_WRITER_TIMEOUT", "1")
+    calls = []
+
+    def draft(f, live=True):
+        if not live:
+            return f"template {f['finding_id']}"
+        calls.append(f["finding_id"])
+        if f["finding_id"] == "F-2":
+            _t.sleep(3)              # one slow model call
+        return f"model {f['finding_id']}"
+
+    monkeypatch.setattr(dispute_writer, "draft", draft)
+    t0 = _t.monotonic()
+    out = dict((f["finding_id"], text) for f, text in pipeline.draft_all(todo))
+    assert _t.monotonic() - t0 < 2.5, "a slow call never holds the run"
+    assert sorted(calls) == ["F-0", "F-1", "F-2"], "only the biggest three reach the model"
+    assert out["F-0"] == "model F-0" and out["F-2"] == "template F-2" and out["F-9"] == "template F-9"

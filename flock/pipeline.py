@@ -363,12 +363,16 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
         progress.update(i)
 
     stage("ranker", "done", f"ranked {len(todo)} by dollars x win odds - effort", count=len(todo))
-    for f in ranker.within_budget([x for x in store.all() if x["state"] == "JUDGED" and x["outcome"] == "recoverable"]):
-        writer = flock.spawn("writer", parent=flock.judge_of.get(f["finding_id"]), subject=f["finding_id"],
-                             agent_id=f"writer:{f['finding_id']}").working("drafting the dispute")
-        move(f["finding_id"], "draft", dispute_writer.ACTOR,
-             patch={"dispute_draft": dispute_writer.draft(f)}, reason="Drafted dispute, waiting for human")
-        writer.done(f"drafted a ${abs(f['gap']):.2f} dispute to {f['channel']}, waiting for a human")
+    to_draft = ranker.within_budget([x for x in store.all() if x["state"] == "JUDGED" and x["outcome"] == "recoverable"])
+    progress.stage("draft", total=len(to_draft), unit="disputes")
+    writers = {f["finding_id"]: flock.spawn("writer", parent=flock.judge_of.get(f["finding_id"]), subject=f["finding_id"],
+                                            agent_id=f"writer:{f['finding_id']}").working("drafting the dispute")
+               for f in to_draft}
+    for i, (f, text) in enumerate(draft_all(to_draft), 1):
+        move(f["finding_id"], "draft", dispute_writer.ACTOR, patch={"dispute_draft": text},
+             reason="Drafted dispute, waiting for human")
+        writers[f["finding_id"]].done(f"drafted a ${abs(f['gap']):.2f} dispute to {f['channel']}, waiting for a human")
+        progress.update(i)
 
     if demo_approve:
         for f in store.all():
@@ -510,6 +514,33 @@ def judge_all(todo: list[dict], rules: list[dict], weights: dict, plan: dict):
                 yield f, one(f)
         for fut in as_completed(futs):
             yield futs[fut], fut.result()
+
+
+def draft_all(todo: list[dict]) -> list[tuple[dict, str]]:
+    """Dispute drafts for todo, in order. A live writer model (FLOCK_WRITER_PROVIDER) drafts only the biggest
+    FLOCK_LIVE_WRITER_BUDGET (default 6, or FLOCK_LIVE_JUDGE_BUDGET if lower), all at once, each with a hard
+    timeout (FLOCK_WRITER_TIMEOUT, default 60 s); the rest, and any that time out or fail, get the template. A run
+    never waits on one slow model call."""
+    if not todo:
+        return []
+    live = llm.available(llm.route("writer"))
+    if not live:
+        return [(f, dispute_writer.draft(f, live=False)) for f in todo]
+    caps = [n for n in (_env_int("FLOCK_LIVE_WRITER_BUDGET"), _env_int("FLOCK_LIVE_JUDGE_BUDGET")) if n is not None]
+    budget = min(caps) if caps else 6
+    chosen = {f["finding_id"] for f in sorted(todo, key=lambda x: -abs(x["gap"]))[:max(0, budget)]}
+    timeout = float(os.environ.get("FLOCK_WRITER_TIMEOUT") or 60)
+    out: dict[str, str] = {}
+    pool = ThreadPoolExecutor(max_workers=max(1, min(len(chosen), DEFAULT_LIVE_CONCURRENCY)))
+    futs = {pool.submit(dispute_writer.draft, f): f for f in todo if f["finding_id"] in chosen}
+    deadline = time.monotonic() + timeout
+    for fut, f in futs.items():
+        try:
+            out[f["finding_id"]] = fut.result(timeout=max(0.0, deadline - time.monotonic()))
+        except Exception as e:   # timeout or a failed call: the template, and say so
+            print(f"[dispute_writer] {f['finding_id']}: live draft unavailable ({type(e).__name__}); using the template")
+    pool.shutdown(wait=False, cancel_futures=True)
+    return [(f, out.get(f["finding_id"]) or dispute_writer.draft(f, live=False)) for f in todo]
 
 
 def save_transactions(store: Store, context: dict, findings: list[dict], source: str) -> dict | None:
