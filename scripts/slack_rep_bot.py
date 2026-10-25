@@ -1,21 +1,17 @@
-"""Priya Raman, the simulated DoorDash account manager, in the demo Slack workspace.
+"""Simulated platform reps for the demo Slack workspace (Ringtide Bagels Finance, the made-up brand).
 
-Two jobs, both honest about being simulated (the workspace is Ringtide Bagels Finance, the made-up brand):
-  seed     post a short, real-sounding finance conversation between Priya and the Ringtide finance team into a
-           channel, one message every few seconds, so there is unstructured deal talk for Flock to read
-  respond  watch the channel and answer, as Priya, whatever a human posts, so nobody has to play the rep live.
-           Replies come from the `writer` model role (flock/llm.py, any provider incl. a CREAO hosted agent);
-           if no model is reachable, a short human-sounding holding reply is used instead.
+One script, three personas, each a separate Slack app (bot user) and the contract's authorized contact for its platform:
+  priya    Priya Raman, DoorDash Partner Account Manager        #doordash-partnership   SLACK_REP_TOKEN
+  marcus   Marcus Lee, Uber Eats Senior Account Executive       #ubereats-partnership   SLACK_MARCUS_TOKEN
+  dana     Dana Whitfield, Grubhub Partner Success Manager      #grubhub-partnership    SLACK_DANA_TOKEN
 
-  export SLACK_REP_TOKEN=xoxb-...     # the "Priya Raman" Slack app (bot user @priyaraman, scope chat:write + history)
-  python scripts/slack_rep_bot.py seed --channel doordash-partnership
-  python scripts/slack_rep_bot.py respond --channel doordash-partnership --every 8
+  python scripts/slack_rep_bot.py respond --persona marcus              # answer whatever a human posts in that channel
+  python scripts/slack_rep_bot.py respond --persona priya --every 6
 
-Priya is on the DoorDash demo contract (`authorized_contacts`: @priyaraman), so a term she states is binding to the
-Deal Keeper; the same words from anyone else go to a human. Only Priya's lines are posted by this script; the finance
-team's lines in `seed` are posted as Priya quoting them? No: they are posted by Priya's bot too, prefixed with the
-speaker's name, unless SLACK_BOT_TOKEN (the watcher app) is present, in which case nothing changes either: the
-finance side is meant to be typed by real teammates. Use `seed --with-finance` to have the script post both sides.
+respond: scripted replies when a seeded finance line is posted verbatim (see SCRIPTS), otherwise the `writer` model role
+(flock/llm.py, e.g. a CREAO hosted agent with FLOCK_WRITER_PROVIDER=creao), and a short human holding line if no
+model answers. A rep confirms and explains terms; the only new terms they ever state are the scripted ones.
+Everything here is a simulation; the bots never say so in the channel, the workspace name does.
 """
 from __future__ import annotations
 
@@ -34,28 +30,62 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 SLACK = "https://slack.com/api/"
-PERSONA = ("You are Priya Raman, Partner Account Manager at DoorDash, chatting in a shared Slack channel with the finance "
-           "team of Ringtide Bagels, a 56-store bagel chain in California. You are friendly, concrete and brief, like a "
-           "real account manager typing between meetings. One to three sentences. No bullet points, no headings, no "
-           "sign-off. If they ask about a number you do not have, say you will check and come back. Never invent a new "
-           "commission rate, fee waiver or promo split on your own; only confirm or explain terms. Everything here is a "
-           "simulation for a hackathon demo, but never say so in the channel.")
 
-# (speaker, text). "priya" lines are the rep; the others are Ringtide finance staff.
-SCRIPT = [
-    ("thabhelo", "Priya, quick one. Our week 42 payout landed $412 short of what the statement says. Is there a holdback I'm not seeing?"),
-    ("priya", "Hey Thabhelo, let me check with payments. Usually that's an error charge batch that posts a day after the statement. I'll come back to you by end of day."),
-    ("priya", "Looked into it. $388.50 of that is error charges from the 15th and 16th, mostly missing item claims at the Cupertino store, and the other $23.50 is a tip adjustment. The error charges are disputable in the portal, you have 14 days."),
-    ("thabhelo", "Thanks. About half of those claims came in more than 72 hours after delivery, so by your own policy they shouldn't be on us. We'll dispute those."),
-    ("priya", "Fair. Flag them and I'll make sure the team looks at them this week."),
-    ("preet", "Separate thing. The DD-3OFF promo in October shows us funding 100% of it on the statement, but the signed terms say 50/50."),
-    ("priya", "That one's a known reporting gap, the split is applied at payout, not on the statement line. If the payout itself doesn't reflect 50/50, send me the week and I'll escalate it."),
-    ("priya", "One more, and this one's good news. Starting Monday, November 3, all of your stores move to the Plus plan at 22% commission (down from 25%). The countersigned amendment will follow by email, but I wanted you to have the date now."),
-    ("thabhelo", "Great. Does that cover all 56 stores, including the two that opened in September?"),
-    ("priya", "Yes, every location under the master agreement, including the September openings."),
-    ("preet", "Noted, we'll set the new rate from the 3rd in our checks. Thanks Priya."),
-    ("priya", "Anytime. And no promises, but leadership might look at the rate again next quarter if volume keeps growing. I'll keep you posted."),
-]
+PERSONAS = {
+    "priya": {
+        "name": "Priya Raman", "token_env": "SLACK_REP_TOKEN", "channel": "doordash-partnership",
+        "persona": ("You are Priya Raman, Partner Account Manager at DoorDash, chatting in a shared Slack channel with the "
+                    "finance team of Ringtide Bagels, a 56-store bagel chain in California."),
+        "script": [
+            ("finance", "Priya, quick one. Our week 42 payout landed $412 short of what the statement says. Is there a holdback I'm not seeing?"),
+            ("rep", "Hey Thabhelo, let me check with payments. Usually that's an error charge batch that posts a day after the statement. I'll come back to you by end of day."),
+            ("rep", "Looked into it. $388.50 of that is error charges from the 15th and 16th, mostly missing item claims at the Cupertino store, and the other $23.50 is a tip adjustment. The error charges are disputable in the portal, you have 14 days."),
+            ("finance", "Thanks. About half of those claims came in more than 72 hours after delivery, so by your own policy they shouldn't be on us. We'll dispute those."),
+            ("rep", "Fair. Flag them and I'll make sure the team looks at them this week."),
+            ("finance", "Separate thing. The DD-3OFF promo in October shows us funding 100% of it on the statement, but the signed terms say 50/50."),
+            ("rep", "That one's a known reporting gap, the split is applied at payout, not on the statement line. If the payout itself doesn't reflect 50/50, send me the week and I'll escalate it."),
+            ("rep", "One more, and this one's good news. Starting Monday, November 3, all of your stores move to the Plus plan at 22% commission (down from 25%). The countersigned amendment will follow by email, but I wanted you to have the date now."),
+            ("finance", "Great. Does that cover all 56 stores, including the two that opened in September?"),
+            ("rep", "Yes, every location under the master agreement, including the September openings."),
+            ("finance", "Noted, we'll set the new rate from the 3rd in our checks. Thanks Priya."),
+            ("rep", "Anytime. And no promises, but leadership might look at the rate again next quarter if volume keeps growing. I'll keep you posted."),
+        ],
+    },
+    "marcus": {
+        "name": "Marcus Lee", "token_env": "SLACK_MARCUS_TOKEN", "channel": "ubereats-partnership",
+        "persona": ("You are Marcus Lee, Senior Account Executive at Uber Eats, chatting in a shared Slack channel with the "
+                    "finance team of Ringtide Bagels, a 56-store bagel chain in California."),
+        "script": [
+            ("finance", "Marcus, the Marketing Fee on last week's statement is $1.00 an order across the board, but our Cupertino store had the street fair on the 21st and you said you'd cover that day."),
+            ("rep", "You're right, that was agreed on our call. To confirm in writing: we'll waive the Marketing Fee ($1.00/order) for Ringtide Bagels Cupertino (S05) on Tuesday, October 21 for the local event. It'll come off as a credit on the next payout, you don't need to file anything."),
+            ("finance", "Perfect, thank you. Second thing, we're seeing some orders charged at a higher rate than the plan rate. Is that the Uber One thing?"),
+            ("rep", "Yes. Orders placed by Uber One members carry the member rate, which is 5 points above your plan rate, that's in section 3 of the agreement. The statement tags them with a member flag in the order source column, so your team can split them out."),
+            ("finance", "Got it. We'll check the member-flagged orders against that rate rather than the base rate then."),
+            ("rep", "Exactly. If any member-flagged order is above plan plus 5, send me the order IDs and I'll have it corrected."),
+            ("finance", "One more. We had three refunds last week for the same order ID, UE-77812. Looks like a duplicate."),
+            ("rep", "I see it. Two of those are duplicates from a retry on our side. I've raised it with payments, you'll see the two extra refunds reversed on next week's statement. Sorry about that."),
+            ("finance", "Appreciate it, Marcus. We'll hold the dispute until we see next week's statement."),
+            ("rep", "Sounds good. I'll ping you here when the reversal posts."),
+        ],
+    },
+    "dana": {
+        "name": "Dana Whitfield", "token_env": "SLACK_DANA_TOKEN", "channel": "grubhub-partnership",
+        "persona": ("You are Dana Whitfield, Partner Success Manager at Grubhub, chatting in a shared Slack channel with the "
+                    "finance team of Ringtide Bagels, a 56-store bagel chain in California."),
+        "script": [
+            ("finance", "Dana, quick check on the October statement. The Delivery Network Fee is showing as $1.25 on pickup orders too. Those should be delivery only, right?"),
+            ("rep", "Correct, the Delivery Network Fee only applies to orders we deliver. Pickup orders shouldn't carry it. Can you send me a few order numbers? That sounds like a tagging issue on our side."),
+            ("finance", "Sure, GH-20418, GH-20425 and GH-20431 to start. There are 60 or so in total across four stores."),
+            ("rep", "Thanks. I've confirmed those three were pickup. I'll have the fee reversed on all affected pickup orders for October, you'll see it as one credit line on the next statement."),
+            ("finance", "Great. Also, the processing fee looks like it's been applied twice on the week of the 13th."),
+            ("rep", "Looking now. Yes, there was a double posting of the processing fee on the 13th through the 19th for a batch of accounts, yours included. Finance is reversing it this week, no action needed on your end."),
+            ("finance", "Thanks Dana. Last one, is the 18% marketing commission still the rate for Q4? We want to make sure our checks use the right number."),
+            ("rep", "Yes, 18% marketing commission stays through December 31. If anything changes for Q1 you'll get a signed amendment first, nothing changes on a Slack message alone."),
+            ("finance", "That's exactly what we like to hear. Thanks."),
+            ("rep", "Anytime. I'll confirm here once both reversals post."),
+        ],
+    },
+}
 
 HOLDING = [
     "Let me check on that and come back to you.",
@@ -63,6 +93,11 @@ HOLDING = [
     "On it. Give me a bit to pull the numbers.",
     "I'll look into it and let you know what I find.",
 ]
+
+STYLE = (" You are friendly, concrete and brief, like a real account manager typing between meetings. One to three "
+         "sentences. No bullet points, no headings, no sign-off. If they ask about a number you do not have, say you "
+         "will check and come back. Never invent a new commission rate, fee waiver or promo split on your own; only "
+         "confirm or explain terms. Everything here is a simulation for a hackathon demo, but never say so in the channel.")
 
 
 def slack(method: str, token: str, body: dict | None = None, **params) -> dict:
@@ -92,50 +127,34 @@ def channel_id(token: str, name: str) -> str:
             raise SystemExit(f"no channel #{name} visible to this token (invite the app to it)")
 
 
-def post(token: str, cid: str, text: str, thread_ts: str | None = None) -> str:
-    body = {"channel": cid, "text": text}
-    if thread_ts:
-        body["thread_ts"] = thread_ts
-    return slack("chat.postMessage", token, body)["ts"]
-
-
-def seed(token: str, name: str, with_finance: bool, pause: float) -> None:
-    cid = channel_id(token, name)
-    for who, text in SCRIPT:
-        if who == "priya":
-            post(token, cid, text)
-            print(f"priya: {text[:70]}...", flush=True)
-        elif with_finance:
-            post(token, cid, f"*{who.capitalize()} (Ringtide finance):* {text}")
-            print(f"{who}: {text[:70]}...", flush=True)
-        else:
-            print(f"(skip {who}; a teammate types this line) {text[:60]}...", flush=True)
-        time.sleep(pause)
+def post(token: str, cid: str, text: str) -> str:
+    return slack("chat.postMessage", token, {"channel": cid, "text": text})["ts"]
 
 
 def _norm(t: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
 
 
-def scripted(text: str) -> list[str]:
-    """Priya's scripted reply/replies when a finance line from SCRIPT is posted verbatim (ignoring punctuation/case)."""
+def scripted(script: list[tuple[str, str]], text: str) -> list[str]:
+    """The rep's scripted reply/replies when a finance line from the script is posted (ignoring punctuation/case)."""
     n = _norm(text)
-    out: list[str] = []
-    for i, (who, line) in enumerate(SCRIPT):
-        if who != "priya" and _norm(line) == n:
-            for who2, line2 in SCRIPT[i + 1:]:
-                if who2 != "priya":
+    for i, (who, line) in enumerate(script):
+        if who == "finance" and _norm(line) == n:
+            out = []
+            for who2, line2 in script[i + 1:]:
+                if who2 != "rep":
                     break
                 out.append(line2)
-            break
-    return out
+            return out
+    return []
 
 
-def reply_for(text: str, history: list[str]) -> str:
+def reply_for(persona: dict, text: str, history: list[str]) -> str:
     try:
         from flock import llm
         convo = "\n".join(history[-8:])
-        out = llm.ask_text(PERSONA, f"Recent channel messages:\n{convo}\n\nNewest message from the finance team:\n{text}\n\nReply as Priya.",
+        out = llm.ask_text(persona["persona"] + STYLE,
+                           f"Recent channel messages:\n{convo}\n\nNewest message from the finance team:\n{text}\n\nReply as {persona['name']}.",
                            max_tokens=160, r=llm.route("writer"))
         if out and out.strip():
             return out.strip().strip('"')
@@ -144,12 +163,13 @@ def reply_for(text: str, history: list[str]) -> str:
     return random.choice(HOLDING)
 
 
-def respond(token: str, name: str, every: float) -> None:
+def respond(persona: dict, token: str, name: str, every: float) -> None:
     cid = channel_id(token, name)
     me = slack("auth.test", token)["user_id"]
-    since = slack("conversations.history", token, channel=cid, limit=1)["messages"][0]["ts"] if slack("conversations.history", token, channel=cid, limit=1)["messages"] else "0"
+    last = slack("conversations.history", token, channel=cid, limit=1)["messages"]
+    since = last[0]["ts"] if last else "0"
     history: list[str] = []
-    print(f"Priya is listening in #{name} (as {me}); replies via the writer model role, holding lines if none", flush=True)
+    print(f"{persona['name']} is listening in #{name} (as {me}); scripted lines, then the writer model role, then holding lines", flush=True)
     while True:
         try:
             d = slack("conversations.history", token, channel=cid, oldest=since, limit=50)
@@ -157,15 +177,16 @@ def respond(token: str, name: str, every: float) -> None:
             for m in msgs:
                 since = m["ts"]
                 if m.get("user") == me:
-                    history.append(f"Priya: {m['text']}")
+                    history.append(f"{persona['name']}: {m['text']}")
+                    continue
+                if m.get("bot_id"):      # another rep bot or the watcher: reps do not talk to each other
                     continue
                 history.append(f"Finance: {m['text']}")
-                lines = scripted(m["text"]) or [None]
-                for line in lines:
+                for line in scripted(persona["script"], m["text"]) or [None]:
                     time.sleep(random.uniform(4, 9))   # a person does not answer in 200 ms
-                    text = line or reply_for(m["text"], history)
+                    text = line or reply_for(persona, m["text"], history)
                     post(token, cid, text)
-                    history.append(f"Priya: {text}")
+                    history.append(f"{persona['name']}: {text}")
                     print(f"replied: {text[:80]}", flush=True)
         except SystemExit:
             raise
@@ -175,20 +196,22 @@ def respond(token: str, name: str, every: float) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Priya Raman, simulated DoorDash rep, for the demo Slack channel")
-    ap.add_argument("mode", choices=["seed", "respond"])
-    ap.add_argument("--channel", default="doordash-partnership")
-    ap.add_argument("--with-finance", action="store_true", help="seed: also post the finance team's lines (prefixed with the name)")
-    ap.add_argument("--pause", type=float, default=4.0, help="seed: seconds between messages")
-    ap.add_argument("--every", type=float, default=8.0, help="respond: poll interval in seconds")
+    ap = argparse.ArgumentParser(description="Simulated platform reps for the demo Slack channels")
+    ap.add_argument("mode", choices=["respond", "lines"])
+    ap.add_argument("--persona", choices=sorted(PERSONAS), default="priya")
+    ap.add_argument("--channel", help="default: the persona's channel")
+    ap.add_argument("--every", type=float, default=6.0, help="respond: poll interval in seconds")
     a = ap.parse_args()
-    token = os.environ.get("SLACK_REP_TOKEN", "")
+    p = PERSONAS[a.persona]
+    if a.mode == "lines":   # print the finance team's lines, for whoever types them
+        for who, line in p["script"]:
+            if who == "finance":
+                print(line)
+        return
+    token = os.environ.get(p["token_env"], "")
     if not token.startswith("xox"):
-        raise SystemExit("set SLACK_REP_TOKEN (the Priya Raman Slack app's bot token)")
-    if a.mode == "seed":
-        seed(token, a.channel, a.with_finance, a.pause)
-    else:
-        respond(token, a.channel, a.every)
+        raise SystemExit(f"set {p['token_env']} (the {p['name']} Slack app's bot token)")
+    respond(p, token, a.channel or p["channel"], a.every)
 
 
 if __name__ == "__main__":
