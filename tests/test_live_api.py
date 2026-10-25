@@ -210,3 +210,28 @@ def test_live_drafts_are_capped_concurrent_and_time_out(monkeypatch):
     assert _t.monotonic() - t0 < 2.5, "a slow call never holds the run"
     assert sorted(calls) == ["F-0", "F-1", "F-2"], "only the biggest three reach the model"
     assert out["F-0"] == "model F-0" and out["F-2"] == "template F-2" and out["F-9"] == "template F-9"
+
+
+def test_rules_api_says_what_flock_learned_and_how_often_it_applied(server, tmp_path, monkeypatch):  # noqa: F811
+    client, a = server
+    monkeypatch.setattr(learner, "RULES", tmp_path / "rules.json")
+    assert client.post("/api/run", {"reset": True, "forget": True, "demo_approve": True})[0] == 200
+    code, r = client.get("/api/rules")
+    [p] = [x for x in r["rules"] if x["status"] == "proposed"]
+    assert p["text"] and p["learned_from"]["findings"] and p["applied_count"] == 0
+    assert a.store and learner._read(learner._proposed_path(a.store))[0]["rationale_by"] == "template"
+    assert client.post(f"/api/rules/{p['id']}/approve", {"actor": "preet"})[0] == 200
+    assert client.post("/api/run", {"reset": True, "demo_approve": True})[0] == 200
+    code, r = client.get("/api/rules")
+    [rule] = [x for x in r["rules"] if x["status"] == "approved"]
+    assert rule["learned_from"]["approver"] == "preet" and rule["learned_from"]["date"]
+    assert rule["applied_count"] >= 1 and rule["applied_by_month"][-1]["applied"] >= 1
+
+
+def test_agents_carry_provider_badges(server):  # noqa: F811
+    client, _ = server
+    code, out = client.get("/api/agents")
+    by = {x["actor"]: x for x in out["agents"]}
+    assert by["checkers"]["provider"] == "code" and by["matcher"]["provider"] == "code"
+    assert by["panel"]["provider"] in ("code", "creao", "gx10-tuned", "gx10", "mixed", "anthropic", "groq", "nvidia")
+    assert all("provider" in x and "model" in x for x in out["agents"])
