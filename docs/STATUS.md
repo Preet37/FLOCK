@@ -63,7 +63,7 @@ with its own count in the scoreboard's "by trap" line.
 - **GX10 numbers:** judge load and an air-gapped run with three local models on the GX10 are not recorded in the repo yet (only the laptop run above).
 - **Benchmark contestants beyond rules:** Claude, local, local-tuned, CREAO and the human contestant have no recorded results yet.
 - **Tuned judge:** step 1 (training set) is done; LoRA training, serving and scoring are not (`scripts/train/` named in `docs/PLAN.md` does not exist).
-- **SpacetimeDB:** done on `thabhelo/spacetime`: module in `spacetimedb/`, `SpacetimeStore` over the HTTP API, the Quickstart prints 6/6 then 2 -> 0 with `FLOCK_STORE=spacetime` (local server). Maincloud publish and moving the sidecar files (market ledger, runs, journal) into tables are open.
+- **SpacetimeDB:** done on `thabhelo/spacetime`: module in `spacetimedb/`, `SpacetimeStore` over the HTTP API, the Quickstart prints 6/6 then 2 -> 0 with `FLOCK_STORE=spacetime` (local server). Also published to Maincloud (`flock` under @thabhelo) and the Quickstart passed against it. Moving the sidecar files (market ledger, runs, journal) into tables is open.
 - **Frontend:** Himaja's frontend folder is not merged; `dashboard/` is the UI that runs today.
 - **Hosting:** Railway config is ready (`Procfile`, `docs/DEPLOY.md`); no public URL is recorded in the repo.
 - **Journal entries at year scale:** skipped (split detection keeps no order stories); run a week at a time.

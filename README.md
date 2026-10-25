@@ -162,8 +162,10 @@ python -m dashboard.app                                              # same dash
 spacetime sql flock "SELECT finding_id, state FROM finding" --server local
 ```
 
-Maincloud: `spacetime login`, `spacetime publish flock --yes`, then `SPACETIME_URL=https://maincloud.spacetimedb.com`
-and `SPACETIME_TOKEN=$(spacetime login show --token)`. Tests: `tests/test_spacetime.py` runs against an in-process
+Maincloud: the module is published there as `flock` under Thabhelo's account (https://spacetimedb.com/@thabhelo/flock, 3 tables, 4 reducers). Point the store at it with `SPACETIME_URL=https://maincloud.spacetimedb.com` and
+`SPACETIME_TOKEN=<your CLI token>` (`spacetime login`, then `spacetime login show --token`; never commit it). The
+Quickstart ran against Maincloud on Oct 25: 6/6, 2 then 0 sent to a human, rows visible with `spacetime sql flock
+"SELECT finding_id, state FROM finding" --server maincloud`. Tests: `tests/test_spacetime.py` runs against an in-process
 fake; `FLOCK_SPACETIME_LIVE=1` runs the same checks against the real server. JSON stays the default, so the hosted
 site is unaffected until someone flips the variable there.
 
