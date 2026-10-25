@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import copy
-import csv
 import io
 import json
 import shutil
@@ -43,8 +42,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flock import frontend, pipeline, rollup
+from flock import frontend, payouts, pipeline, transactions
 from flock.agents import clicky, collector, follow_up, learner, panel
+from flock.agents.dispute_writer import PLATFORM_NAME
 from flock.demo import generator, scoreboard
 from flock.gatekeeper import GATEKEEPER, Denied, transition
 from flock.models import Actor, money
@@ -189,55 +189,25 @@ def pick_headline(store: Store) -> dict[str, Any] | None:
 
 
 # the lump sum ------------------------------------------------------------------------------------------------------
-def _csv(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    with path.open(newline="") as fh:
-        return list(csv.DictReader(fh))
-
-
-def lump_sum(store: Store, std: Path, scenario: dict[str, Any], headline: dict[str, Any]) -> dict[str, Any]:
-    """The lump sum the headline sits in: what arrived (bank), what the statement said, what Flock says is missing
-    (its open findings in that payout), and the answer key's own number for the same deposit."""
-    index = rollup.payout_index(std / "payout_lines.csv")
-    payout_id = (headline.get("rollup") or {}).get("payout_id") or next(
-        (index[o]["payout_id"] for o in headline["order_ids"] if o in index), None)
-    every = _csv(std / "payout_lines.csv")
-    lines = [r for r in every if r.get("payout_id") == payout_id]
-    # an order sold but never paid has no payout line: it belongs to the payout that paid its channel's orders that day
-    day_payout = {(r.get("channel"), (r.get("placed_at") or "")[:10]): r.get("payout_id") for r in every
-                  if float(r.get("gross") or 0) > 0}
-    unpaid = {o for f in store.all() if f["check_type"] == "missing_order" for o in f["order_ids"] if o not in index}
-    for r in _csv(std / "orders.csv"):
-        if r.get("order_id") in unpaid:
-            index[r["order_id"]] = {"payout_id": day_payout.get((r.get("channel"), (r.get("placed_at") or "")[:10])),
-                                    "store_id": r.get("store_id"), "gross": 0.0}
-    statement = money(sum(float(r.get("net") or 0) for r in lines))
-    gross = money(sum(float(r.get("gross") or 0) for r in lines))
-    deposits = [r for r in _csv(std / "bank_deposits.csv") if payout_id and payout_id in (r.get("memo") or "")]
-    arrived = money(sum(float(r.get("amount") or 0) for r in deposits))
-    covers = sorted({p for r in deposits for p in (r.get("memo") or "").replace("+", " ").split() if "-PO-" in p})
-    found = []
-    for f in store.all():
-        if f.get("outcome") != "recoverable" or f["state"] == "REJECTED":
-            continue
-        pids = {(f.get("rollup") or {}).get("payout_id")} if f.get("rollup") else (
-            set(f["order_ids"]) if f["check_type"] == "deposit" else {index[o]["payout_id"] for o in f["order_ids"]
-                                                                       if o in index})
-        if payout_id in pids:
-            found.append(f)
-    flock_short = money(sum(f["gap"] for f in found))
+def lump_sum(store: Store, scenario: dict[str, Any], headline: dict[str, Any]) -> dict[str, Any] | None:
+    """The lump sum the headline sits in, exactly as the dashboard's Lump sums tab shows it (flock/payouts.py over this
+    run's transactions.json): what arrived, what it should have been per the deal, what is short and still owed, and
+    the findings inside it. Plus the answer key's own figures for the same deposit, to check against."""
+    doc = frontend.read_json(Path(getattr(store, "dir", STATE_DIR)) / transactions.FILE_NAME)
+    payout_id = (headline.get("rollup") or {}).get("payout_id")
+    if not doc or not payout_id:
+        return None
+    try:
+        d = payouts.detail(doc, store.all(), f"{headline['channel']}:{payout_id}")
+    except KeyError:
+        return None
     truth = next((x for x in scenario.get("lump_sums", []) if payout_id in x["payout_ids"]), None)
-    stores = sorted({r.get("store_id") for r in lines if r.get("store_id")})
-    return {"payout_id": payout_id, "channel": headline["channel"],
-            "platform": rollup.PLATFORM.get(headline["channel"], headline["channel"]),
-            "deposit_ids": [r.get("deposit_id") for r in deposits], "deposit_dates": [r.get("deposit_date") for r in deposits],
-            "covers_payouts": covers or [payout_id], "orders": len({r.get("order_id") or r.get("platform_order_id")
-                                                                    for r in lines if float(r.get("gross") or 0) > 0}),
-            "stores": len(stores), "gross": gross, "statement_net": statement, "arrived": arrived,
-            "expected_by_flock": money(arrived + flock_short), "short_by_flock": flock_short,
-            "findings": [{"finding_id": f["finding_id"], "check_type": f["check_type"], "gap": money(f["gap"]),
-                          "state": f["state"]} for f in sorted(found, key=lambda f: -abs(f["gap"]))],
+    return {"payout_id": payout_id, "channel": d["channel"], "platform": d["platform"], "deposit_id": d["deposit_id"],
+            "deposit_date": d["deposit_date"], "covers_payouts": d["covers_payouts"], "orders": d["orders"],
+            "stores": d["stores"], "gross": d["gross"], "statement_net": d["net"], "arrived": d["received"],
+            "expected": d["expected_net"], "short": d["shortfall"], "owed": d["owed"], "status": d["status"],
+            "findings": [{"finding_id": f["finding_id"], "check_type": f["check_type"], "gap": f.get("gap"),
+                          "counts_as": f.get("counts_as")} for f in d.get("findings_detail", [])],
             "answer_key": truth}
 
 
@@ -324,7 +294,7 @@ def summarize(store: Store, history: list[dict], demo: dict, headline: dict | No
     rows = store.all()
     cards = {c["id"]: c for c in frontend.metrics(store, get_journal_store(store))["cards"]}
     t, a, m = cards["agent_time"], cards["accuracy"], cards["money_saved"]
-    lump = lump_sum(store, Path(demo["std"]), sc, headline) if headline else None
+    lump = lump_sum(store, sc, headline) if headline else None
     waiting = [f for f in rows if f["state"] == "JUDGED" and f.get("outcome") == "conflict"]
     strip = lambda r: {k: v for k, v in r.items() if k not in ("scenario_summary",)}
     return {
@@ -385,23 +355,23 @@ def cheat_sheet(info: dict[str, Any]) -> str:
                    f"{_usd(b['overcharge'])} this month.")
     out += ["", "## Headline finding (approve it live)"]
     if h:
-        out += [f"- **{h['finding_id']}**: {lump['platform']} {h['check_type']}, gap **{_usd(h['gap'])}** "
-                f"({h['orders']:,} orders" + (f" at {', '.join(h['stores'])}" if h.get("stores") else "") + ")",
-                f"- Sits in payout **{lump['payout_id']}**"
-                + (f", deposit {', '.join(d for d in lump['deposit_ids'] if d)} on "
-                   f"{', '.join(d for d in lump['deposit_dates'] if d)}" if lump["deposit_ids"] else "")
-                + f" ({lump['orders']:,} orders from {lump['stores']} stores in that one lump sum)",
-                f"- Lump sum: expected **{_usd(lump['expected_by_flock'])}** | arrived **{_usd(lump['arrived'])}** | "
-                f"short **{_usd(lump['short_by_flock'])}** (Flock's open findings in that payout: "
-                + ", ".join(f"{x['finding_id']} {x['check_type']} {_usd(x['gap'])}" for x in lump["findings"]) + ")"]
-        if lump.get("answer_key"):
-            k = lump["answer_key"]
-            out.append(f"- Answer key for the same deposit: expected {_usd(k['expected_by_deal'])}, deposited "
-                       f"{_usd(k['deposited'])}, short {_usd(k['shortfall'])}")
-            if money(k["shortfall"]) != money(lump["short_by_flock"]):
-                out.append("  (why they differ: Flock claims a sold-but-never-paid order at its register subtotal, "
-                           "the answer key counts its net after commission; findings not yet judged recoverable "
-                           "are not counted)")
+        out.append(f"- **{h['finding_id']}**: {PLATFORM_NAME.get(h['channel'], h['channel'])} {h['check_type']}, gap **{_usd(h['gap'])}** "
+                   f"({h['orders']:,} orders" + (f" at {', '.join(h['stores'])}" if h.get("stores") else "") + ")")
+        if lump:
+            out += [f"- Sits in {lump['platform']} payout **{lump['payout_id']}**, deposit {lump['deposit_id']} on "
+                    f"{lump['deposit_date']}: one lump sum for {lump['orders']:,} orders from {lump['stores']} stores "
+                    "(dashboard: **Lump sums** tab)",
+                    f"- Lump sum: expected **{_usd(lump['expected'])}** | arrived **{_usd(lump['arrived'])}** | "
+                    f"short **{_usd(lump['short'])}** (findings inside: "
+                    + ", ".join(f"{x['finding_id']} {x['check_type']} {_usd(x['gap'])}" for x in lump["findings"]) + ")"]
+            k = lump.get("answer_key")
+            if k:
+                paid = money(k["shortfall"] - k.get("unpaid_net", 0.0))
+                out.append(f"- Answer key for the same deposit: expected {_usd(k['expected_by_deal'])}, deposited "
+                           f"{_usd(k['deposited'])}, short {_usd(k['shortfall'])}"
+                           + (f" ({_usd(k['unpaid_net'])} of it is an order sold but never paid, which belongs to no "
+                              f"lump sum on the dashboard: {_usd(paid)} on the paid orders)"
+                              if k.get("unpaid_net") else ""))
     else:
         out.append("- none: no drafted dispute waited for a human (check the logs in data/showtime/logs)")
     out += ["", "## Metrics cards (after you approve, money moves from pending to filed)",
@@ -428,19 +398,26 @@ def cheat_sheet(info: dict[str, Any]) -> str:
                 f"{_usd(fu['amount'])} ({fu['check_type']}), still unpaid. Draft state: {fu['state']}."]
     hid = h["finding_id"] if h else "<headline>"
     out += ["", "## Exact clicks", f"Dashboard: `python -m dashboard.app` -> {DASHBOARD} (Acting as: your name)",
-            "1. **Live board**: say the story line above while the counters sit at this month's run.",
-            f"2. **Human queue** tab -> the one drafted dispute waiting is **{hid}** ({_usd(h['gap']) if h else ''}). "
-            "Type a reason (\"amendment says 20%\"), click **Approve**.",
-            "3. Click **File 1 approved via Clicky**: the toast shows the SBX- reference.",
-            ]
+            "1. **Live board**: say the story line above while the counters sit at this month's run."]
+    n = 2
+    if lump:
+        out.append(f"{n}. **Lump sums** tab -> {lump['platform']} **{lump['payout_id']}** (status {lump['status']}): "
+                   f"expected {_usd(lump['expected'])}, received {_usd(lump['arrived'])}, short {_usd(lump['short'])}; "
+                   f"the waterfall shows the commission line, the findings list shows **{hid}**.")
+        n += 1
+    out += [f"{n}. **Human queue** tab -> the one drafted dispute waiting is **{hid}** "
+            f"({_usd(h['gap']) if h else ''}). Type a reason (\"amendment says 20%\"), click **Approve**.",
+            f"{n + 1}. Click **File 1 approved via Clicky**: the toast shows the SBX- reference."]
+    n += 2
     if info["waiting_for_presenter"]:
         w = info["waiting_for_presenter"][0]
-        out.append(f"4. Same tab, the conflict **{w['finding_id']}** ({w['channel']} {w['check_type']}, "
+        out.append(f"{n}. Same tab, the conflict **{w['finding_id']}** ({w['channel']} {w['check_type']}, "
                    f"{_usd(w['gap'])}): Flock won't decide it. Type \"not binding: rep not on the contract\", "
                    "click **Reject** (accept the charge).")
-    out += ["5. **Scoreboard** tab: the month-over-month hand-offs above; **Judge market** tab: balances.",
-            f"6. Follow-up (terminal): `python -m flock.agents.follow_up approve {fu['finding_id'] if fu else '<id>'} "
-            "--actor <you> --send`",
+        n += 1
+    out += [f"{n}. **Scoreboard** tab: the month-over-month hand-offs above; **Judge market** tab: balances.",
+            f"{n + 1}. Follow-up (terminal): `python -m flock.agents.follow_up approve "
+            f"{fu['finding_id'] if fu else '<id>'} --actor <you> --send`",
             "", "API instead of the dashboard (approve also files via Clicky):",
             f"`curl -X POST {API}/api/findings/{hid}/approve -H 'Content-Type: application/json' "
             "-d '{\"actor\": \"<you>\", \"reason\": \"amendment says 20%\"}'`",

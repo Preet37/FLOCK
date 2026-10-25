@@ -60,6 +60,8 @@ def test_lump_sums_add_up(world):
     assert money(sum(x["shortfall"] for x in sc["lump_sums"])) == sc["shortfall"]
     owed = money(sum(i["amount"] for i in sc["incidents"] if i["expected_outcome"] == "recoverable"))
     assert sc["shortfall"] == owed         # rep promises without authority are not money owed
+    never_paid = next(i for i in sc["incidents"] if i["incident"] == "sold_never_paid")
+    assert money(sum(x["unpaid_net"] for x in sc["lump_sums"])) == never_paid["amount"]
 
 
 def test_deterministic_per_seed_and_files(tmp_path, world):
@@ -146,8 +148,11 @@ def test_prepare_leaves_the_headline_for_the_presenter(prepared):
     assert all(x["state"] == "JUDGED" for x in store.all() if x["outcome"] == "conflict")   # a human's call, live
     lump = info["lump_sum"]
     assert lump["payout_id"] == f["rollup"]["payout_id"] and lump["arrived"] > 0
-    assert lump["short_by_flock"] >= f["gap"] and lump["expected_by_flock"] == money(lump["arrived"] + lump["short_by_flock"])
-    assert lump["answer_key"]["deposited"] == lump["arrived"]
+    assert lump["short"] >= f["gap"] and lump["expected"] == money(lump["arrived"] + lump["short"])
+    assert f["finding_id"] in {x["finding_id"] for x in lump["findings"]}
+    key = lump["answer_key"]
+    assert key["deposited"] == lump["arrived"]
+    assert lump["short"] == money(key["shortfall"] - key["unpaid_net"])     # Flock's lump sum = the answer key's
 
 
 def test_prepare_shows_a_learning_curve(prepared):

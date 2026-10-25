@@ -1486,14 +1486,18 @@ def scenario_summary(world: dict, scenario: str, month: str, plan: int | None, i
     if short:
         incident_rows["short_deposit"] = [r["order_id"] for r in short]
     expected_net: dict[str, float] = {}
+    unpaid_net: dict[str, float] = {}
     for o in world["orders"]:   # what each lump sum should be by the deal in force: the true net of every order
         expected_net[o["payout_id"]] = money(expected_net.get(o["payout_id"], 0.0) + net_of(o["truth"]))
+        if not o["in_payout"]:  # sold, never paid: owed in this lump sum, but on no statement line
+            unpaid_net[o["payout_id"]] = money(unpaid_net.get(o["payout_id"], 0.0) + net_of(o["truth"]))
     lumps = []
     for d in sorted(world["deposits"], key=lambda d: (d["date"], d["channel"])):
         exp = money(sum(expected_net.get(p, 0.0) for p in d["payout_ids"]))
         lumps.append({"deposit_id": d["deposit_id"], "channel": d["channel"], "payout_ids": d["payout_ids"],
                       "date": d["date"].isoformat(), "deposited": d["amount"], "expected_by_deal": exp,
-                      "shortfall": money(exp - d["amount"])})
+                      "shortfall": money(exp - d["amount"]),
+                      "unpaid_net": money(sum(unpaid_net.get(p, 0.0) for p in d["payout_ids"]))})
     out = []
     for name, count in incidents.items():
         if not count or name not in INCIDENT_TRAP:

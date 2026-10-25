@@ -6,8 +6,9 @@ the few mistakes, and shows what's still owed.
 Everything on stage is prepared the night before by `python -m flock.showtime prepare`, runs on localhost, and needs
 no network. All data is **simulated** (Ringtide Bagels, the fictional 56-store `ca_bagel_chain` profile).
 
-Every dollar figure you say comes from `data/state/showtime.md`, which `prepare` computes from that run's findings,
-std tables and generated answer key. The numbers quoted below are what our run printed (seed 2025, Oct 25); if you
+Every dollar figure you say comes from `data/state/showtime.md`, which `prepare` computes from that run's findings
+and generated answer key; the lump-sum figures are exactly what the dashboard's **Lump sums** tab shows
+(`flock/payouts.py`). The numbers quoted below are what our run printed (seed 2025, Oct 25); if you
 change the seed or the code, read the new cheat sheet, not this page.
 
 ## The night before
@@ -57,8 +58,8 @@ Open the dashboard on the **Live board** with the cheat sheet next to you. "Acti
 | Time | Click | Say |
 | --- | --- | --- |
 | 0:00 | Live board | "Ringtide Bagels, 56 stores, four delivery channels. In September: 102,730 orders. The bank saw 20 deposits. Nobody can check 100,000 lines by hand, so nobody does." |
-| 0:25 | Human queue tab, open the headline (`F-...`, the one drafted dispute) | "Take one deposit: DoorDash payout DD-PO-20260901, 8,114 orders from 56 stores, one wire of $131,085.91. By the contracts it should have been $131,657.34. Flock broke it down line by line and found why: three stores are still being charged 25% after the amendment cut it to 20%. $549.33 in this one deposit, $2,019.17 this month." |
-| 0:55 | Type "amendment says 20%", click **Approve**, then **File 1 approved via Clicky** | "Agents propose, people approve, and only the gatekeeper files. Clicky files it in the platform's portal; here's the reference." (toast: SBX-...) |
+| 0:25 | **Lump sums** tab, open DoorDash DD-PO-20260901 | "Take one deposit: DoorDash payout DD-PO-20260901, 8,114 orders from 56 stores, one wire of $131,085.91. By the contracts it should have been $131,635.24. Flock broke it down line by line (the waterfall) and found why: three stores are still being charged 25% after the amendment cut it to 20%. $549.33 in this one deposit, $2,019.17 this month." |
+| 0:45 | **Human queue** tab: the headline (`F-...`, the one drafted dispute). Type "amendment says 20%", click **Approve**, then **File 1 approved via Clicky** | "Agents propose, people approve, and only the gatekeeper files. Clicky files it in the platform's portal; here's the reference." (toast: SBX-...) |
 | 1:20 | Same tab: the Uber Eats conflict, click **Reject** with "not binding: rep not on the contract" | "This one Flock won't decide. An Uber Eats rep promised a fee waiver, but he's not on the contract's authorized contacts. A person decides. In May a Grubhub rep did the same thing twice; a person said no twice; now that's a rule, and this month it was settled without anyone." |
 | 1:50 | **Scoreboard** tab | "Hand-offs to a human by month: 5, 4, 3, 1, 1. Every planted mistake caught: 1,945 of 1,945 answer-key rows, zero false alarms." Then **Judge market** tab: "the judges bet on their calls; the honest ones gain weight." |
 | 2:20 | Terminal: `python -m flock.agents.follow_up` then `... approve F-... --actor <you> --send` | "And what's still owed: in August we filed a claim for a short Uber Eats deposit, $55.38, and it was never paid. Flock drafted the follow-up with the claim number and the evidence; I approve it and Clicky sends it." |
@@ -109,10 +110,9 @@ are saved in the state, so the stage itself needs no model call.
 
 ## Headline finding (approve it live)
 - F-e7127388: DoorDash commission, gap $549.33 (457 orders at S28, S38, S41)
-- Sits in payout DD-PO-20260901, deposit BNK-2063106 on 2026-09-10 (8,114 orders from 56 stores in that one lump sum)
-- Lump sum: expected $131,657.34 | arrived $131,085.91 | short $571.43 (F-e7127388 commission $549.33, F-d76382d3 missing_order $22.10)
-- Answer key for the same deposit: expected $131,652.92, deposited $131,085.91, short $567.01
-  (Flock claims a sold-but-never-paid order at its register subtotal; the answer key counts its net after commission)
+- Sits in DoorDash payout DD-PO-20260901, deposit BNK-2063106 on 2026-09-10: one lump sum for 8,114 orders from 56 stores (dashboard: Lump sums tab)
+- Lump sum: expected $131,635.24 | arrived $131,085.91 | short $549.33 (findings inside: F-e7127388 commission $549.33)
+- Answer key for the same deposit: expected $131,652.92, deposited $131,085.91, short $567.01 ($17.68 of it is an order sold but never paid, which belongs to no lump sum on the dashboard: $549.33 on the paid orders)
 
 ## Metrics cards
 1. Agent time: 5.929s of agent wall time vs 280.0 human hours (280 store-weeks x 60 min, ASSUMPTION)
