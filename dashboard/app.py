@@ -17,6 +17,7 @@ import argparse
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -337,7 +338,8 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=5050)
+    ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))  # 0.0.0.0 when hosted (Railway)
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5050")))
     ap.add_argument("--debug", action="store_true")
     a = ap.parse_args()
-    create_app().run(host="127.0.0.1", port=a.port, debug=a.debug)
+    create_app().run(host=a.host, port=a.port, debug=a.debug)
