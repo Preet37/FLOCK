@@ -115,7 +115,8 @@ def test_realtime_run_sends_the_contract_and_returns_the_streamed_text(creao):
     call = f.calls[0]
     assert call["headers"]["authorization"] == "Bearer cr_sk_test"
     assert call["body"]["agent_id"] == "a-strict"
-    assert call["body"]["input"]["instructions"] == "SYSTEM PROMPT" and call["body"]["input"]["request"] == '{"gap": 2.5}'
+    assert call["body"]["input"]["instructions"].startswith("SYSTEM PROMPT") and call["body"]["input"]["request"] == '{"gap": 2.5}'
+    assert call["body"]["input"]["instructions"].endswith(llm.CREAO_ANSWER_RULE), "the marker rule rides along"
     assert "model" not in call["body"], "no FLOCK_CREAO_LLM: the agent's default model runs"
     u = llm.creao_usage()
     assert u["input_tokens"] == 1_000_000 and u["output_tokens"] == 100_000 and u["calls"] == 1
@@ -301,3 +302,21 @@ def test_benchmark_has_a_creao_contestant():
     spec.loader.exec_module(bm)
     assert bm.CONTESTANTS["creao"]["env"]["FLOCK_JUDGE_PROVIDERS"] == "creao"
     assert bm.CONTESTANTS["creao"]["offline"] is False
+
+
+def test_the_verdict_is_found_in_the_harness_narration(creao):
+    marked = ('I\'ll run the agent. Inputs: {"instructions": "x", "request": "y", "max_tokens": 10}. '
+              'The case is {"check_type": "commission", "gap": 2.5}. Done.\n'
+              'FLOCK_ANSWER: {"outcome": "recoverable", "confidence": 0.9, "reason": "Contract says 20%."}\n'
+              '{"status": "success", "summary": "Flock Judge executed successfully"}')
+    f = creao({("POST", "/v2/realtime/runs"): stream_reply(marked)})
+    text, _ = llm.complete("SYS", "u", 10, ("creao", "a-strict"))
+    assert json.loads(text) == VOTE, "the marked object wins over echoes and the session summary"
+    assert f.calls[0]["body"]["input"]["instructions"].endswith(llm.CREAO_ANSWER_RULE)
+    unmarked = ('Let me validate {"instructions": "x", "request": "y"} first. '
+                '{"outcome": "recoverable", "confidence": 0.9, "reason": "Contract says 20%."} '
+                '{"status": "success", "summary": "done"}')
+    creao({("POST", "/v2/realtime/runs"): stream_reply(unmarked)})
+    text, _ = llm.complete("SYS", "u", 10, ("creao", "a-strict"))
+    assert json.loads(text) == VOTE, "without a marker: skip the echo and the summary, take the real object"
+    assert llm._creao_answer(["plain words only"], None) == "plain words only"

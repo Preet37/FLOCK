@@ -469,6 +469,62 @@ def _creao_text(result: Any) -> str:
     return (text if isinstance(text, str) else json.dumps(text)).strip() if text is not None else ""
 
 
+CREAO_MARKER = "FLOCK_ANSWER:"
+CREAO_ANSWER_RULE = (f"\nWhen you are done, write the final JSON object on its own last line prefixed exactly with "
+                     f"{CREAO_MARKER} (for example {CREAO_MARKER} {{\"outcome\": ...}}). Nothing after it.")
+_ECHO_KEYS = {"instructions", "request", "max_tokens"}            # the harness echoing our input back
+_SUMMARY_KEYS = {"status", "summary", "decision_type", "error_occurred", "steps", "result"}  # its session summary
+
+
+def _marked_json(text: str) -> str | None:
+    """The JSON object after the last FLOCK_ANSWER: marker, if the agent wrote one."""
+    i = text.rfind(CREAO_MARKER)
+    if i < 0:
+        return None
+    tail = text[i + len(CREAO_MARKER):]
+    j = tail.find("{")
+    if j < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(tail, j)
+    except ValueError:
+        return None
+    return json.dumps(obj) if isinstance(obj, dict) else None
+
+
+def _json_objects(text: str) -> list[dict[str, Any]]:
+    out, i, decoder = [], 0, json.JSONDecoder()
+    while True:
+        i = text.find("{", i)
+        if i < 0:
+            return out
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except ValueError:
+            i += 1
+            continue
+        if isinstance(obj, dict) and obj:
+            out.append(obj)
+        i = end
+
+
+def _creao_answer(deltas: list[str], final: Any) -> str:
+    """The agent's answer out of CREAO's narrated stream. In order: the FLOCK_ANSWER-marked object; else the first
+    JSON object that is neither an echo of our input nor the harness's session summary; else the plain text."""
+    streamed, terminal = "".join(deltas).strip(), _creao_text(final)
+    for candidate in (streamed, terminal):
+        picked = _marked_json(candidate)
+        if picked:
+            return picked
+    for candidate in (streamed, terminal):
+        for obj in _json_objects(candidate):
+            keys = set(obj)
+            if keys & _ECHO_KEYS or keys <= _SUMMARY_KEYS:
+                continue
+            return json.dumps(obj)
+    return streamed or terminal
+
+
 def _creao_realtime(body: dict[str, Any]) -> tuple[str, str]:
     """POST /v1/realtime/runs: NDJSON, one event per line; the answer is the output_text deltas (or result.text)."""
     raw = _creao_request("POST", creao_path("realtime/runs"), body)
@@ -495,8 +551,7 @@ def _creao_realtime(body: dict[str, Any]) -> tuple[str, str]:
             _creao_note_usage(body.get("agent_id", "general"), ev.get("usage"), served)
     if failed and final is None:
         raise RuntimeError(f"creao run failed: {failed}")
-    text = "".join(deltas).strip() or _creao_text(final)
-    return text, f"creao:{served}" if served else "creao"
+    return _creao_answer(deltas, final), f"creao:{served}" if served else "creao"
 
 
 def _creao_async(body: dict[str, Any]) -> tuple[str, str]:
@@ -513,7 +568,7 @@ def _creao_async(body: dict[str, Any]) -> tuple[str, str]:
         state = status.get("status")
         if state == "completed":
             _creao_note_usage(body.get("agent_id", "general"), status.get("usage"), str(status.get("model") or ""))
-            return _creao_text(status.get("result")), f"creao:{status.get('model') or ''}".rstrip(":")
+            return _creao_answer([], status.get("result")), f"creao:{status.get('model') or ''}".rstrip(":")
         if state in ("failed", "cancelled"):
             err = status.get("error") if isinstance(status.get("error"), dict) else {}
             raise RuntimeError(f"creao run {state}: {err.get('code') or ''}".strip())
@@ -558,8 +613,8 @@ def _creao_run(agent_id: str, system: str, user: str, max_tokens: int) -> tuple[
     """Run a Flock role as a hosted CREAO agent. The agent was created to treat `instructions` as its system prompt
     and answer `request` with only the JSON the instructions ask for (scripts/creao_setup.py). max_tokens is
     advisory: CREAO sizes its own replies."""
-    body: dict[str, Any] = {"agent_id": agent_id, "input": {"instructions": system, "request": user,
-                                                             "max_tokens": max_tokens}}
+    body: dict[str, Any] = {"agent_id": agent_id, "input": {"instructions": system + CREAO_ANSWER_RULE,
+                                                             "request": user, "max_tokens": max_tokens}}
     if os.environ.get("FLOCK_CREAO_LLM"):
         body["model"] = os.environ["FLOCK_CREAO_LLM"]
     _count("creao")
