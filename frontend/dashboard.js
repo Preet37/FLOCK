@@ -240,14 +240,14 @@ const cardHead = (title, sub = '', right = '') => `
     <div class="flex flex-col sm:flex-row sm:items-center justify-between shrink-0 mb-4 gap-3">
         <div class="min-w-0"><h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">${title}</h3>
         ${sub ? `<p class="text-xs text-gray-400 mt-0.5 font-medium">${sub}</p>` : ''}</div>${right}</div>`;
-function statCard({ label: l, value, sub, icon, dark, how, cls = '' }) {
+function statCard({ label: l, labelHtml, value, sub, icon, dark, how, cls = '' }) {
     return `<div class="${dark ? 'bg-cardDark text-white shadow-md' : 'bg-white text-gray-900 card-shadow border border-gray-100'} p-4 sm:p-5 rounded-3xl flex flex-col justify-between gap-2 min-w-0 ${cls}">
         <div class="flex items-center justify-between">
             <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-full ${dark ? 'bg-limeAccent text-black' : 'bg-gray-100 text-gray-800'} flex items-center justify-center shrink-0"><i data-lucide="${icon || 'circle'}" class="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]"></i></div>
             ${how ? `<button data-how="${esc(how)}" title="How we got this" aria-label="How we got this" class="w-8 h-8 rounded-full ${dark ? 'text-gray-400 hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-gray-800 hover:bg-gray-100'} flex items-center justify-center"><i data-lucide="more-vertical" class="w-4 h-4"></i></button>` : ''}
         </div>
         <div class="min-w-0">
-            <p class="${dark ? 'text-gray-400' : 'text-gray-500'} text-xs font-medium mb-0.5">${esc(l)}</p>
+            <p class="${dark ? 'text-gray-400' : 'text-gray-500'} text-xs font-medium mb-0.5">${labelHtml || esc(l)}</p>
             <h2 class="text-xl sm:text-2xl xl:text-3xl font-extrabold tracking-tight tabular-nums truncate">${value}</h2>
             ${sub ? `<p class="${dark ? 'text-limeAccent' : 'text-gray-500'} text-xs font-semibold mt-1">${sub}</p>` : ''}
         </div></div>`;
@@ -420,16 +420,40 @@ function tokenEstimate(inputs) {
     return { usd: (tin * HAIKU_45.in + tout * HAIKU_45.out) / 1e6, tin, tout };
 }
 
+// Money for the Total Saved card: /api/metrics money.month / money.ytd, else the money_saved card and the run history
+let savedPeriod = 'ytd';
+function moneyPeriod(kind) {
+    const m = state.metrics || {};
+    const card = (m.cards || []).find((c) => c.id === 'money_saved')?.value || {};
+    const src = m.money?.[kind] || (kind === 'month' ? card.month : card.ytd);
+    if (src && typeof src === 'object') {
+        return { usd: src.usd ?? src.total, months: src.months ?? src.by_month?.length, annual: src.annualized ?? src.annualized_projection,
+            run_rate: src.run_rate_annual ?? src.run_rate ?? src.annualized, by_month: src.by_month };
+    }
+    if (kind === 'month') return { usd: card.monthly ?? card.usd, annual: card.annualized ?? card.annualized_projection };
+    const runs = state.score?.runs || [];
+    if (!runs.length) return null;
+    const year = (String(runs[runs.length - 1].label || '').match(/\d{4}/) || [])[0];
+    const these = runs.filter((r) => !year || String(r.label || r.period || '').includes(year));
+    const usd = these.reduce((t, r) => t + (Number(r.dollars) || 0), 0);
+    return { usd, months: these.length, run_rate: these.length ? usd / these.length * 12 : null };
+}
+
 function metricCards(m) {
     const cards = m && Array.isArray(m.cards) ? m.cards : [];
     const by = Object.fromEntries(cards.map((c) => [c.id, c]));
     const out = [];
     const a = by.accuracy, c = by.cost, s = by.money_saved;
     if (s) {
-        const v = s.value || {};
-        const yr = v.annualized ?? v.annualized_projection;
-        out.push({ id: 'money_saved', label: 'Total Saved', icon: 'wallet', dark: true, value: money(v.monthly ?? v.usd),
-            sub: yr != null ? `≈ ${money(yr).replace(/\.\d\d$/, '')} / year` : '' });
+        const mo = moneyPeriod('month'), ytd = moneyPeriod('ytd');
+        const cur = savedPeriod === 'ytd' && ytd ? ytd : mo;
+        const toggle = `<span class="flex items-center justify-between gap-2"><span>Total Saved</span>
+            <span class="inline-flex rounded-full bg-white/10 p-0.5 text-[10px] font-bold">${[['month', 'Month'], ['ytd', 'YTD']].map(([k, t]) => `
+                <button data-saved="${k}" class="px-2 py-0.5 rounded-full ${(savedPeriod === k && (k === 'month' || ytd)) ? 'bg-purpleAccent text-white' : 'text-gray-400 hover:text-white'}">${t}</button>`).join('')}</span></span>`;
+        const short = (n) => money(n).replace(/\.\d\d$/, '');
+        out.push({ id: 'money_saved', label: 'Total Saved', labelHtml: toggle, icon: 'wallet', dark: true, value: money(cur?.usd),
+            sub: cur === ytd ? `${num(ytd.months)} month${ytd.months === 1 ? '' : 's'}${ytd.run_rate != null ? ` · ≈ ${short(ytd.run_rate)}/yr run rate` : ''}`
+                : cur?.annual != null ? `≈ ${short(cur.annual)} / year` : '' });
     }
     if (c) {
         const v = c.value || {};
@@ -516,6 +540,14 @@ function renderCurve(id, tall = false) {
 // Hours per month: agent = measured run time; human = industry estimate per store-week × stores × weeks in the month
 let hoursYear = null;
 function hoursRows() {
+    const bm = state.metrics?.money?.ytd?.by_month;
+    if (Array.isArray(bm) && bm.length) {
+        return bm.map((r, i) => {
+            const lbl = r.label || r.month || r.period || '';
+            return { label: lbl, year: (String(lbl).match(/\d{4}/) || [String(r.at || '').slice(0, 4)])[0] || String(new Date().getFullYear()),
+                agent: r.agent_hours ?? null, approx: false, human: r.human_hours_est ?? r.human_hours ?? null, last: i === bm.length - 1 };
+        });
+    }
     const runs = state.score?.runs || [];
     const inputs = (state.metrics?.cards || []).find((c) => c.id === 'agent_time')?.inputs || {};
     const minPer = inputs.minutes_per_store_week || 60;
@@ -1780,6 +1812,8 @@ document.addEventListener('click', (e) => {
     const th = t.closest('[data-th]');
     if (th) return theaterStart(th.dataset.th);
     if (t.id === 'hoursYear') return;
+    const sv = t.closest('[data-saved]');
+    if (sv) { savedPeriod = sv.dataset.saved; return renderMetrics(); }
     const sp = t.closest('[data-speed]');
     if (sp) { theater.speed = Number(sp.dataset.speed); return theaterStart('replay'); }
     if (t.closest('a[href^="#"]')) return;   // plain links route themselves
