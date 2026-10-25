@@ -312,10 +312,10 @@
     function openScreen(fid) {
         const back = document.createElement('div');
         back.style.cssText = 'position:fixed;inset:0;background:rgba(15,18,32,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
-        back.innerHTML = `<div style="width:min(1000px,100%);height:min(720px,90vh);background:#fff;border-radius:22px;overflow:hidden;display:flex;flex-direction:column">
+        back.innerHTML = `<div style="width:min(1300px,100%);height:min(820px,92vh);background:#fff;border-radius:22px;overflow:hidden;display:flex;flex-direction:column">
             <div style="padding:12px 18px;background:#012F8A;color:#fff;font-weight:800;display:flex;align-items:center">Clicky's screen · ${esc(fid)}
             <button style="margin-left:auto;background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:50%;width:30px;height:30px;cursor:pointer">×</button></div>
-            <iframe src="${S.api}/api/filings/${encodeURIComponent(fid)}/screen" style="flex:1;border:0" sandbox=""></iframe></div>`;
+            <iframe src="agent-screen.html?embed=1&finding=${encodeURIComponent(fid)}${S.api ? `&api=${encodeURIComponent(S.api)}` : ''}" style="flex:1;border:0;background:#1a1d2d"></iframe></div>`;
         back.onclick = (e) => { if (e.target === back || e.target.tagName === 'BUTTON') back.remove(); };
         document.body.appendChild(back);
     }
