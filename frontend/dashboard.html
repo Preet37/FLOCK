@@ -157,20 +157,20 @@
                     </svg>
                 </div>
                 <div class="min-w-0">
-                    <h1 id="pageTitle" class="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight text-gray-900 leading-none truncate">Flock</h1>
+                    <h1 id="pageTitle" class="text-xl sm:text-2xl lg:text-[2.5rem] font-extrabold tracking-tight text-gray-900 leading-none truncate">Flock</h1>
                     <p id="pageSub" class="text-gray-500 font-semibold text-xs sm:text-sm mt-1 truncate">Simulated data</p>
                 </div>
             </div>
 
             <div class="flex items-center gap-2.5 sm:gap-3 shrink-0">
-                <div id="liveStatus" class="hidden sm:flex items-center gap-2 bg-white rounded-full px-3 h-9 sm:h-10 text-xs font-bold text-gray-600 border border-gray-200/50 shadow-sm">
+                <div id="liveStatus" class="hidden items-center gap-2 bg-white rounded-full px-3 h-9 sm:h-10 text-xs font-bold text-gray-600 border border-gray-200/50 shadow-sm">
                     <span class="w-2 h-2 rounded-full bg-gray-300"></span> Connecting
                 </div>
                 <a id="runPill" href="theater.html" target="_blank" rel="noopener" class="hidden items-center gap-2 rounded-full bg-cardDark text-white text-xs font-bold px-3 h-9 sm:h-10 shadow-sm" title="Agents are working on a new month: watch them">
                     <span class="w-2 h-2 rounded-full bg-limeAccent pulse-dot"></span><span id="runPillText">Running</span>
                 </a>
-                <button data-live-run id="liveRunBtn" class="flex items-center gap-1.5 rounded-full bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-xs sm:text-sm px-3 sm:px-4 h-9 sm:h-10 shadow-sm transition" title="Generate a fresh month of data and run every agent on it, live">
-                    <i data-lucide="play" class="w-4 h-4"></i><span class="hidden md:inline">Run a new month live</span><span class="md:hidden">Run live</span>
+                <button data-live-run id="liveRunBtn" class="flex items-center gap-1.5 rounded-full bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-xs px-3 h-9 sm:h-10 shadow-sm transition" title="Generate a fresh month of data and run every agent on it, live">
+                    <i data-lucide="play" class="w-4 h-4"></i><span class="hidden md:inline">Run new month</span>
                 </button>
                 <div class="relative">
                     <button data-bell id="queueBell" class="relative w-9 h-9 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center text-gray-700 shadow-sm hover:bg-gray-50 transition border border-gray-200/50" aria-label="Needs your approval" title="Needs your approval">
@@ -179,11 +179,11 @@
                     </button>
                     <div id="bellPanel" class="hidden absolute right-0 top-12 z-[55] w-[min(92vw,380px)] bg-white rounded-3xl shadow-2xl border border-gray-100 p-3"></div>
                 </div>
-                <div id="orgPill" class="hidden md:flex items-center gap-2 bg-white rounded-full pl-1 pr-3.5 h-10 border border-gray-200/50 shadow-sm">
+                <div id="orgPill" data-user-menu role="button" tabindex="0" title="Account" class="flex items-center gap-2 bg-white rounded-full pl-1 pr-1 sm:pr-3.5 h-10 border border-gray-200/50 shadow-sm cursor-pointer hover:ring-2 hover:ring-purpleAccent/40">
                     <span id="orgLogo" class="w-8 h-8 rounded-full bg-cardDark text-white text-[11px] font-extrabold flex items-center justify-center">RB</span>
-                    <span id="orgName" class="text-sm font-bold text-gray-800 whitespace-nowrap">Ringtide Bagels</span>
+                    <span id="orgName" class="hidden sm:inline text-sm font-bold text-gray-800 whitespace-nowrap">Ringtide Bagels</span>
                 </div>
-                <button data-user-menu id="actorBadge" class="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-white shadow-sm shrink-0 hover:ring-2 hover:ring-purpleAccent/50 transition bg-purpleAccent text-white text-xs font-extrabold flex items-center justify-center" aria-label="Account" title="Account">
+                <button data-user-menu id="actorBadge" class="hidden w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-white shadow-sm shrink-0 hover:ring-2 hover:ring-purpleAccent/50 transition bg-purpleAccent text-white text-xs font-extrabold flex items-center justify-center" aria-label="Account" title="Account">
                     <i data-lucide="key-round" class="w-4 h-4"></i>
                 </button>
             </div>

@@ -226,8 +226,21 @@
             if (one) { await file(one); return; }
             const { queue } = await api('/api/clicky/queue');
             if (!queue.length) {
-                $('case').innerHTML = '<div class="meta">Nothing approved is waiting. Approve a claim on the dashboard and Clicky files it here.</div>';
-                return idle('<div><b>No approved claims waiting.</b><br>Approve one on the dashboard, then press Run again.</div>');
+                // never an empty screen: replay the latest filing, or preview the biggest claim waiting for approval
+                const all = await api('/api/findings').catch(() => []);
+                const filed = (Array.isArray(all) ? all : all.findings || []).filter((f) => f.portal_ref);
+                if (filed.length) {
+                    step('Clicky is waiting for your approvals. Replay mode: the most recent filing', 'ok');
+                    await file(filed[0].finding_id || filed[0].id);
+                    return;
+                }
+                const ap = await api('/api/approvals').catch(() => ({ items: [] }));
+                const next = (ap.items || [])[0];
+                if (next) {
+                    const p = await api(`/api/clicky/plan/${encodeURIComponent(next.finding_id)}`).catch(() => null);
+                    if (p) showCase(p, 'PREVIEW · waiting for your OK');
+                }
+                return idle('<div><b>Clicky is waiting for your approvals.</b><br>Approve a claim on the dashboard and Clicky files it here.</div>');
             }
             step(`${queue.length} approved claim${queue.length > 1 ? 's' : ''} in Clicky's queue`, 'ok');
             for (const it of queue) { await file(it.finding_id); await sleep(900); }
