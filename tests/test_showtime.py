@@ -42,7 +42,9 @@ def test_big_error_dollars_come_from_the_data(world):
     big = world["scenario"]["big_error"]
     dd = world["contracts"]["doordash"]
     assert (dd["commission"], dd["amendment"]["commission"]) == (0.25, 0.20)
-    assert dd["amendment"]["effective_from"] == date(2026, 9, 1) and len(big["stores"]) == 3
+    n = len(world["stores"])
+    assert dd["amendment"]["effective_from"] == date(2026, 9, 1)
+    assert len(big["stores"]) == min(generator.BIG_ERROR_STORES, max(1, n * 3 // 7))
     orders = [o for o in world["orders"] if o["channel"] == "doordash" and o["store_id"] in big["stores"]]
     assert len(orders) == big["orders"]
     recomputed = money(sum(money(o["subtotal"] * 0.25) - money(o["subtotal"] * 0.20) for o in orders))
@@ -143,8 +145,8 @@ def test_prepare_leaves_the_headline_for_the_presenter(prepared):
     assert f["state"] == "JUDGED" and f["outcome"] == "recoverable" and f["dispute_draft"]
     assert f["check_type"] == "commission" and f["channel"] == "doordash" and f.get("rollup")
     others = [x for x in store.all() if x["outcome"] == "recoverable" and x["finding_id"] != h["finding_id"]
-              and x.get("dispute_draft")]
-    assert others and all(x["state"] == "FILED" for x in others)
+              and x.get("dispute_draft") and x["finding_id"] != (info.get("follow_up") or {}).get("finding_id")]
+    assert others and all(x["state"] == "JUDGED" for x in others), "nothing on stage is approved for the presenter"
     assert all(x["state"] == "JUDGED" for x in store.all() if x["outcome"] == "conflict")   # a human's call, live
     lump = info["lump_sum"]
     assert lump["payout_id"] == f["rollup"]["payout_id"] and lump["arrived"] > 0
@@ -167,7 +169,8 @@ def test_prepare_shows_a_learning_curve(prepared):
     assert [r["label"] for r in scoreboard.history(base / "state" / "runs.jsonl")] == [m["name"] for m in info["months"]]
     assert len(learner.approved_rules(base / "rules.json")) >= 2
     from flock import market
-    assert any(b != market.START for b in market.balances(store).values())
+    assert all(b == market.START for b in market.balances(store).values()), "fresh balances for the month on stage"
+    assert any(r["kind"] == "settle" for r in market.entries(store, since_reset=False)), "history months settled bets"
 
 
 def test_prepare_leaves_an_unpaid_claim_with_a_follow_up_draft(prepared):

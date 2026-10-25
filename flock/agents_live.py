@@ -323,7 +323,7 @@ def snapshot(store: Any, since: int | None = None, active_limit: int = 40) -> di
     rows = events(store)
     cursor = (rows[-1]["seq"] + 1) if rows else 0
     run = rows[-1].get("run") if rows else None
-    mine = [e for e in rows if e.get("run") == run]
+    mine = [e for e in rows if e.get("run") == run and not str(e.get("agent_id", "")).startswith("stage:")]
     agents = fold(mine)
     first = mine[0].get("seq", 0) if mine else 0
     reset = not since or since > cursor or first >= since   # a new run (or a wiped feed) since the cursor

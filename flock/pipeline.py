@@ -187,6 +187,34 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     return store
 
 
+# (check_type, raw file stem prefix) -> the column whose cell shows the gap, so evidence points at one cell
+EVIDENCE_COLUMN = {
+    ("commission", "doordash"): "Commission", ("commission", "ubereats"): "Uber Service Fee",
+    ("commission", "grubhub"): "Grubhub Commission", ("commission", "direct_app"): "processing_fee",
+    ("error_charge", "doordash"): "Error Charge", ("error_charge", "ubereats"): "Adjustments",
+    ("promo", "doordash"): "Merchant Promo Contribution", ("promo", "ubereats"): "Promotions on Items (Merchant)",
+    ("tax", "doordash"): "Tax Withheld", ("tax", "ubereats"): "Tax Withheld",
+    ("fee", "doordash"): "Other Fees", ("fee", "ubereats"): "Marketing Fee", ("fee", "grubhub"): "Delivery Network Fee",
+    ("deposit", "bank"): "Amount", ("missing_order", "pos"): "Net Sales", ("missing_order", "direct_app"): "items_total",
+}
+
+
+def evidence_columns(f: dict) -> dict:
+    """Add `column` (and `line`, the row number) to evidence entries that name a file and a row, from EVIDENCE_COLUMN.
+    Never changes a dollar or removes a field."""
+    for e in f.get("evidence") or []:
+        if not isinstance(e, dict) or not e.get("source_file") or e.get("column"):
+            continue
+        stem = Path(str(e["source_file"])).name.lower()
+        col = next((c for (ct, pre), c in EVIDENCE_COLUMN.items() if ct == f.get("check_type") and stem.startswith(pre)),
+                   None)
+        if col:
+            e["column"] = col
+        if e.get("row") is not None and "line" not in e:
+            e["line"] = e["row"]
+    return f
+
+
 def stage_event(store: Store, run_id: str, actor: str, event: str, summary: str, **counts) -> None:
     """One roster agent's step (Collector, Formatter, Matcher, Deal Keeper, Checkers, Anomaly Detector, Investigator,
     Ranker, Clicky...) on the live feed, so the Agent Chain shows working / done for every stage of the run."""
@@ -250,7 +278,7 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
 
     progress.stage("log findings", total=len(findings), unit="findings")
     for i, f in enumerate(findings, 1):
-        store.put_new(f)
+        store.put_new(evidence_columns(f))
         move(f["finding_id"], "check", CHECKER, reason="Checker computed expected vs actual in code")
         progress.update(i)
 

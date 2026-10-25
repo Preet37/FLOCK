@@ -130,7 +130,8 @@ def test_model_choice_is_passed_through(creao, monkeypatch):
     f = creao({("POST", "/v2/realtime/runs"): stream_reply("{}", model="anthropic/claude-haiku-4-5")})
     llm.complete("s", "u", 10, ("creao", "a-op"))
     assert f.calls[0]["body"]["model"] == "anthropic/claude-haiku-4-5"
-    assert llm.creao_usage()["unpriced"] == 1, "a model not in the price table is counted, not priced"
+    u = llm.creao_usage()
+    assert u["unpriced"] == 0 and u["estimated"] == 0, "Haiku 4.5 (the model inside CREAO) is priced"
 
 
 def test_falls_back_to_async_polling_when_realtime_is_not_enabled(creao):

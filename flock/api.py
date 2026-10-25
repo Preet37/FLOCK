@@ -28,6 +28,12 @@ Read:
   GET  /api/market                    judge market: balances, weights, won/lost, recent bets and settlements
   GET  /api/connectors                connector batches received (Slack/email claims, sender, authority, binding)
   GET  /api/showtime                  the showtime cheat sheet (json + markdown) if one was prepared here
+  GET  /api/live                      the last live month run (POST /api/run {"dataset": "live"}) summary
+  GET  /api/approvals                 findings waiting for a human decision, biggest first (the approvals inbox)
+  GET  /api/benchmarks                GX10 speed, held-out benchmark, LoRA training (docs/gx10_results.json)
+  GET  /api/filings/<id>/screen       the portal confirmation page Clicky saw when it filed <id> (text/html)
+  GET  /api/outbox                    vendor emails sent or queued (flock/mailer.py)
+  GET  /api/me                        the logged-in user for a session token (401 without one)
   GET  /                              the web UI (frontend/dashboard.html); /frontend/<file> and /<file> serve frontend/
 
 Write (humans only; every write still goes through the gatekeeper):
@@ -43,6 +49,9 @@ Write (humans only; every write still goes through the gatekeeper):
                                       (without ?wait=0: synchronous, for old callers; hosted, use the job)
   POST /api/run                       {"dataset": "demo", "seed": 2025, "profile": "ca_bagel_chain", "weeks": 2,
                                        "stores": 56}   generated data, background job (?wait=1 to block)
+  POST /api/run                       {"dataset": "live"}  a fresh month (new seed) generated and processed now
+  POST /api/login                     {"username", "password"} -> {token, user, expires_at} (no token needed)
+  POST /api/logout                    ends the session in the Authorization header
 
 Hosting: set FLOCK_API_TOKEN and every POST must carry "Authorization: Bearer <token>" (reads stay open).
 Set FLOCK_CORS_ORIGIN to the dashboard's origin to narrow CORS from "*". PORT and HOST are read from the env.
@@ -76,6 +85,19 @@ from flock.models import TRANSITIONS, Actor
 from flock.progress import progress_path, read_progress
 from flock.store import ROOT, JsonStore, Store, get_journal_store
 
+try:   # agent C's modules (vendor email, hosted filing screens, client login); the API works without them
+    from flock import mailer
+except ImportError:  # pragma: no cover
+    mailer = None
+try:
+    from flock import filing_screens
+except ImportError:  # pragma: no cover
+    filing_screens = None
+try:
+    from flock import auth
+except ImportError:  # pragma: no cover
+    auth = None
+
 sys.path.insert(0, str(ROOT))
 from scripts.score import score  # noqa: E402
 
@@ -90,6 +112,8 @@ TOKEN = os.environ.get("FLOCK_API_TOKEN", "")
 CORS_ORIGIN = os.environ.get("FLOCK_CORS_ORIGIN", "*")
 MAX_STORES = int(os.environ.get("FLOCK_HOSTED_MAX_STORES", "56"))   # caps for POST /api/run {"dataset": "demo"}
 MAX_WEEKS = int(os.environ.get("FLOCK_HOSTED_MAX_WEEKS", "8"))
+LIVE_JUDGE_BUDGET = int(os.environ.get("FLOCK_LIVE_RUN_JUDGE_BUDGET", "6"))   # live models on a live run's riskiest N
+BENCHMARKS_JSON = ROOT / "docs" / "gx10_results.json"
 SSE_POLL, SSE_HEARTBEAT, SSE_MAX = 0.5, 15.0, 600.0   # seconds, for GET /api/stream/sse
 OUTPUT_LINES = 400       # a job keeps this many output lines; GET /api/jobs/<id> shows the tail
 TAIL = 40
@@ -304,10 +328,90 @@ class Api:
         for e in log:
             counts[e["actor"]] = counts.get(e["actor"], 0) + 1
             last[e["actor"]] = e["at"]
-        roster = [{**a, "actions": counts.get(a["actor"], 0), "last_at": last.get(a["actor"])} for a in AGENTS]
+        status = self.agent_status()
+        roster = [{**a, "actions": counts.get(a["actor"], 0), "last_at": max(filter(None, (last.get(a["actor"]),
+                   status.get(a["actor"], {}).get("at"))), default=None), **self._status_of(a, counts, status)}
+                  for a in AGENTS]
         humans = sorted({e["actor"] for e in log if e["role"] == "human"})
         return {"agents": roster, "judges": JUDGES, "humans": humans,
                 "transitions": [{"from": s, "action": a, "to": t, "roles": sorted(r)} for (s, a), (t, r) in TRANSITIONS.items()]}
+
+    def agent_status(self) -> dict[str, dict[str, Any]]:
+        """Latest feed event per role in the latest run (stage:<actor> events plus the tracker's roles)."""
+        from flock import agents_live
+        rows = agents_live.events(self.store)
+        run = next((e.get("run") for e in reversed(rows) if e.get("run")), None)
+        out: dict[str, dict[str, Any]] = {}
+        for e in rows:
+            if run and e.get("run") not in (run, None):
+                continue
+            role = e.get("role")
+            if not role:
+                continue
+            cur = out.setdefault(role, {"spawned": 0, "done": 0})
+            cur["spawned"] += e.get("event") == "spawn"
+            cur["done"] += e.get("event") == "done"
+            if e.get("event") in ("working", "done", "failed") or "event" not in cur:
+                cur.update(event=e.get("event"), summary=e.get("summary"), at=e.get("at"),
+                           count=e.get("count", cur.get("count")))
+        return out
+
+    @staticmethod
+    def _status_of(a: dict[str, Any], counts: dict[str, int], status: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """status: working | done | idle, with one line saying what it did (the Agent Chain card)."""
+        mine = [status[r] for r in [a["actor"], *a.get("live", [])] if r in status]
+        if any(m.get("event") in ("working", "spawn") for m in mine):
+            st = "working"
+        elif mine or counts.get(a["actor"]):
+            st = "done"
+        else:
+            st = "idle"
+        best = max(mine, key=lambda m: m.get("at") or "", default={})
+        text = best.get("summary")
+        if not text and counts.get(a["actor"]):
+            text = f"{counts[a['actor']]:,} audit-log entries"
+        if not text:
+            text = {"follow_up": "standing by: drafts a reminder when a filed claim goes unpaid",
+                    "gatekeeper": "standing by: checks every move"}.get(a["actor"], "idle: nothing to do this run")
+        return {"status": st, "status_text": text, "work_count": best.get("count")}
+
+    def approvals(self) -> dict[str, Any]:
+        """The approvals inbox: every finding that waits on a person (a drafted dispute to approve, or a conflict the
+        panel won't decide), biggest first."""
+        items = []
+        for f in self.store.all():
+            if not _needs_human(f):
+                continue
+            g = frontend.with_risk(f)
+            roll = f.get("rollup") or {}
+            items.append({"finding_id": f["finding_id"], "kind": "conflict" if f.get("outcome") == "conflict"
+                          else "dispute", "channel": f["channel"],
+                          "platform": PLATFORM_NAMES.get(f["channel"], f["channel"]), "check_type": f["check_type"],
+                          "gap": f["gap"], "amount": abs(f["gap"]), "expected": f.get("expected"),
+                          "actual": f.get("actual"), "payout_id": roll.get("payout_id"), "stores": roll.get("stores"),
+                          "orders": len(f.get("order_ids") or []), "outcome": f.get("outcome"),
+                          "confidence": f.get("confidence"), "verdict": (f.get("reason") or "")[:240],
+                          "risk": g.get("risk"), "state": f["state"], "has_draft": bool(f.get("dispute_draft")),
+                          "memo": (f.get("review_memo") or {}).get("memo") if isinstance(f.get("review_memo"), dict)
+                          else f.get("review_memo")})
+        items.sort(key=lambda x: (-x["amount"], x["finding_id"]))
+        return {"count": len(items), "total_usd": round(sum(x["amount"] for x in items), 2),
+                "disputes": sum(1 for x in items if x["kind"] == "dispute"),
+                "conflicts": sum(1 for x in items if x["kind"] == "conflict"), "items": items}
+
+    def benchmarks(self) -> dict[str, Any]:
+        """GX10 + training + held-out benchmark (docs/gx10_results.json, from docs/gx10_results.md), plus the latest
+        local harness results if scripts/benchmark.py ran on this box."""
+        doc = json.loads(BENCHMARKS_JSON.read_text()) if BENCHMARKS_JSON.exists() else {}
+        harness = frontend.read_json(frontend.RESULTS_JSON)
+        return {**doc, "harness": (harness or {}).get("current"),
+                "models": {"judges_default": "flock-judge-v1 x3 on the GX10 (scripts/gx10.sh env)",
+                           "hosted": "CREAO hosted agents (Claude Haiku 4.5 inside) on Railway"}}
+
+    def live_sheet(self) -> dict[str, Any]:
+        from flock import showtime
+        p = self.dir / showtime.LIVE_JSON
+        return {"json": json.loads(p.read_text()) if p.exists() else None}
 
     def agent(self, agent_id: str) -> dict[str, Any]:
         return frontend.agent_detail(self.store, agent_id)
@@ -384,30 +488,35 @@ class Api:
         if self.running:
             raise Busy(f"a run is in progress ({self.running}); try again when GET /api/jobs/{self.running} is done")
 
-    def decide(self, fid: str, action: str, body: dict[str, Any]) -> dict[str, Any]:
+    def decide(self, fid: str, action: str, body: dict[str, Any], user: dict[str, Any] | None = None) -> dict[str, Any]:
         self._not_running()
         with self.write_lock:
-            actor = _human(body)
+            actor = _human(body, user)
             after = transition(self.store, fid, action, actor,
                                reason=str(body.get("reason") or f"{action}d from the dashboard"))
             entry = self.store.log(fid)[-1]   # the human's decision, before Clicky's filing is logged
             filed = clicky.file_approved(self.store, self.portal) if action == "approve" else []
             proposed = learner.propose(self.store)
-            return {"finding": frontend.with_risk(self.store.get(fid)), "filed": filed, "proposed": proposed,
-                    "was": after["state"], "log_entry": entry}
+            f = self.store.get(fid)
+            screen = f"/api/filings/{fid}/screen" if (filing_screens and f.get("portal_ref")
+                                                       and filing_screens.render(fid, self.dir)) else None
+            return {"finding": frontend.with_risk(f), "filed": filed, "proposed": proposed,
+                    "was": after["state"], "log_entry": entry, "portal_ref": f.get("portal_ref"), "screen": screen}
 
-    def follow_up(self, fid: str, step: str, body: dict[str, Any]) -> dict[str, Any]:
+    def follow_up(self, fid: str, step: str, body: dict[str, Any], user: dict[str, Any] | None = None) -> dict[str, Any]:
         """Vendor follow-up on a FILED, unpaid claim: draft (the follow_up agent), approve / reject (a human), send
         (the gatekeeper, via Clicky). Every step is a gatekeeper annotation; refusals are logged and raise Denied."""
         self._not_running()
         with self.write_lock:
-            ref = None
+            ref, mail = None, None
             if step == "draft":
                 follow_ups.draft(self.store, [fid])
             elif step == "send":
                 ref = follow_ups.send(self.store, fid, self.portal)
+                if mailer is not None:   # the gatekeeper recorded the send; now the email goes to the vendor
+                    mail = mailer.send_follow_up(self.store.get(fid), state_dir=self.dir)
             else:
-                actor = _human(body)
+                actor = _human(body, user)
                 reason = str(body.get("reason") or "")
                 if step == "approve":
                     follow_ups.approve(self.store, fid, actor, text=body.get("text") or None,
@@ -416,7 +525,7 @@ class Api:
                     follow_ups.reject(self.store, fid, actor, reason=reason or "Follow-up rejected from the dashboard")
             f = self.store.get(fid)
             return {"finding": frontend.with_risk(f), "follow_up": f.get("follow_up"), "portal_ref": ref,
-                    "log_entry": self.store.log(fid)[-1]}
+                    "email": mail, "log_entry": self.store.log(fid)[-1]}
 
     def approve_rule(self, rid: str, body: dict[str, Any]) -> dict[str, Any]:
         self._not_running()
@@ -437,8 +546,13 @@ class Api:
             if wait:
                 return 200, self._exclusive(lambda: self._showtime(params))
             return 202, self.start("showtime", params, lambda: self._showtime(params))
+        if dataset == "live":
+            params = self.live_params(body)
+            if wait:
+                return 200, self._exclusive(lambda: self._live(params))
+            return 202, self.start("live", params, lambda: self._live(params))
         if dataset != "demo":
-            raise BadRequest(f"unknown dataset {dataset!r}: use 'fixtures' (default), 'demo' or 'showtime'")
+            raise BadRequest(f"unknown dataset {dataset!r}: use 'fixtures' (default), 'demo', 'showtime' or 'live'")
         params = self.dataset_params(body)
         if wait:
             return 200, self._exclusive(lambda: self._dataset(params))
@@ -508,6 +622,41 @@ class Api:
         from flock import showtime
         showtime.prepare(months=p["months"], seed=p["seed"], stores=p["stores"], store=self.store, portal=self.portal)
         return {"params": p, "showtime": self.showtime_sheet().get("json"), "findings": len(self.store.all())}
+
+    @staticmethod
+    def live_params(body: dict[str, Any]) -> dict[str, Any]:
+        """A live month: a fresh seed unless one is given, the hosted store cap."""
+        out: dict[str, Any] = {"seed": None, "stores": MAX_STORES}
+        for name, hi in (("seed", 2**31 - 1), ("stores", MAX_STORES)):
+            v = body.get(name)
+            if v is None:
+                continue
+            if isinstance(v, bool) or not str(v).strip().isdigit() or not 1 <= int(v) <= hi:
+                raise BadRequest(f"{name} must be a whole number between 1 and {hi}")
+            out[name] = int(v)
+        return out
+
+    def _live(self, p: dict[str, Any]) -> dict[str, Any]:
+        """flock.showtime.live into this server's state: the generator makes a brand-new month, the pipeline runs on
+        it now with live judges on its riskiest few (FLOCK_LIVE_RUN_JUDGE_BUDGET, default 6) and offline rules on the
+        rest. Nothing is approved: every drafted dispute lands in GET /api/approvals."""
+        from flock import showtime
+        old = os.environ.get("FLOCK_LIVE_JUDGE_BUDGET")
+        cur = int(old) if old and old.strip().isdigit() else None
+        os.environ["FLOCK_LIVE_JUDGE_BUDGET"] = str(min(cur, LIVE_JUDGE_BUDGET) if cur is not None else LIVE_JUDGE_BUDGET)
+        try:
+            info = showtime.live(seed=p["seed"], stores=p["stores"], store=self.store, portal=self.portal)
+        finally:
+            if old is None:
+                os.environ.pop("FLOCK_LIVE_JUDGE_BUDGET", None)
+            else:
+                os.environ["FLOCK_LIVE_JUDGE_BUDGET"] = old
+        m = info["months"][0]
+        return {"params": {**p, "seed": info["seed"]}, "month": info["month_name"], "seed": info["seed"],
+                "orders": m["orders"], "deposits": m["deposits"], "findings": m["findings"], "to_human": m["to_human"],
+                "caught": m["caught"], "total": m["total"], "false_alarms": m["false_alarms"],
+                "shortfall": info["scenario"]["shortfall"], "deposited": info["scenario"]["deposited"],
+                "headline": info["headline"], "approvals": self.approvals()["count"], "seconds": info["seconds"]}
 
     def connector(self, body: Any) -> dict[str, Any]:
         """POST /api/connectors: one connector batch (a CREAO agent watching Slack/Gmail). BadRequest on a bad payload."""
@@ -582,12 +731,17 @@ def default_order(f: dict[str, Any]) -> tuple:
 AGENT_IDS = {a["actor"] for a in AGENTS if a["role"] != "human"}
 
 
-def _human(body: dict[str, Any]) -> Actor:
-    """The person deciding. An agent's own id is not a person, and "role": "agent" says so explicitly (the UI's "Try as
+def _human(body: dict[str, Any], user: dict[str, Any] | None = None) -> Actor:
+    """The person deciding. A logged-in session names the person itself (the browser's actor is ignored). An agent's own id is not a person, and "role": "agent" says so explicitly (the UI's "Try as
     an agent"): either goes to the gatekeeper as role agent, which refuses it and logs the attempt."""
+    if user:
+        return Actor(id=str(user.get("name") or user.get("username")), role="human")
     name = str(body.get("actor") or "human")
     agent = name in AGENT_IDS or str(body.get("role") or "").strip().lower() == "agent"
     return Actor(id=name, role="agent" if agent else "human")
+
+
+PLATFORM_NAMES = {"doordash": "DoorDash", "ubereats": "Uber Eats", "grubhub": "Grubhub", "direct_app": "Direct app"}
 
 
 def _needs_human(f: dict[str, Any]) -> bool:
@@ -658,6 +812,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, a.health())
             if parts == ["api", "showtime"]:
                 return self._send(200, a.showtime_sheet())
+            if parts == ["api", "live"]:
+                return self._send(200, a.live_sheet())
+            if parts == ["api", "approvals"]:
+                return self._send(200, a.approvals())
+            if parts == ["api", "benchmarks"]:
+                return self._send(200, a.benchmarks())
+            if parts == ["api", "outbox"]:
+                return self._send(200, {"messages": mailer.outbox(a.dir) if mailer else [],
+                                        "backend": mailer.backend() if mailer else "none"})
+            if len(parts) == 4 and parts[:2] == ["api", "filings"] and parts[3] == "screen":
+                page = filing_screens.render(parts[2], a.dir) if filing_screens else None
+                if page is None:
+                    return self._send(404, {"error": f"no filing screen for {parts[2]} (Clicky hasn't filed it here)"})
+                data = page.encode()
+                self._headers(200, "text/html; charset=utf-8", len(data))
+                self.wfile.write(data)
+                return None
+            if parts == ["api", "me"]:
+                u = auth.user_for(self._bearer(), a.dir) if auth else None
+                return self._send(200, {"user": u}) if u else self._send(401, {"error": "not logged in"})
             if parts == ["api", "connectors"]:
                 from flock import connectors
                 return self._send(200, {"received": connectors.received(a.dir)})
@@ -771,11 +945,19 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return   # the viewer left
 
+    def _bearer(self) -> str | None:
+        h = self.headers.get("Authorization", "")
+        return h[7:].strip() if h.startswith("Bearer ") else None
+
     def _authorized(self) -> bool:
         if not TOKEN:
             return True
         got = self.headers.get("Authorization", "").encode()
         return hmac.compare_digest(got, f"Bearer {TOKEN}".encode())   # constant time
+
+    def _session(self) -> dict[str, Any] | None:
+        """The logged-in user behind the bearer token (flock/auth.py), or None."""
+        return auth.user_for(self._bearer(), self.api.dir) if auth else None
 
     def do_POST(self) -> None:  # noqa: N802
         self._t0 = time.monotonic()
@@ -783,20 +965,26 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in url.path.split("/") if p]
         q = parse_qs(url.query)
         a = self.api
-        if not self._authorized():
-            return self._send(401, {"error": "This backend needs a token. Add it in the dashboard (Authorization: Bearer ...)."})
+        if parts in (["api", "login"], ["api", "logout"]):
+            return self._auth_route(parts[1])
+        user = self._session()
+        if user is not None:
+            if not auth.can_approve(user):
+                return self._send(403, {"error": f"{user.get('name')} can view but not approve (role {user.get('role')})"})
+        elif not self._authorized():
+            return self._send(401, {"error": "Log in to approve (or send the API token)."})
         try:
             body = self._body()
             if parts == ["api", "connectors"]:
                 with a.write_lock:
                     return self._send(200, a.connector(body))
             if len(parts) == 4 and parts[:2] == ["api", "findings"] and parts[3] in ("approve", "reject"):
-                return self._send(200, a.decide(parts[2], parts[3], body))
+                return self._send(200, a.decide(parts[2], parts[3], body, user))
             if len(parts) in (4, 5) and parts[:2] == ["api", "findings"] and parts[3] == "follow_up":
                 step = parts[4] if len(parts) == 5 else "draft"
                 if step not in ("draft", "approve", "reject", "send"):
                     raise BadRequest("follow_up steps: POST .../follow_up (draft), /approve, /reject, /send")
-                return self._send(200, a.follow_up(parts[2], step, body))
+                return self._send(200, a.follow_up(parts[2], step, body, user))
             if len(parts) == 4 and parts[:2] == ["api", "rules"] and parts[3] == "approve":
                 return self._send(200, a.approve_rule(parts[2], body))
             if parts == ["api", "run"]:
@@ -818,6 +1006,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": f"not found: {e}"})
         except Exception as e:  # keep the server alive, tell the UI what broke
             self._send(500, {"error": f"{type(e).__name__}: {e}"})
+
+    def _auth_route(self, which: str) -> None:
+        if auth is None:
+            return self._send(404, {"error": "login is not available on this server"})
+        try:
+            if which == "logout":
+                return self._send(200, {"logged_out": auth.logout(self._bearer(), self.api.dir)})
+            body = self._body()
+            return self._send(200, auth.login(str(body.get("username") or ""), str(body.get("password") or ""),
+                                              self.api.dir))
+        except BadRequest as e:
+            return self._send(400, {"error": str(e)})
+        except auth.RateLimited as e:
+            return self._send(429, {"error": str(e)})
+        except auth.LoginError as e:
+            return self._send(401, {"error": str(e)})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return None   # _headers writes one line per request with status + ms

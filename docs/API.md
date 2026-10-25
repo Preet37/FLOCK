@@ -761,3 +761,49 @@ A theater event (`flock/theater.py`): `cursor, at, type, lane, actor, text` + th
 - `POST /api/run {"dataset": "showtime", "months": 4, "seed": 2025}` (token): a background job running
   `flock.showtime prepare` into the hosted state (prior months + the demo month, stopped before the headline approval).
 - `GET /api/showtime`: the cheat sheet (`json` + `markdown`).
+
+## Live demo endpoints
+
+**`POST /api/run {"dataset": "live"}`** (token or reviewer session) -> 202 `{job_id, poll}`. Optional `seed`, `stores`
+(default: a fresh random seed, all 56 stores). The generator makes a brand-new month (the month after the prepared
+showtime month) with the same kinds of mistakes at realistic size (~2.5% of deposits: DoorDash charging the
+pre-amendment commission at ~24 stores, an Uber Eats deposit ~$12K short, a BOGO campaign charged 100% to the store,
+error charges past the 72-hour window, orders never paid; plus legit charges that must not be disputed and two
+unauthorized rep promises). The pipeline runs on it now: live judges on the riskiest `FLOCK_LIVE_RUN_JUDGE_BUDGET`
+(default 6), offline rules on the rest; judge balances start fresh; **nothing is approved or filed**. Offline: ~13 s
+for 56 stores. Watch it with `GET /api/jobs/<id>`, `/api/progress`, `/api/stream`. Job `result`:
+`{month, seed, orders, deposits, findings, to_human, caught, total, false_alarms, shortfall, deposited, headline,
+approvals, seconds}`. `GET /api/live` -> `{json}`: the same summary as the showtime sheet for that month.
+
+**`GET /api/approvals`** -> `{count, total_usd, disputes, conflicts, items[]}`, biggest first. Item:
+`{finding_id, kind: "dispute"|"conflict", channel, platform, check_type, gap, amount, expected, actual, payout_id,
+stores, orders, outcome, confidence, verdict, risk, state, has_draft, memo}`. A dispute: approve -> Clicky files.
+A conflict: the panel won't decide (no authority behind the claim); approve or reject.
+
+**`POST /api/findings/<id>/approve`** response adds `portal_ref` and `screen` (`/api/filings/<id>/screen`, an HTML
+page of the portal confirmation Clicky saw; null if none). **`GET /api/filings/<id>/screen`** -> text/html (404 JSON
+if Clicky hasn't filed it). **`GET /api/outbox`** -> `{messages[], backend}` (vendor emails, flock/mailer.py).
+`POST /api/findings/<id>/follow_up/send` response adds `email` (`{status: sent|outbox, to, intended_to, subject, ...}`).
+
+**Login** (flock/auth.py): `POST /api/login {username, password}` (no token) -> `{token, user, expires_at}`; 401 wrong,
+429 rate-limited. Send `Authorization: Bearer <session token>` on POSTs. `GET /api/me` -> `{user}` or 401.
+`POST /api/logout`. A reviewer session may approve/reject; the audit log names the session user and ignores the
+body's `actor`. A viewer session gets 403. The old `FLOCK_API_TOKEN` still works.
+
+**`GET /api/agents`**: each roster agent adds `status` (`working` | `done` | `idle`), `status_text` (one line: what it
+did this run, e.g. "matched 110,675 orders to payout lines and deposits"; Clicky: "standing by: 26 drafted dispute(s)
+wait for a human to approve before anything is filed"), `work_count`. Show `status_text` instead of "waiting".
+
+**`GET /api/metrics`** card values added: agent_time `{agent_seconds, agent_display "8.0 s", human_display "~280 h",
+speedup, speedup_display, basis}` (basis: "industry estimate: ~1 h per location per week of manual payout
+reconciliation (Lunchbox)"; no "ASSUMPTION" anywhere); cost `{usd (always a number), display "$0.62", basis:
+"estimated from tokens at list price", input_tokens, output_tokens}` (CREAO tokens priced as Claude Haiku 4.5,
+$1/$5 per 1M); money_saved `{monthly_usd, monthly_display "~$42K/month", annual_display "~$500K/year"}`.
+
+**`GET /api/benchmarks`** -> docs/gx10_results.json: `{machine, speed {rows, headline {mac_p50_s 88.4, gx10_p50_s 26.9,
+speedup 3.3}}, benchmark {what, total 916, findings 142, rows [{contestant, kind, caught, false_alarms, correct_usd,
+to_human, p50_s, per_minute, usd_per_1000, run}], not_run, note}, training {model, base, method, data, minutes, loss
+{steps, train, val}, serving, caveat}, harness, models}`. For a Benchmarks tab.
+
+Evidence entries now carry `column` (the raw file's column whose cell shows the gap) and `line` (= `row`) next to
+`source_file`.

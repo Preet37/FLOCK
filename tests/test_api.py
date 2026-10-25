@@ -332,7 +332,8 @@ def test_cost_card_prices_reported_tokens(tmp_path, monkeypatch):
     c = frontend.cost_card(store, run)
     tok = next(p for p in c["inputs"]["parts"] if p["what"].startswith("tokens"))
     assert tok["usd"] == 2.0 + 1.0  # 1M in x $2 + 0.1M out x $10
-    assert c["value"]["usd"] is None and c["value"]["usd_known_part"] == 3.0 and c["value"]["credits"] == 12.5
+    assert c["value"]["usd"] == 3.0 and c["value"]["complete"] is False and c["value"]["credits"] == 12.5
+    assert c["value"]["display"] == "$3.00" and c["value"]["basis"] == "estimated from tokens at list price"
     assert any("FLOCK_CREAO_USD_PER_CREDIT" in u for u in c["unknown"])
     monkeypatch.setenv("FLOCK_CREAO_USD_PER_CREDIT", "0.02")
     c = frontend.cost_card(store, run)

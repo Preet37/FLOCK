@@ -418,6 +418,16 @@ def cost_card(store: Store, run: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _short_usd(x: float) -> str:
+    """$41.1K, ~$493K, $1.2M: the money card's headline figures."""
+    x = float(x)
+    if x >= 1_000_000:
+        return f"~${x / 1_000_000:.1f}M"
+    if x >= 10_000:
+        return f"~${x / 1000:,.0f}K"
+    return f"~${x:,.0f}"
+
+
 def money_card(store: Store, run: dict[str, Any] | None, jstore: Store | None = None) -> dict[str, Any]:
     rows = store.all()
     open_ = [f for f in rows if journal.is_open(f)]
@@ -442,7 +452,10 @@ def money_card(store: Store, run: dict[str, Any] | None, jstore: Store | None = 
     return {
         "id": "money_saved", "title": "Money saved", "unit": "USD",
         "value": {"usd": found, **split, "due_from_platform_booked": money(due),
-                  "annualized_projection": money(found * mult) if mult else None},
+                  "annualized_projection": money(found * mult) if mult else None,
+                  "monthly_usd": money(found * WEEKS_PER_YEAR / 12 / weeks) if weeks else None,
+                  "annual_display": _short_usd(found * mult) + "/year" if mult else None,
+                  "monthly_display": _short_usd(found * WEEKS_PER_YEAR / 12 / weeks) + "/month" if weeks else None},
         "formula": "usd = sum of |gap| over findings that are money we expect back (recoverable, approved, filed or "
                    "recovered, never rejected; the same test the journal uses). Split by state. "
                    "due_from_platform_booked = debits to 'Due from Platform' lines (finding-linked asset lines) in "

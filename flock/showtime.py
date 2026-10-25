@@ -201,10 +201,11 @@ def carry_over(store: Store, claim: dict[str, Any], portal: Path) -> dict[str, A
 
 
 def pick_headline(store: Store) -> dict[str, Any] | None:
-    """The finding the presenter approves live: the biggest drafted dispute."""
+    """The finding the presenter approves live: the biggest drafted commission dispute (else the biggest)."""
     ready = [f for f in store.all() if f["state"] == "JUDGED" and f.get("outcome") == "recoverable"
              and f.get("dispute_draft")]
-    return min(ready, key=lambda f: (-abs(f["gap"]), f["finding_id"]), default=None)
+    # the story is the commission the platform kept charging: its biggest weekly lump sum leads, else the biggest
+    return min(ready, key=lambda f: (f["check_type"] != "commission", -abs(f["gap"]), f["finding_id"]), default=None)
 
 
 # the lump sum ------------------------------------------------------------------------------------------------------
