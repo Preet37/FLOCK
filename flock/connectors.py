@@ -221,13 +221,31 @@ def ingest(drop: Path | None = None, raw: Path | None = None) -> dict[str, Any]:
 RECEIVED = "connectors_received.jsonl"   # in the store's state dir (a Railway volume when hosted)
 
 
-def contracts_dir() -> Path | None:
+def contracts_dir(state_dir: Path | None = None) -> Path | None:
     """Where the current contracts live, so a received message's sender is judged against the authorized contacts:
-    FLOCK_CONTRACTS_DIR, else the newest showtime month's raw/contracts, else data/raw/contracts."""
+    FLOCK_CONTRACTS_DIR, else <state>/contracts (kept by showtime), else rebuilt from <state>/showtime.json (same
+    seed + month = same contracts), else the newest showtime month's raw/contracts, else data/raw/contracts."""
     import os
     env = os.environ.get("FLOCK_CONTRACTS_DIR")
     if env and Path(env).is_dir():
         return Path(env)
+    if state_dir is not None:
+        kept = Path(state_dir) / "contracts"
+        if kept.is_dir():
+            return kept
+        sheet = Path(state_dir) / "showtime.json"
+        if sheet.exists():
+            try:
+                info = json.loads(sheet.read_text())
+                from flock.demo import generator as gen
+                with tempfile.TemporaryDirectory(prefix="flock_contracts_") as tmp:
+                    gen.generate(int(info["seed"]), None, out=Path(tmp), scenario="demo_month",
+                                 month=info["month"])
+                    if (Path(tmp) / "contracts").is_dir():
+                        shutil.copytree(Path(tmp) / "contracts", kept)
+                        return kept
+            except Exception as e:  # a missing contract list only means authority stays unknown (a human decides)
+                print(f"[connectors] could not rebuild contracts from showtime.json: {e}", file=sys.stderr)
     months = sorted((ROOT / "data" / "showtime").glob("*/raw/contracts"), key=lambda d: d.stat().st_mtime)
     if months:
         return months[-1]
@@ -244,7 +262,7 @@ def receive(payload: Any, state_dir: Path, contracts: Path | None = None, raw: P
     problems = validate(payload)
     if problems:
         raise PayloadError(problems)
-    contracts = contracts if contracts is not None else contracts_dir()
+    contracts = contracts if contracts is not None else contracts_dir(state_dir)
     with tempfile.TemporaryDirectory(prefix="flock_receive_") as tmp:
         stage = Path(tmp)
         _render(payload, stage)

@@ -63,3 +63,8 @@ def test_api_route_requires_token_and_records_agent(tmp_path, monkeypatch):
     assert rec["claims"][0]["authority"] == "auth_email"
     with pytest.raises(flock_api.BadRequest):
         a.connector({"source": "fax"})
+
+
+def test_contracts_dir_prefers_state_copy(tmp_path):
+    kept = contract(tmp_path / "state", ["sam.takahashi@ubereats.example"])
+    assert connectors.contracts_dir(tmp_path / "state") == kept

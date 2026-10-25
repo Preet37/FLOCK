@@ -327,9 +327,21 @@ def summarize(store: Store, history: list[dict], demo: dict, headline: dict | No
     }
 
 
+def keep_contracts(state_dir: Path, raw: Path) -> None:
+    """The demo month's contracts next to the state (a volume when hosted), so a connector batch received later is
+    judged against the same authorized contacts (flock.connectors.contracts_dir)."""
+    src = Path(raw) / "contracts"
+    if src.is_dir():
+        dest = Path(state_dir) / "contracts"
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(src, dest)
+
+
 def write_sheet(state_dir: Path, info: dict[str, Any]) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / JSON_NAME).write_text(json.dumps(info, indent=1))
+    if info.get("month"):
+        keep_contracts(state_dir, WORKDIR / info["month"] / "raw")
     (state_dir / MD_NAME).write_text(cheat_sheet(info) + "\n")
 
 
