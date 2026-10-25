@@ -1,5 +1,12 @@
 [
   {
+    "username": "preetkaria37@gmail.com",
+    "password_hash": "pbkdf2_sha256$200000$9bffc88179efcf0dd1c1ef081ccacfe9$e5b0394fc21cd45bef810ab4d33d760ac119302b89f1949225afbafeed12ee0f",
+    "name": "Preet Karia",
+    "role": "owner",
+    "org": "Ringtide Bagels (simulated)"
+  },
+  {
     "username": "noahs-finance",
     "password_hash": "pbkdf2_sha256$200000$51374b05012e872603f88008bf5f6ca0$dfbc4a8a5744a019e78953afc9974e610ba43a9662a188f47d3ba75e6b865f8e",
     "name": "Preet Karia",

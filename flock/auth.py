@@ -2,7 +2,7 @@
 
 Users come from FLOCK_USERS (a JSON list) or, if unset, data/users.example.json (the seeded demo reviewer). Each user:
   {"username": "...", "password_hash": "pbkdf2_sha256$<iterations>$<salt hex>$<hash hex>", "name": "...",
-   "role": "reviewer" | "viewer", "org": "..."}
+   "role": "owner" | "reviewer" | "viewer", "org": "..."}
 Passwords are stored hashed only (hashlib.pbkdf2_hmac). Make a hash: python -m flock.auth hash '<password>'.
 
 login() hands out a random session token kept in <state_dir>/sessions.json for 12 hours. A reviewer's session may
@@ -29,7 +29,7 @@ SESSIONS = "sessions.json"
 TTL_SECONDS = 12 * 3600
 ITERATIONS = 200_000
 MAX_FAILS, FAIL_WINDOW = 5, 300
-ROLES = ("reviewer", "viewer")
+ROLES = ("owner", "reviewer", "viewer")
 
 _lock = threading.Lock()
 _fails: dict[str, list[float]] = {}
@@ -150,7 +150,7 @@ def logout(token: str | None, state_dir: Path | str) -> bool:
 
 
 def can_approve(user: dict[str, Any] | None) -> bool:
-    return bool(user) and user.get("role") == "reviewer"
+    return bool(user) and user.get("role") in ("owner", "reviewer")
 
 
 if __name__ == "__main__":
