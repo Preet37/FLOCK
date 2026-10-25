@@ -459,9 +459,39 @@ class Api:
                           "memo": (f.get("review_memo") or {}).get("memo") if isinstance(f.get("review_memo"), dict)
                           else f.get("review_memo")})
         items.sort(key=lambda x: (-x["amount"], x["finding_id"]))
-        return {"count": len(items), "total_usd": round(sum(x["amount"] for x in items), 2),
+        from flock import policy as policies
+        auto = [e for e in self.store.log() if e.get("action") == "approve" and e.get("allowed")
+                and policies.is_policy_actor(e.get("actor"))]
+        pol = policies.load(self.dir)
+        return {"count": len(items), "needs_you": len(items), "auto_approved_by_policy": len(auto),
+                "auto_approved_usd": round(sum(abs(self.store.get(e["subject_id"])["gap"]) for e in auto
+                                               if self._has(e["subject_id"])), 2),
+                "policy": pol, "policy_text": policies.describe(pol),
+                "total_usd": round(sum(x["amount"] for x in items), 2),
                 "disputes": sum(1 for x in items if x["kind"] == "dispute"),
                 "conflicts": sum(1 for x in items if x["kind"] == "conflict"), "items": items}
+
+    def _has(self, fid: str) -> bool:
+        try:
+            self.store.get(fid)
+            return True
+        except KeyError:
+            return False
+
+    def get_policy(self) -> dict[str, Any]:
+        from flock import policy as policies
+        pol = policies.load(self.dir)
+        return {"policy": pol, "text": policies.describe(pol)}
+
+    def set_policy(self, body: dict[str, Any], user: dict[str, Any] | None) -> dict[str, Any]:
+        """An owner's standing decision (token or reviewer session). Logged in the audit log under their name."""
+        from flock import policy as policies
+        who = str((user or {}).get("name") or body.get("actor") or "owner")
+        try:
+            pol = policies.save(self.store, self.dir, body, who)
+        except ValueError as e:
+            raise BadRequest(str(e))
+        return {"policy": pol, "text": policies.describe(pol)}
 
     def benchmarks(self) -> dict[str, Any]:
         """GX10 + training + held-out benchmark (docs/gx10_results.json, from docs/gx10_results.md), plus the latest
@@ -1010,6 +1040,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, a.live_sheet())
             if parts == ["api", "approvals"]:
                 return self._send(200, a.read("approvals", a.approvals))
+            if parts == ["api", "policy"]:
+                return self._send(200, a.get_policy())
             if parts == ["api", "evidence", "index"] and evidence is not None:
                 return self._send(200, evidence.index(a.store.all()))
             if parts == ["api", "evidence"] and evidence is not None:
@@ -1185,6 +1217,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "connectors"]:
                 with a.write_lock:
                     return self._send(200, a.connector(body))
+            if parts == ["api", "policy"]:
+                with a.write_lock:
+                    return self._send(200, a.set_policy(body, user))
             if parts == ["api", "connectors", "slack", "pull"]:
                 if slack_pull is None:
                     return self._send(404, {"error": "Slack pull is not available on this server"})

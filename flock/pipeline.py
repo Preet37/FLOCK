@@ -388,9 +388,20 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
         bot.done(f"filed {len(filed)} disputes in the sandbox portal", filed=len(filed))
         print(f"Clicky filed {len(filed)} disputes in the sandbox portal")
     else:
+        from flock import policy as policies
+        pol = policies.load(Path(getattr(store, "dir", STATE_DIR)))
+        auto = policies.apply(store, pol)
+        filed = []
+        if auto:
+            bot = flock.spawn("clicky", subject="sandbox portal", agent_id="clicky").working(
+                f"filing {len(auto)} dispute(s) the owner's policy approved")
+            filed = clicky.file_approved(store, portal)
+            bot.done(f"filed {len(filed)} policy-approved disputes in the sandbox portal", filed=len(filed))
+            print(f"Policy approved {len(auto)} dispute(s) ({policies.describe(pol)}); Clicky filed {len(filed)}")
         ready = sum(1 for f in store.all() if f["state"] == "JUDGED" and f.get("dispute_draft"))
-        stage("clicky", "done", f"standing by: {ready} drafted dispute(s) wait for a human to approve before "
-                                "anything is filed", count=0, waiting=ready)
+        stage("clicky", "done", (f"filed {len(filed)} under the owner's policy; " if auto else "standing by: ")
+              + f"{ready} drafted dispute(s) wait for a human to approve before anything is filed",
+              count=len(filed), waiting=ready)
 
     if context.get("stories"):
         jagent = flock.spawn("journal", subject="journal entries", agent_id="journal").working(

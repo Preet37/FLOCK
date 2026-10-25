@@ -256,3 +256,57 @@ def test_received_batches_never_show_temp_paths(tmp_path):
          "unread": ["/tmp/flock_receive_ab12/emails/promo.eml#line 13"]}) + "\n")
     [rec] = connectors.received(state, recheck=False)
     assert rec["unread"] == ["emails/promo.eml#line 13"]
+
+
+def test_code_verified_deposit_shortfall_is_not_a_conflict(monkeypatch):
+    """A live panel split on a deposit short of its own statement (no disputed deal term) can't make it a conflict."""
+    from flock.agents import panel
+    f = {"finding_id": "F-dep", "channel": "ubereats", "check_type": "deposit", "expected": 82588.17,
+         "actual": 68743.80, "gap": 13844.37, "order_ids": ["UE-PO-1"],
+         "evidence": [{"source_file": "data/raw/ubereats/statement.csv", "row": 3},
+                      {"source_file": "data/raw/bank/bank_deposits.csv", "row": 9}]}
+    split = iter(["recoverable", "conflict", "recoverable"])
+    monkeypatch.setattr(panel, "vote", lambda j, f, live=True: {"judge": j, "outcome": next(split), "confidence": 0.8,
+                                                                "reason": "x"})
+    monkeypatch.setattr(panel, "_debate", lambda f, first: None)
+    monkeypatch.setattr(panel, "memo", lambda f, final: None)
+    d = panel.decide(f, [], None, live=True)
+    assert d["outcome"] == "recoverable" and d["reason"].startswith("Code-verified deposit shortfall")
+    weak = {**f, "evidence": f["evidence"] + [{"source_file": "x.eml", "authority": "unauth_email"}]}
+    split = iter(["recoverable", "conflict", "recoverable"])
+    assert panel.decide(weak, [], None, live=True)["outcome"] == "conflict", "a disputed claim still goes to a human"
+
+
+def test_owner_policy_auto_approves_small_unanimous_claims(server, tmp_path, monkeypatch):  # noqa: F811
+    client, a = server
+    from flock import policy
+    code, p = client.get("/api/policy")
+    assert code == 200 and p["policy"] is None
+    code, bad = client.post("/api/policy", {"max_amount": "lots"})
+    assert code == 400
+    code, p = client.post("/api/policy", {"auto_file_recoverable": True, "max_amount": 5, "min_confidence": 0.8,
+                                          "actor": "Preet Karia"})
+    assert code == 200 and p["policy"]["set_by"] == "Preet Karia" and "$5" in p["text"]
+    assert any(e["action"] == "set_policy" and e["actor"] == "Preet Karia" for e in a.store.log())
+    assert client.post("/api/run", {"reset": True, "demo_approve": False})[0] == 200
+    log = a.store.log()
+    auto = {e["subject_id"] for e in log if e["action"] == "approve" and policy.is_policy_actor(e["actor"])}
+    for fid in auto:
+        f = a.store.get(fid)
+        assert f["state"] == "FILED" and abs(f["gap"]) <= 5 and f["outcome"] == "recoverable"
+    for f in a.store.all():
+        if f["finding_id"] not in auto and f["state"] == "JUDGED" and f.get("dispute_draft"):
+            assert abs(f["gap"]) > 5 or f["confidence"] < 0.8 or not policy.eligible({**f}, p["policy"])
+    assert all(f["state"] == "JUDGED" for f in a.store.all() if f.get("outcome") == "conflict")
+    code, inbox = client.get("/api/approvals")
+    assert inbox["auto_approved_by_policy"] == len(auto) and inbox["needs_you"] == inbox["count"]
+    assert auto, "the fixtures have at least one small unanimous claim"
+
+
+def test_demo_user_gets_the_default_policy(tmp_path, monkeypatch):
+    from flock import policy
+    monkeypatch.setenv("FLOCK_DEMO_USER", "Preet Karia")
+    p = policy.load(tmp_path)
+    assert p["max_amount"] == 500 and p["min_confidence"] == 0.85 and p["default"] is True
+    monkeypatch.delenv("FLOCK_DEMO_USER")
+    assert policy.load(tmp_path) is None

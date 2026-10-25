@@ -101,6 +101,18 @@ def weak_evidence(f: dict[str, Any]) -> bool:
     return len(ev) < 2  # deposit / missing_order: need two sources that disagree
 
 
+def code_verified_shortfall(f: dict[str, Any]) -> bool:
+    """A deposit that lands short of the platform's own statement, with two sources that disagree (statement and
+    bank line) and nothing in the evidence from someone whose authority is in question: there is no deal term to
+    argue about, only arithmetic code already checked. The panel still reviews it; it can't turn it into a conflict."""
+    if f.get("check_type") != "deposit" or (f.get("gap") or 0) <= 0 or within_tolerance(f):
+        return False
+    ev = f.get("evidence") or []
+    if len(ev) < 2:
+        return False
+    return not any(e.get("conflict") or e.get("authority") in WEAK_AUTHORITY for e in ev)
+
+
 def _offline_vote(judge: str, f: dict[str, Any]) -> dict[str, Any]:
     authorities = {e.get("authority") for e in f.get("evidence", [])}
     if within_tolerance(f):
@@ -280,6 +292,14 @@ def decide(f: dict[str, Any], rules: list[dict[str, Any]] | None = None,
         reason = debated + "Judges disagree or aren't confident enough; sending to a human. " + " | ".join(
             f"{v['judge']}: {v['outcome']} ({v['confidence']:.0%})" for v in final)
     panel_call = outcome  # what the judges decided before the code guardrails
+    if outcome == "conflict" and code_verified_shortfall(f):
+        rules = [_offline_vote(j, f) for j in JUDGES]
+        if all(v["outcome"] == "recoverable" for v in rules):
+            outcome = "recoverable"
+            avg = round(sum(v["confidence"] for v in rules) / len(rules), 2)
+            reason = (f"Code-verified deposit shortfall: the bank deposit is ${money(abs(f['gap'])):,.2f} short of the "
+                      "platform's own statement net, and no document disputes a deal term, so the money math decides "
+                      f"(rules: recoverable at {avg:.0%}). The panel reviewed it: {reason}")
 
     if within_tolerance(f) and outcome != "correct":
         outcome, reason = "correct", f"Gap ${money(abs(f['gap'])):.2f} is within the ${TOLERANCE:.2f} tolerance; not disputed. " + reason
