@@ -88,6 +88,39 @@ curl -X POST https://web-production-812b4.up.railway.app/api/connectors \
 - `GET /api/connectors` lists the last batches received (newest first) with their claims. Each batch also appears
   in the live agent feed as a `connector` agent.
 
+## Pull straight from Slack (`flock/slack_pull.py`)
+
+No connector in between: Flock reads the channels itself with the Slack Web API and feeds the same pipeline
+(`connectors.receive`, connector `slack-pull`). Thread replies are included, so a correction in a thread still wins.
+
+**What Thabhelo gives us (two Railway variables):**
+
+| Variable | Value |
+| --- | --- |
+| `SLACK_BOT_TOKEN` | the bot's `xoxb-...` token (Slack app → OAuth & Permissions → Bot User OAuth Token) |
+| `FLOCK_SLACK_CHANNELS` | comma list of channel names or IDs, e.g. `doordash-partnership,ubereats-partnership` |
+
+Bot token scopes: `channels:history`, `channels:read`, `users:read`, `users:read.email`, `files:read`. Invite the bot
+to each channel (`/invite @<bot>`). Public channels only.
+
+```bash
+python -m flock.slack_pull                 # new messages since the last pull
+python -m flock.slack_pull --since 0       # everything (ignores the cursor)
+```
+
+- The last `ts` per channel is kept in `data/state/slack_cursor.json`, so repeated pulls fetch only new messages. The
+  cursor moves only after Flock accepted the batch.
+- Posters are looked up with `users.info`, so each item carries the poster's email: that is what authority is matched
+  against (`authorized_contacts`).
+- Files (PDF, CSV) on a message are downloaded with the bot token into `data/state/inbox/slack_files/<channel>/` and
+  reported as a note batch ("Invoice attached: <name>"). CSVs that look like an invoice or statement are listed under
+  `attachments` for the Collector to ingest.
+- Channel names containing `sim` mark the batch `simulated: true`.
+- Slack's 429s are retried after `Retry-After`. The token only goes in the Authorization header; it is never logged.
+
+Over HTTP: `POST /api/connectors/slack/pull` (token-protected, optional `{"since": "<ts>"}`) returns the pull result
+(channels, messages, the claims Flock understood, files, attachments). `GET /api/connectors` lists the batches.
+
 ## Plan for the live Slack demo (Thabhelo: CREAO side)
 
 1. Create a demo Slack workspace (or a channel in ours) named like `#doordash-partnership` / `#ubereats-partnership`.
