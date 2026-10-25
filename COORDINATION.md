@@ -50,10 +50,12 @@ Keep each line short. Newest at the bottom. Never delete other people's lines.
 
 | Branch | Owner | What |
 | --- | --- | --- |
-| `preet/frontend-api` | Preet's agent | `/api/transactions`, risk score, `/api/metrics`, `/api/agents/<id>`, background `/api/run` jobs, `/api/health`, `docs/API.md` |
-| `preet/release-qa` | Preet's agent | end-to-end release tests, QA report, demo-day checklist |
 | `preet/gx10-run` | Preet's agent | GX10 models, speed + benchmark tables, fine-tuned judge, `docs/gx10_results.md` |
-| `preet/docs-sync` | Preet's agent | merged into main |
+| PR #9 `himaja/frontend` | Himaja | live console in `frontend/` wired to the API — tested clean, waiting for Preet's merge |
+
+Merged into main tonight: `preet/docs-sync`, `preet/frontend-api`, `preet/release-qa`, `preet/api-fixes`, PRs #6-#8 (CREAO).
+
+**Merging into `main` restarts the live Railway server** (auto-deploy) and kills any running `/api/run` job. Before merging, check `GET /api/health` → `running_job` is null, or say so in the Status log first.
 
 ## Status log (append below; newest last)
 
@@ -63,3 +65,5 @@ Keep each line short. Newest at the bottom. Never delete other people's lines.
 - Sat 23:20 PT — Preet's agent: DONE `preet/frontend-api` (not pushed, ready to merge): flock/api.py adds GET /api/transactions (paged, one row per payout x store), risk 0-100 on findings, GET /api/metrics (4 cards, formula + sources, assumptions labelled), GET /api/agents/<id>, GET /api/screens/<file>, GET /api/health, GET /api/jobs/<id>. POST /api/run runs as a background job (dataset=demo always; fixtures with `?wait=0`), one at a time (409): the fix for the Railway 502. Docs: docs/API.md. Test: `FLOCK_OFFLINE=1 pytest -q tests/test_api.py`; `python scripts/smoke_hosted.py <url> [--token-file F --run]`. After deploy: set Railway health check to /api/health; the frontend should call `POST /api/run?wait=0`.
 - Sat 23:55 PT — Preet's agent: DONE `preet/release-qa` (not pushed). tests/test_release.py (end-to-end release scenarios a-h; slow ones behind FLOCK_SLOW=1), 11 bug fixes outside api.py/dashboard (run-history leak, model-written $ in disputes, portal partial reads, stage CLI tracebacks, learner rule ids, read_by, refund money_moved, ranker odds, fee weak-evidence), docs/QA_REPORT.md with open api.py bugs + demo-day checklist. Test: `FLOCK_SLOW=1 FLOCK_TEST_BROWSER=1 pytest -q` (526 pass).
 - Sun 00:00 PT — Preet's agent: DONE `preet/api-fixes` (on top of `preet/release-qa`, not pushed). QA bugs A2 (strict JSON, NaN -> null), A3 (per-thread stdout proxy: job output / score text no longer lost or mixed, server logs stay), A5 (bodyless 204), A6 (hmac token compare; /api/findings default = needs_human, state, risk desc), A7 (dashboard run history follows a temp store); dataset `source` is a readable label. Judging: `FLOCK_JUDGE_CONCURRENCY` (default 1 offline, 6 live; identical results) and `FLOCK_LIVE_JUDGE_BUDGET=N` (N riskiest get live judges, rest offline rules, marked; shown in /api/metrics cost card + run summary). Hosted demo: CONCURRENCY=6, BUDGET=25. Docs: API.md, DEPLOY.md, QA_REPORT.md. Test: `FLOCK_OFFLINE=1 pytest -q` (tests/test_api.py, tests/test_judge_concurrency.py).
+- Sun 00:20 PT — Preet: DONE merged `preet/frontend-api`, `preet/release-qa`, `preet/api-fixes` into main and deployed. Live site passes `scripts/smoke_hosted.py` 19/19. Railway now has FLOCK_JUDGE_CONCURRENCY=6, FLOCK_LIVE_JUDGE_BUDGET=25, AI roles on CREAO, health check /api/health, volume at /app/data/state (verified it survives redeploys). main: 535 tests pass.
+- Sun 00:20 PT — Preet: Himaja's PR #9 (frontend) tested: merges clean, frontend/ only, JS valid, uses /api/agents /findings /log /metrics /score /transactions. Waiting for Preet's merge. Thabhelo: PR #8 merge restarted the server mid-job; please check /api/health running_job before merging.
