@@ -97,7 +97,20 @@ def _brief(f: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def draft(f: dict[str, Any]) -> str:
+def template(f: dict[str, Any]) -> str:
+    """The dispute without a model: the same facts, the evidence block, no wording to check."""
+    return no_em_dashes(
+        f"Hello {PLATFORM_NAME.get(f['channel'], f['channel'])} merchant support,\n\n"
+        f"We're disputing a {f['check_type'].replace('_', ' ')} on {orders_text(f)}. "
+        f"Expected ${f['expected']:.2f}, charged ${f['actual']:.2f}, a difference of ${abs(f['gap']):.2f}, "
+        f"based on the evidence below.\n\n{_evidence_block(f)}\n\nPlease credit the difference on our next payout. Thank you."
+    )
+
+
+def draft(f: dict[str, Any], live: bool = True) -> str:
+    """live=False: the template, no model call (a run's live-model budget is spent on its biggest disputes)."""
+    if not live:
+        return template(f)
     text = llm.ask_text(
         "Write a short, polite, factual dispute to a delivery platform's merchant support on behalf of a restaurant. "
         "Use only the facts given. Cite each piece of evidence by its source file. Under 120 words. No em dashes.",
@@ -112,9 +125,4 @@ def draft(f: dict[str, Any]) -> str:
         if not _cites_all(text, f):
             text += "\n\n" + _evidence_block(f)
         return no_em_dashes(text)
-    return no_em_dashes(
-        f"Hello {PLATFORM_NAME.get(f['channel'], f['channel'])} merchant support,\n\n"
-        f"We're disputing a {f['check_type'].replace('_', ' ')} on {orders_text(f)}. "
-        f"Expected ${f['expected']:.2f}, charged ${f['actual']:.2f}, a difference of ${abs(f['gap']):.2f}, "
-        f"based on the evidence below.\n\n{_evidence_block(f)}\n\nPlease credit the difference on our next payout. Thank you."
-    )
+    return template(f)

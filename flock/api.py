@@ -134,6 +134,23 @@ OUTPUT_LINES = 400       # a job keeps this many output lines; GET /api/jobs/<id
 TAIL = 40
 
 
+@contextlib.contextmanager
+def capped_judge_budget(cap: int | None = None):
+    """FLOCK_LIVE_JUDGE_BUDGET at most `cap` (FLOCK_LIVE_RUN_JUDGE_BUDGET, default 6) for one hosted run: live models
+    on the riskiest few findings, offline rules on the rest, so a run on stage finishes in about a minute."""
+    cap = LIVE_JUDGE_BUDGET if cap is None else cap
+    old = os.environ.get("FLOCK_LIVE_JUDGE_BUDGET")
+    cur = int(old) if old and old.strip().isdigit() else None
+    os.environ["FLOCK_LIVE_JUDGE_BUDGET"] = str(min(cur, cap) if cur is not None else cap)
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("FLOCK_LIVE_JUDGE_BUDGET", None)
+        else:
+            os.environ["FLOCK_LIVE_JUDGE_BUDGET"] = old
+
+
 class BadRequest(ValueError):
     """The request is wrong (400), as opposed to a bug (500)."""
 
@@ -321,6 +338,7 @@ class Api:
         self.run_lock = threading.Lock()     # one run at a time (a run resets the store)
         self.write_lock = threading.RLock()  # human decisions and runs never interleave
         self.running: str | None = None
+        self.snapshot: dict[str, Any] | None = None   # the last completed run's reads, served while a run goes
 
     # reads -----------------------------------------------------------
     def health(self) -> dict[str, Any]:
@@ -350,6 +368,28 @@ class Api:
         humans = sorted({e["actor"] for e in log if e["role"] == "human"})
         return {"agents": roster, "judges": JUDGES, "humans": humans,
                 "transitions": [{"from": s, "action": a, "to": t, "roles": sorted(r)} for (s, a), (t, r) in TRANSITIONS.items()]}
+
+    SNAPSHOT_READS = ("metrics", "score", "payouts", "approvals", "findings", "showtime")
+
+    def take_snapshot(self) -> dict[str, Any]:
+        """What the dashboard reads, as of the last completed run. A run resets the store and fills it as it goes;
+        until it finishes, these reads come from here (each tagged with running_job) so no card shows half a run."""
+        return {"metrics": self.metrics(), "score": self.scoreboard(), "payouts": self.payouts({}),
+                "approvals": self.approvals(), "findings": self.findings({}), "showtime": self.showtime_sheet(),
+                "at": _now()}
+
+    def read(self, name: str, fresh, q: dict[str, list[str]] | None = None) -> Any:
+        """fresh() normally; the last completed run's snapshot while a job runs (no query string)."""
+        snap = self.snapshot
+        if self.running and snap is not None and name in snap and not q:
+            out = snap[name]
+            if isinstance(out, dict):
+                return {**out, "running_job": self.running, "as_of": snap["at"], "stale_while_running": True}
+            return out
+        out = fresh()
+        if isinstance(out, dict):
+            out = {**out, "running_job": self.running}
+        return out
 
     def agent_status(self) -> dict[str, dict[str, Any]]:
         """Latest feed event per role in the latest run (stage:<actor> events plus the tracker's roles)."""
@@ -638,7 +678,9 @@ class Api:
         """flock.showtime prepare into this server's state: the prior months (learning curve, judge balances, learned
         rules) and the demo month, stopped before the headline finding is approved. Cheat sheet: GET /api/showtime."""
         from flock import showtime
-        showtime.prepare(months=p["months"], seed=p["seed"], stores=p["stores"], store=self.store, portal=self.portal)
+        with capped_judge_budget():   # the history months are offline; the month on stage gets the live judges
+            showtime.prepare(months=p["months"], seed=p["seed"], stores=p["stores"], store=self.store,
+                             portal=self.portal)
         return {"params": p, "showtime": self.showtime_sheet().get("json"), "findings": len(self.store.all())}
 
     @staticmethod
@@ -659,16 +701,8 @@ class Api:
         it now with live judges on its riskiest few (FLOCK_LIVE_RUN_JUDGE_BUDGET, default 6) and offline rules on the
         rest. Nothing is approved: every drafted dispute lands in GET /api/approvals."""
         from flock import showtime
-        old = os.environ.get("FLOCK_LIVE_JUDGE_BUDGET")
-        cur = int(old) if old and old.strip().isdigit() else None
-        os.environ["FLOCK_LIVE_JUDGE_BUDGET"] = str(min(cur, LIVE_JUDGE_BUDGET) if cur is not None else LIVE_JUDGE_BUDGET)
-        try:
+        with capped_judge_budget():
             info = showtime.live(seed=p["seed"], stores=p["stores"], store=self.store, portal=self.portal)
-        finally:
-            if old is None:
-                os.environ.pop("FLOCK_LIVE_JUDGE_BUDGET", None)
-            else:
-                os.environ["FLOCK_LIVE_JUDGE_BUDGET"] = old
         m = info["months"][0]
         return {"params": {**p, "seed": info["seed"]}, "month": info["month_name"], "seed": info["seed"],
                 "orders": m["orders"], "deposits": m["deposits"], "findings": m["findings"], "to_human": m["to_human"],
@@ -693,10 +727,17 @@ class Api:
     def showtime_sheet(self) -> dict[str, Any]:
         """The last showtime cheat sheet in this server's state (json + markdown), or an empty note."""
         from flock import showtime
-        jp, mp = self.dir / showtime.JSON_NAME, self.dir / showtime.MD_NAME
-        if not jp.exists():
+        jp, mp, lp = self.dir / showtime.JSON_NAME, self.dir / showtime.MD_NAME, self.dir / showtime.LIVE_JSON
+        newest = max((p for p in (jp, lp) if p.exists()), key=lambda p: p.stat().st_mtime, default=None)
+        if newest is None:
             return {"json": None, "markdown": None, "note": "no showtime prepared here: POST /api/run {\"dataset\": \"showtime\"}"}
-        return {"json": json.loads(jp.read_text()), "markdown": mp.read_text() if mp.exists() else None}
+        info = json.loads(newest.read_text())
+        try:
+            info = showtime.refresh(self.store, info)
+        except Exception as e:   # the recorded sheet is still worth showing
+            info["refresh_error"] = f"{type(e).__name__}: {e}"
+        return {"json": info, "markdown": mp.read_text() if mp.exists() and newest == jp else None,
+                "source": newest.name}
 
     def _exclusive(self, fn) -> dict[str, Any]:
         if not self.run_lock.acquire(blocking=False):
@@ -713,6 +754,10 @@ class Api:
         """Run fn in a background thread as a job. Busy if one is going."""
         if not self.run_lock.acquire(blocking=False):
             raise Busy(f"a run is in progress ({self.running}); poll GET /api/jobs/{self.running}")
+        try:
+            self.snapshot = self.take_snapshot()
+        except Exception:   # a snapshot is a convenience; never block a run on it
+            self.snapshot = None
         job_id = "JOB-" + uuid.uuid4().hex[:8]
         job = {"job_id": job_id, "kind": kind, "params": params, "status": "running", "created_at": _now(),
                "started_at": _now(), "finished_at": None, "seconds": None, "result": None, "error": None,
@@ -731,6 +776,7 @@ class Api:
             finally:
                 job["finished_at"], job["seconds"] = _now(), round(time.monotonic() - t0, 2)
                 self.running = None
+                self.snapshot = None
                 self.run_lock.release()
 
         threading.Thread(target=work, name=job_id, daemon=True).start()
@@ -830,11 +876,11 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "health"]:
                 return self._send(200, a.health())
             if parts == ["api", "showtime"]:
-                return self._send(200, a.showtime_sheet())
+                return self._send(200, a.read("showtime", a.showtime_sheet))
             if parts == ["api", "live"]:
                 return self._send(200, a.live_sheet())
             if parts == ["api", "approvals"]:
-                return self._send(200, a.approvals())
+                return self._send(200, a.read("approvals", a.approvals))
             if parts == ["api", "evidence", "index"] and evidence is not None:
                 return self._send(200, evidence.index(a.store.all()))
             if parts == ["api", "evidence"] and evidence is not None:
@@ -870,13 +916,13 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 3 and parts[:2] == ["api", "agents"]:
                 return self._send(200, a.agent(parts[2]))
             if parts == ["api", "findings"]:
-                return self._send(200, a.findings(q))
+                return self._send(200, a.read("findings", lambda: a.findings(q), q))
             if len(parts) == 3 and parts[:2] == ["api", "findings"]:
                 return self._send(200, a.finding(parts[2]))
             if parts == ["api", "transactions"]:
                 return self._send(200, a.transactions(q))
             if parts == ["api", "payouts"]:
-                return self._send(200, a.payouts(q))
+                return self._send(200, a.read("payouts", lambda: a.payouts(q), q))
             if len(parts) == 3 and parts[:2] == ["api", "payouts"]:
                 return self._send(200, a.payout(unquote(parts[2])))
             if parts == ["api", "stream"]:
@@ -886,7 +932,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "stream", "sse"]:
                 return self._sse(q)
             if parts == ["api", "metrics"]:
-                return self._send(200, a.metrics())
+                return self._send(200, a.read("metrics", a.metrics))
             if parts == ["api", "log"]:
                 return self._send(200, a.store.log())
             if parts == ["api", "rules"]:
@@ -894,7 +940,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "market"]:
                 return self._send(200, a.market())
             if parts == ["api", "score"]:
-                return self._send(200, a.scoreboard())
+                return self._send(200, a.read("score", a.scoreboard))
             if parts == ["api", "portal"]:
                 return self._send(200, _jsonl(Path(a.portal or PORTAL)))
             if parts == ["api", "progress"]:
