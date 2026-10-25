@@ -1,0 +1,51 @@
+{
+ "source": "docs/gx10_results.md (GX10 night run, Oct 24; raw runs BM-9ee343b1, BM-eef5c303, BM-0ecb4209 and results/judge_load_*.json are gitignored)",
+ "machine": {
+  "name": "NVIDIA GX10 (ASUS Ascent)",
+  "chip": "NVIDIA GB10, compute capability 12.1",
+  "memory_gb": 121,
+  "os": "Ubuntu 24.04 aarch64",
+  "serving": "Ollama 0.40.7, reached over Tailscale through an SSH tunnel (scripts/gx10.sh)",
+  "air_gapped": "FLOCK_AIRGAP=1: every model call stayed on the network (0 left)"
+ },
+ "speed": {
+  "what": "seconds per finding through the full 3-judge panel (scripts/judge_load.py), p50",
+  "rows": [
+   {"where": "MacBook Air", "judges": "qwen2.5-coder:14b x3", "findings": "fixtures", "p50_s": 88.4, "p95_s": 126.0, "per_minute": 1.48},
+   {"where": "GX10", "judges": "qwen3:8b x3", "findings": "fixtures", "p50_s": 14.0, "p95_s": 21.6, "per_minute": 10.63},
+   {"where": "GX10", "judges": "gpt-oss:20b + qwen3-30b-instruct + gemma3:27b", "findings": "fixtures", "p50_s": 26.9, "p95_s": 81.0, "per_minute": 4.11},
+   {"where": "GX10", "judges": "gpt-oss:20b + qwen3-30b-instruct + gemma3:27b", "findings": "seed 4821", "p50_s": 24.8, "p95_s": 30.5, "per_minute": 7.03}
+  ],
+  "headline": {"mac_p50_s": 88.4, "gx10_p50_s": 26.9, "speedup": 3.3}
+ },
+ "benchmark": {
+  "what": "held-out seeds 101-103 (never trained on): 142 findings, 916 answer-key trap rows, ca_bagel_chain 56 stores x 14 days; same findings and prompts for every contestant",
+  "total": 916,
+  "findings": 142,
+  "rows": [
+   {"contestant": "Qwen2.5-7B, LoRA-tuned (flock-judge-v1)", "kind": "tuned", "caught": 916, "false_alarms": 0, "correct_usd": 765.60, "to_human": 28, "p50_s": 15.9, "per_minute": 10.4, "usd_per_1000": 0, "run": "BM-0ecb4209"},
+   {"contestant": "Rules only", "kind": "rules", "caught": 916, "false_alarms": 0, "correct_usd": 765.60, "to_human": 28, "p50_s": 0.0, "per_minute": 284000, "usd_per_1000": 0, "run": "BM-9ee343b1"},
+   {"contestant": "Qwen2.5-7B-Instruct, base (flock-judge-base)", "kind": "base", "caught": 910, "false_alarms": 0, "correct_usd": 751.69, "to_human": 30, "p50_s": 11.7, "per_minute": 12.9, "usd_per_1000": 0, "run": "BM-0ecb4209"},
+   {"contestant": "qwen3-30b-instruct x3", "kind": "off-the-shelf", "caught": 895, "false_alarms": 0, "correct_usd": 692.82, "to_human": 47, "p50_s": 6.9, "per_minute": 21.4, "usd_per_1000": 0, "run": "BM-eef5c303"},
+   {"contestant": "gpt-oss-20b x3", "kind": "off-the-shelf", "caught": 862, "false_alarms": 0, "correct_usd": 492.00, "to_human": 74, "p50_s": 17.4, "per_minute": 8.3, "usd_per_1000": 0, "run": "BM-eef5c303"},
+   {"contestant": "gemma3-27b x3", "kind": "off-the-shelf", "caught": 145, "false_alarms": 0, "correct_usd": 545.17, "to_human": 34, "p50_s": 47.8, "per_minute": 2.6, "usd_per_1000": 0, "run": "BM-eef5c303"},
+   {"contestant": "Mixed panel: gpt-oss-20b + qwen3-30b-instruct + gemma3-27b", "kind": "panel", "caught": 92, "false_alarms": 0, "correct_usd": 417.22, "to_human": 93, "p50_s": 37.8, "per_minute": 4.2, "usd_per_1000": 0, "run": "BM-9ee343b1"}
+  ],
+  "not_run": ["Claude (no ANTHROPIC_API_KEY that night; recorded as skipped, not replaced)", "human contestant"],
+  "note": "Caught counts answer-key rows, dominated by one trap (processing_fee_creep, 765 of 916 rows). The mixed panel's 92 is caution (one skeptical judge sends a finding to a human), not error: no contestant filed a false alarm."
+ },
+ "training": {
+  "model": "flock-judge-v1",
+  "base": "Qwen/Qwen2.5-7B-Instruct",
+  "method": "LoRA r16 / alpha 32 / dropout 0.05 on q,k,v,o,gate,up,down (40.4M trainable params, 0.53%), bf16",
+  "data": "scripts/judge_dataset.py seeds 1-50: 2,294 findings, 6,156 train / 726 val examples; held-out benchmark seeds 101-110 locked out",
+  "trained_on": "1 epoch over 2,400 sampled examples (150 steps), lr 2e-4 cosine",
+  "minutes": 29.7,
+  "hardware": "GX10 GB10, torch 2.14.1+cu130",
+  "loss": {"steps": [0, 5, 10, 15, 20, 25, 50, 75, 100, 125, 150],
+           "train": [null, 1.831, 0.731, 0.131, 0.032, 0.005, 3.4e-5, 1.2e-5, 9e-6, 8e-6, 8e-6],
+           "val": [1.983, null, null, null, null, 0.004, 2.2e-5, 1.1e-5, 9.0e-6, 8.7e-6, 8.5e-6]},
+  "serving": "merged adapter -> GGUF q8_0 (llama.cpp) -> ollama create flock-judge-v1 (8.1 GB)",
+  "caveat": "Labels are synthetic and reasons templated, so the model learns the answer key's mapping on this simulated data, not open-ended judgment."
+ }
+}

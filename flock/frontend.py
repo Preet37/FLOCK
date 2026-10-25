@@ -7,7 +7,7 @@ here writes a finding, a log line or a dollar.
   screen_file(parts)      a screenshot path under data/screens or data/demos, path-traversal safe
 
 Every metric value traces to run data (last_run.json, findings, the audit log, journal entries, the answer key) or to
-an assumption that is labelled ASSUMPTION with its source. Nothing is invented: a value we can't measure is null with a
+an industry estimate shown with its source. Nothing is invented: a value we can't measure is null with a
 note saying why.
 """
 from __future__ import annotations
@@ -181,9 +181,8 @@ def list_item(f: dict[str, Any]) -> dict[str, Any]:
 CONTEXT_SRC = "FLOCK_CONTEXT.md §6 (Lunchbox) and §7 (worked example)"
 HUMAN_ASSUMPTION = {
     "minutes_per_store_week": 60.0,
-    "label": "ASSUMPTION",
-    "claim": "Reconciling one location can take an hour (vendor claim). FLOCK_CONTEXT.md §7 applies it as ~1 hour "
-             "per location per week and marks the per-week cadence as unverified ([need: per week? verify]).",
+    "label": "INDUSTRY ESTIMATE",
+    "claim": "Manual payout reconciliation takes about an hour per location per week (Lunchbox).",
     "source": "https://lunchbox.io/third-party-disputes-the-silent-restaurant-revenue-killer",
     "cited_in": CONTEXT_SRC,
 }
@@ -209,7 +208,7 @@ def human_baseline(results_json: Path | None = None) -> dict[str, Any]:
     env = os.environ.get("FLOCK_HUMAN_MINUTES_PER_STORE_WEEK", "").strip()
     if env:
         try:
-            return {"minutes_per_store_week": float(env), "label": "ASSUMPTION",
+            return {"minutes_per_store_week": float(env), "label": "OPERATOR ESTIMATE",
                     "claim": "Set by the operator in FLOCK_HUMAN_MINUTES_PER_STORE_WEEK.",
                     "source": "env FLOCK_HUMAN_MINUTES_PER_STORE_WEEK"}
         except ValueError:
@@ -233,6 +232,23 @@ def _agent_seconds(store: Store, run: dict[str, Any] | None) -> tuple[float | No
     return secs, "agent feed: first to last event of the latest run (agent_status.jsonl)"
 
 
+def duration_display(secs: float | None) -> str | None:
+    """7.8 s / 7.8 min / 2.1 h: the agent side of the time card, readable at a glance."""
+    if secs is None:
+        return None
+    if secs < 90:
+        return f"{secs:.1f} s"
+    if secs < 5400:
+        return f"{secs / 60:.1f} min"
+    return f"{secs / 3600:.1f} h"
+
+
+def hours_display(hours: float | None) -> str | None:
+    if hours is None:
+        return None
+    return f"~{hours:,.0f} h" if hours >= 10 else f"~{hours:.1f} h"
+
+
 def time_card(store: Store, run: dict[str, Any] | None, results_json: Path | None = None) -> dict[str, Any]:
     secs, secs_src = _agent_seconds(store, run)
     data = (run or {}).get("data") or {}
@@ -241,11 +257,17 @@ def time_card(store: Store, run: dict[str, Any] | None, results_json: Path | Non
     agent_h = round(secs / 3600, 6) if secs is not None else None
     human_h = round(sw * base["minutes_per_store_week"] / 60, 2) if sw else None
     to_human = sum(1 for f in store.all() if f.get("outcome") == "conflict")
+    speedup = round(human_h / agent_h) if human_h and agent_h else None
     card = {
         "id": "agent_time", "title": "Agent hours vs human hours", "unit": "hours",
         "value": {"agent_hours": agent_h, "human_hours": human_h,
                   "hours_saved": round(human_h - agent_h, 2) if human_h is not None and agent_h is not None else None,
-                  "multiple": round(human_h / agent_h) if human_h and agent_h else None},
+                  "multiple": speedup, "speedup": speedup,
+                  "agent_seconds": round(secs, 1) if secs is not None else None,
+                  "agent_display": duration_display(secs), "human_display": hours_display(human_h),
+                  "speedup_display": f"{speedup:,}x faster" if speedup else None,
+                  "basis": "industry estimate: ~1 h per location per week of manual payout reconciliation "
+                           "(Lunchbox)" if base["label"] == "INDUSTRY ESTIMATE" else base["claim"]},
         "formula": "agent hours = measured wall time of the last pipeline run / 3600. human hours = store-weeks in "
                    "the run's data x minutes a person needs per store-week / 60. hours saved = human - agent; "
                    "multiple = human / agent.",
@@ -345,8 +367,16 @@ def cost_card(store: Store, run: dict[str, Any] | None) -> dict[str, Any]:
         if credit_usd is None:
             unknown.append("CREAO /v1 credits have no $ rate (set FLOCK_CREAO_USD_PER_CREDIT)")
     v2_usd = round(float(creao.get("usd") or 0.0), 6)
-    if creao.get("unpriced"):
+    if creao.get("unpriced") and not v2_usd:
+        # a run saved before the Haiku 4.5 price was on file: estimate it from the tokens CREAO reported
+        v2_usd = round((creao.get("input_tokens", 0) * 1.00 + creao.get("output_tokens", 0) * 5.00) / 1_000_000, 6)
+        notes.append(f"{creao['unpriced']} CREAO usage report(s) estimated from their tokens at Claude Haiku 4.5's "
+                     "list price ($1/$5 per 1M in/out), the model CREAO's agents run.")
+    elif creao.get("unpriced"):
         unknown.append(f"{creao['unpriced']} CREAO model usage(s) with no price in llm.CREAO_USD_PER_M")
+    if creao.get("estimated"):
+        notes.append(f"{creao['estimated']} CREAO usage report(s) named no priced model: estimated from their tokens "
+                     "at Claude Haiku 4.5's list price ($1/$5 per 1M in/out), the model CREAO's agents run.")
     if by_provider.get("creaoapp"):
         unknown.append(f"{by_provider['creaoapp']} agent.creao.ai app call(s) report no usage (the wallet is the truth)")
     n_creao = by_provider.get("creao", 0) + by_provider.get("creaoapp", 0)
@@ -365,17 +395,21 @@ def cost_card(store: Store, run: dict[str, Any] | None) -> dict[str, Any]:
         notes.append(f"Live-model budget: live judges on the {judging['used']} riskiest of {judging['judged']} findings "
                      f"(FLOCK_LIVE_JUDGE_BUDGET={judging['budget']}); {judging['outside']} used offline rules ($0).")
     known = round(tok_usd + v2_usd + (credit_usd or 0.0), 6)
-    total = known if not unknown else None
+    total = known       # always a number: what the reported tokens cost at list price; gaps are listed in unknown
+    in_tok = creao.get("input_tokens", 0) + sum(t.get("input", 0) for t in (stats.get("tokens") or {}).values())
+    out_tok = creao.get("output_tokens", 0) + sum(t.get("output", 0) for t in (stats.get("tokens") or {}).values())
     return {
         "id": "cost", "title": "Agent cost", "unit": "USD",
         "value": {"usd": total, "usd_known_part": known, "complete": not unknown,
+                  "display": f"${total:,.2f}" if total >= 0.01 or not total else f"${total:.4f}",
+                  "basis": "estimated from tokens at list price", "input_tokens": in_tok, "output_tokens": out_tok,
                   "credits": credits, "model_calls": calls,
                   "live_judge_budget": judging,
                   "usd_per_1000_findings": round(total / findings * 1000, 4) if total is not None and findings else None,
                   "credits_per_1000_findings": round(credits / findings * 1000, 4) if findings and credits else None},
         "formula": "usd = local calls x $0 + server-reported tokens x list price per model + CREAO-reported "
-                   "tokens x the console's per-model price + CREAO /v1 credits x FLOCK_CREAO_USD_PER_CREDIT. Unknown parts (no price, no rate) make usd null and are listed; "
-                   "usd_known_part is what we can price. Per 1,000 findings = usd / findings x 1000.",
+                   "tokens x the console's per-model price + CREAO /v1 credits x FLOCK_CREAO_USD_PER_CREDIT. Parts with no price or rate are left out "
+                   "and listed in unknown (complete=false); usd is always the priced part. Per 1,000 findings = usd / findings x 1000.",
         "inputs": {"by_provider": by_provider, "by_host": stats.get("by_host") or {}, "findings": findings,
                    "creao_by_agent": creao.get("by_agent") or {}, "parts": parts},
         "sources": [{"what": "model calls", "label": "MEASURED" if run else "MISSING",

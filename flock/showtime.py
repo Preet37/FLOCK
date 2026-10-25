@@ -35,6 +35,8 @@ import contextlib
 import copy
 import io
 import json
+import os
+import random
 import shutil
 import sys
 import time
@@ -42,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flock import frontend, payouts, pipeline, transactions
+from flock import frontend, market, payouts, pipeline, transactions
 from flock.agents import clicky, collector, follow_up, learner, panel
 from flock.agents.dispute_writer import PLATFORM_NAME
 from flock.demo import generator, scoreboard
@@ -56,6 +58,7 @@ DEFAULT_MONTHS = 4
 WORKDIR = ROOT / "data" / "showtime"
 MARKER = ".flock_showtime"
 MD_NAME, JSON_NAME = "showtime.md", "showtime.json"
+LIVE_JSON = "live.json"
 HUMAN = pipeline.DEMO_HUMAN          # the simulated human of --demo-approve
 DASHBOARD = "http://127.0.0.1:5050"   # the older Flask UI (backup, dashboard/)
 API = "http://127.0.0.1:8787"
@@ -94,7 +97,7 @@ def _say(quiet: bool, *msg: Any) -> None:
 # one month through the pipeline ------------------------------------------------------------------------------------
 def run_month(ws: Path, month: str, scenario: str, plan: int | None, seed: int, stores: int | None, store: Store,
               rules_path: Path, portal: Path, mappings: Path, runs_path: Path, demo_approve: bool, forget: bool,
-              quiet: bool) -> dict[str, Any]:
+              quiet: bool, period: str | None = None) -> dict[str, Any]:
     folder = ws / month
     out, raw, std = folder / "out", folder / "raw", folder / "std"
     t0 = time.monotonic()
@@ -112,7 +115,7 @@ def run_month(ws: Path, month: str, scenario: str, plan: int | None, seed: int, 
         pipeline.run(reset=True, forget=forget, demo_approve=demo_approve, store=store, rules_path=rules_path,
                      portal=portal, raw=raw, std=std, mappings=mappings, confirm=True, interactive=False,
                      progress=progress, runs_path=runs_path, label=label, source_label=source, rollup=True,
-                     period=month_name(month))
+                     period=period or month_name(month))
         result = scoreboard.score(store, verbose=True, runs_path=runs_path, answer_key=out / "answer_key.csv")
     rows = store.all()
     return {"month": month, "name": month_name(month), "scenario": scenario, "plan": plan, "seed": seed,
@@ -122,6 +125,21 @@ def run_month(ws: Path, month: str, scenario: str, plan: int | None, seed: int, 
             "caught": result["caught"], "total": result["total"], "false_alarms": result["false_alarms"],
             "seconds": round(time.monotonic() - t0, 1), "log": str(log), "out": str(out), "std": str(std),
             "judging": (frontend.last_run(store) or {}).get("judging"), "scenario_summary": sc}
+
+
+@contextlib.contextmanager
+def offline_rules():
+    """The history months are judged by the offline rules (FLOCK_OFFLINE=1): the learning curve and the judges'
+    starting balances come out the same on every prepare, and the live models are spent on the month on stage."""
+    old = os.environ.get("FLOCK_OFFLINE")
+    os.environ["FLOCK_OFFLINE"] = "1"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("FLOCK_OFFLINE", None)
+        else:
+            os.environ["FLOCK_OFFLINE"] = old
 
 
 def platform_pays(store: Store, keep: str | None, month: str) -> list[str]:
@@ -230,8 +248,9 @@ def prepare(months: int = DEFAULT_MONTHS, seed: int = DEFAULT_SEED, stores: int 
     claim = None
     _say(quiet, f"== showtime prepare: {months} prior month(s) + {month_name(month)}, seed {seed} ==")
     for i, m in enumerate(prior_months(month, months)):
-        rec = run_month(ws, m, "prior_month", i, month_seed(seed, months - i), stores, store, rules_path, portal,
-                        mappings, runs_path, demo_approve=True, forget=(i == 0), quiet=quiet)
+        with offline_rules():
+            rec = run_month(ws, m, "prior_month", i, month_seed(seed, months - i), stores, store, rules_path, portal,
+                            mappings, runs_path, demo_approve=True, forget=(i == 0), quiet=quiet)
         last = i == months - 1
         keep = pick_unpaid(store) if last else None
         rec["recovered"] = len(platform_pays(store, keep["finding_id"] if keep else None, m))
@@ -245,14 +264,11 @@ def prepare(months: int = DEFAULT_MONTHS, seed: int = DEFAULT_SEED, stores: int 
                     f"to a human, {rec['by_rule']} settled by learned rules, caught {rec['caught']}/{rec['total']}, "
                     f"{rec['false_alarms']} false alarms ({rec['seconds']}s{judging(rec)}); rules approved after it: "
                     f"{len(rec['rules_approved'])}")
+    market.reset(store, f"showtime: fresh judge balances for {month_name(month)}")
     demo = run_month(ws, month, "demo_month", None, month_seed(seed, 0), stores, store, rules_path, portal, mappings,
                      runs_path, demo_approve=False, forget=(months == 0), quiet=quiet)
     headline = pick_headline(store)
-    for f in store.all():   # the demo human's routine calls; the headline and anything sent to a human wait
-        if (f["state"] == "JUDGED" and f.get("outcome") == "recoverable" and f.get("dispute_draft")
-                and f["finding_id"] != (headline or {}).get("finding_id")):
-            transition(store, f["finding_id"], "approve", HUMAN, reason="Evidence checks out")
-    demo["filed"] = clicky.file_approved(store, portal)
+    demo["filed"] = []   # nothing on stage is approved for the presenter: every drafted dispute waits for a human
     carried = None
     if claim:
         carried = carry_over(store, claim, portal)
@@ -266,6 +282,46 @@ def prepare(months: int = DEFAULT_MONTHS, seed: int = DEFAULT_SEED, stores: int 
     write_sheet(state_dir, info)
     save_snapshot(ws / "snapshot", state_dir, portal, rules_path)
     _say(quiet, "\n" + cheat_sheet(info))
+    return info
+
+
+# live: a fresh month, generated and processed on the spot ------------------------------------------------------------
+def live_month(store: Store) -> str:
+    """The month after the prepared showtime month (or after DEMO_MONTH): the next month the chain closes."""
+    info = load(store)
+    return generator.shift_month((info or {}).get("month") or generator.DEMO_MONTH, 1)
+
+
+def live(seed: int | None = None, stores: int | None = None, month: str | None = None, store: Store | None = None,
+         rules_path: Path | None = None, portal: Path | None = None, workdir: Path | None = None,
+         quiet: bool = True) -> dict[str, Any]:
+    """Generate a brand-new month (a new seed: new stores hit, new orders, the same kinds of realistic mistakes at
+    the sizes chains report) and run the whole pipeline on it now. The learned rules and the scoreboard history
+    are kept; the judges start the month with fresh balances; nothing is approved: every drafted dispute waits for
+    a human. Written to <state>/live.json."""
+    store = store or get_store()
+    state_dir = Path(getattr(store, "dir", STATE_DIR))
+    rules_path = Path(rules_path or learner.RULES)
+    portal = Path(portal or clicky.PORTAL)
+    seed = random.SystemRandom().randrange(1, 2**31 - 1) if seed is None else int(seed)
+    month = month or live_month(store)
+    ws = Path(workdir or WORKDIR / "live")
+    _clean(ws)
+    mappings = ws / "mappings_temp_copy.json"
+    shutil.copy(ROOT / "mappings.json", mappings)
+    runs_path = pipeline.runs_default(store)
+    t0 = time.monotonic()
+    market.reset(store, f"live run: fresh judge balances for {month_name(month)}, seed {seed}")
+    rec = run_month(ws, month, "demo_month", None, seed, stores, store, rules_path, portal, mappings, runs_path,
+                    demo_approve=False, forget=False, quiet=quiet, period=f"{month_name(month)} (live, seed {seed})")
+    rec["filed"] = []
+    shutil.copy(Path(rec["out"]) / "answer_key.csv", state_dir / pipeline.LIVE_KEY)
+    keep_contracts(state_dir, Path(rec["out"]).parent / "raw")
+    info = summarize(store, [], rec, pick_headline(store), None, seed, month, round(time.monotonic() - t0, 1),
+                     rules_path)
+    info["live"] = True
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / LIVE_JSON).write_text(json.dumps(info, indent=1))
     return info
 
 

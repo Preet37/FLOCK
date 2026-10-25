@@ -1257,13 +1257,18 @@ SCENARIOS = ("demo_month", "prior_month")
 DEMO_MONTH = "2026-09"
 SCENARIO_PROFILE = "ca_bagel_chain"
 OLD_RATE, NEW_RATE = 0.25, 0.20          # DoorDash commission before / after the amendment (simulated terms)
-BIG_ERROR_STORES = 3
+BIG_ERROR_STORES = 24                    # DoorDash never re-tiered these stores after the amendment
 UE_UNAUTHORIZED_REP = ["Drew Castillo (simulated)", "drew.castillo@ubereats.example", "Merchant Success Associate"]
 # incident -> count. gh_unauth / ue_unauth: a rep NOT on the contract's authorized contacts promises a fee waiver for
 # one store-day (trap 15, a human decides); no_pos = trap 4, refund_stuck = trap 13. The Learner proposes a rule once
 # the same call repeats twice in one month, so prior months repeat a different pattern each month and the Uber Eats
 # promise never repeats: it still goes to a human on the demo month.
-SMALL = {"short_deposit": 1, "bogo": 1, "late_error": 1, "sold_never_paid": 1, "legit_error": 1}
+# Sized so the planted leakage is material, in line with the 2.5-3% of delivery revenue chains report losing to
+# payout errors (FLOCK_CONTEXT.md section 6): promo splits wrong on a whole campaign, error charges past the window
+# every week, orders that never pay out, one weekly deposit landing ~$12K short. Legit error charges scale too, so a
+# false alarm costs something.
+SMALL = {"short_deposit": 1, "bogo": 1700, "late_error": 420, "sold_never_paid": 60, "legit_error": 60}
+SHORT_DEPOSIT_USD = (11000, 14000)
 DEMO_PLAN = {"big_error": True, **SMALL, "gh_unauth": 1, "ue_unauth": 1}
 PRIOR_PLANS = [
     {**SMALL, "gh_unauth": 2, "no_pos": 1, "refund_stuck": 1, "ue_unauth": 1},
@@ -1274,12 +1279,12 @@ PRIOR_PLANS = [
 INCIDENT_TRAP = {"big_error": 7, "short_deposit": 6, "bogo": 8, "late_error": 10, "sold_never_paid": 3,
                  "legit_error": 16, "gh_unauth": 15, "ue_unauth": 15, "no_pos": 4, "refund_stuck": 13}
 INCIDENT_LABEL = {
-    "big_error": "DoorDash keeps charging the pre-amendment commission at 3 stores all month",
-    "short_deposit": "an Uber Eats weekly deposit lands short of its statement",
-    "bogo": "an Uber Eats BOGO charged 100% to the store (deal says 50/50)",
-    "late_error": "a DoorDash error charge for a complaint made after the 72-hour window",
-    "sold_never_paid": "a DoorDash order sold but never paid",
-    "legit_error": "a legitimate DoorDash error charge (must NOT be disputed)",
+    "big_error": f"DoorDash keeps charging the pre-amendment commission at {BIG_ERROR_STORES} stores all month",
+    "short_deposit": "an Uber Eats weekly deposit lands ~$12K short of its statement",
+    "bogo": "an Uber Eats BOGO campaign charged 100% to the store (deal says 50/50)",
+    "late_error": "DoorDash error charges for complaints made after the 72-hour window",
+    "sold_never_paid": "DoorDash orders sold but never paid",
+    "legit_error": "legitimate DoorDash error charges (must NOT be disputed)",
     "gh_unauth": "a Grubhub rep with no authority promises a fee waiver for one store-day",
     "ue_unauth": "an Uber Eats rep with no authority promises a fee waiver for one store-day",
     "no_pos": "an Uber Eats order paid that the register never rang up",
@@ -1397,7 +1402,7 @@ def plant_scenario(rng: random.Random, world: dict, plan: dict) -> dict[str, lis
     big_stores: list[str] = []
     if plan.get("big_error") and c.get("doordash", {}).get("amendment"):
         big_stores = sorted(rng.sample(sorted(s["store_id"] for s in world["stores"]),
-                                       min(BIG_ERROR_STORES, len(world["stores"]))))
+                                       min(BIG_ERROR_STORES, max(1, len(world["stores"]) * 3 // 7))))
         for o in by_ch.get("doordash", []):
             if o["store_id"] in big_stores:
                 used.add(o["order_id"])
@@ -1405,14 +1410,22 @@ def plant_scenario(rng: random.Random, world: dict, plan: dict) -> dict[str, lis
                 key("big_error", o["order_id"], o["actual"]["commission"] - o["truth"]["commission"])
     world["big_error_stores"] = big_stores
 
+    pools: dict[str, list[dict]] = {}
+
     def one(channel: str, pred=lambda o: True) -> dict | None:
-        pool = [o for o in by_ch.get(channel, []) if o["order_id"] not in used and o["store_id"] not in big_stores
-                and pred(o)]
-        if not pool:
-            return None
-        o = pool[rng.randrange(len(pool))]
-        used.add(o["order_id"])
-        return o
+        """A random unused order on `channel` outside the big-error stores (one shuffle per channel, so planting
+        hundreds of incidents stays linear)."""
+        if channel not in pools:
+            pool = [o for o in by_ch.get(channel, []) if o["store_id"] not in big_stores]
+            rng.shuffle(pool)
+            pools[channel] = pool
+        pool = pools[channel]
+        while pool:
+            o = pool.pop()
+            if o["order_id"] not in used and pred(o):
+                used.add(o["order_id"])
+                return o
+        return None
 
     for incident, ch, rep in (("gh_unauth", "grubhub", profile["unauthorized_rep"]),
                               ("ue_unauth", "ubereats", UE_UNAUTHORIZED_REP)):
@@ -1471,7 +1484,7 @@ def plant_scenario(rng: random.Random, world: dict, plan: dict) -> dict[str, lis
             key("refund_stuck", o["order_id"], amt)
     if plan.get("short_deposit") and "ubereats" in by_ch:
         weeks = sorted(rng.sample(range(world["weeks"]), min(plan["short_deposit"], world["weeks"])))
-        world["deposit_traps"]["ubereats"] = [("short", w, money(rng.uniform(40, 120))) for w in weeks]
+        world["deposit_traps"]["ubereats"] = [("short", w, money(rng.uniform(*SHORT_DEPOSIT_USD))) for w in weeks]
     for o in orders:
         o["actual"]["net"] = net_of(o["actual"])
     return rows

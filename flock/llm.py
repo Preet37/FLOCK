@@ -102,7 +102,11 @@ CREAO_USD_PER_M = {
     "anthropic/claude-sonnet-5-5": (2.60, 13.00), "anthropic/claude-sonnet-5": (2.60, 13.00),
     "anthropic/claude-opus-5-5": (5.20, 26.00), "anthropic/claude-opus-4-8": (6.50, 32.50),
     "anthropic/claude-fable-5": (13.00, 65.00), "anthropic/claude-fable-5-1": (13.00, 65.00),
+    "anthropic/claude-haiku-4-5": (1.00, 5.00),
 }
+# A model id CREAO doesn't name (or one missing above) is estimated at Claude Haiku 4.5's Anthropic list price, the
+# model CREAO's agents run, and counted in creao_usage()["estimated"] so the card can say so.
+CREAO_FALLBACK_PRICE = (1.00, 5.00)
 _credits: Counter = Counter()    # CREAO agent id -> credits (v1 only; /v2 bills USD, see _usage)
 _usage: dict[str, Counter] = {}  # CREAO agent id -> Counter(input_tokens, output_tokens, usd, calls, unpriced)
 _run_times: list[float] = []     # monotonic times of recent run creates, for pacing
@@ -117,6 +121,7 @@ LIST_PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-5-5": (4.0, 20.0),
     "claude-sonnet-5-5": (2.0, 10.0),
     "claude-haiku-5-5": (0.10, 0.50),
+    "claude-haiku-4-5": (1.00, 5.00),       # the model inside CREAO's hosted agents
     "llama-3.3-70b-versatile": (0.59, 0.79),
 }
 
@@ -439,7 +444,7 @@ def creao_usage() -> dict[str, Any]:
         tot.update(c)
     return {"usd": round(tot.get("usd", 0.0), 6), "input_tokens": int(tot.get("input_tokens", 0)),
             "output_tokens": int(tot.get("output_tokens", 0)), "calls": int(tot.get("calls", 0)),
-            "unpriced": int(tot.get("unpriced", 0)), "credits": round(sum(credits.values()), 4),
+            "unpriced": int(tot.get("unpriced", 0)), "estimated": int(tot.get("estimated", 0)), "credits": round(sum(credits.values()), 4),
             "by_agent": by_agent}
 
 
@@ -706,10 +711,10 @@ def _creao_note_usage(agent_id: str, usage: Any, served_model: str = "") -> None
             c["input_tokens"] += i
             c["output_tokens"] += o
             price = next((p for key, p in CREAO_USD_PER_M.items() if key == model_id or key in model_id), None)
-            if price:
-                c["usd"] += (i * price[0] + o * price[1]) / 1_000_000
-            else:
-                c["unpriced"] += 1
+            if not price:
+                price = CREAO_FALLBACK_PRICE
+                c["estimated"] += 1
+            c["usd"] += (i * price[0] + o * price[1]) / 1_000_000
 
 
 def _creaoapp_request(method: str, path: str, body: dict[str, Any] | None = None) -> bytes:

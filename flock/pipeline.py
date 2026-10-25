@@ -63,25 +63,37 @@ OPTIONAL_TABLES = ("error_charges", "refunds")  # extra std tables the checkers 
 
 def detect_real(raw: Path | None = None, std: Path | None = None, mappings: Path | None = None,
                 confirm: bool = False, interactive: bool = False, progress: Progress | None = None,
-                context: dict | None = None, agents: agents_live.Tracker | None = None) -> list[dict]:
+                context: dict | None = None, agents: agents_live.Tracker | None = None,
+                stage=None) -> list[dict]:
     """Formatter + Matcher + Deal Keeper + Checkers on data/raw -> data/std (or the given folders).
     Empty list if no data yet. If `context` is given, it also gets what the Journal Entry Drafter needs
     (stories, terms_for, orders) when the data is small enough to match in one process, plus the std tables and deal
     terms (tables, terms) for investigators. agents: the run's live tracker (flock/agents_live.py)."""
     std = Path(std or formatter.STD)
     raw = Path(raw or formatter.RAW)
+    stage = stage or (lambda *a, **k: None)
+    stage("formatter", "working", "turning each platform's export into the standard tables")
     tables = dict(formatter.format_all(raw, std, mappings, confirm=confirm, interactive=interactive,
                                        progress=progress))
+    stage("formatter", "done", f"wrote {len(tables)} standard tables", count=len(tables))
     for name in OPTIONAL_TABLES:
         p = std / f"{name}.csv"
         if p.exists():
             tables[name] = p
     terms = deal_keeper.extract_terms(raw / "contracts", raw / "emails") if raw != formatter.RAW \
         else deal_keeper.extract_terms()
+    stage("deal_keeper", "done", f"{len(terms)} deal terms in force (newest binding document wins)", count=len(terms))
     if context is not None:
         context.update(tables=tables, terms=terms)
-    return hold_unread(scan.detect(tables, terms, progress, context=context, agents=agents),
-                       formatter.pending_layouts(std))
+    stage("matcher", "working", "matching register orders to payout lines and bank deposits")
+    stage("checkers", "working", "comparing what the deal says to what was paid")
+    found = scan.detect(tables, terms, progress, context=context, agents=agents)
+    orders = scan.count_rows(tables.get("orders")) if isinstance(tables.get("orders"), (str, Path)) else 0
+    stage("matcher", "done", f"matched {orders:,} orders to payout lines and deposits", count=orders)
+    odd = sum(1 for f in found if f.get("check_type") == "anomaly")
+    stage("checkers", "done", f"{len(found) - odd:,} gaps found by the money math", count=len(found) - odd)
+    stage("anomaly", "done", f"{odd} jump(s) no rule covers", count=odd)
+    return hold_unread(found, formatter.pending_layouts(std))
 
 
 def hold_unread(found: list[dict], pending: list[dict]) -> list[dict]:
@@ -100,11 +112,12 @@ def hold_unread(found: list[dict], pending: list[dict]) -> list[dict]:
 
 
 def detect(fixtures: Path | None = None, progress: Progress | None = None, context: dict | None = None,
-           agents: agents_live.Tracker | None = None, source_label: str | None = None,
+           agents: agents_live.Tracker | None = None, source_label: str | None = None, stage=None,
            **data) -> tuple[list[dict], str]:
     """source_label names a dataset for people (flock.demo: "generated: <profile> seed N, S stores x W weeks") instead
     of the std folder's path, which for a generated run is a temp folder that is gone afterwards."""
-    found = detect_real(progress=progress, context=context, agents=agents, **data) if fixtures is None else []
+    found = detect_real(progress=progress, context=context, agents=agents, stage=stage, **data) \
+        if fixtures is None else []
     if found:
         if source_label:
             return found, source_label
@@ -174,6 +187,13 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     return store
 
 
+def stage_event(store: Store, run_id: str, actor: str, event: str, summary: str, **counts) -> None:
+    """One roster agent's step (Collector, Formatter, Matcher, Deal Keeper, Checkers, Anomaly Detector, Investigator,
+    Ranker, Clicky...) on the live feed, so the Agent Chain shows working / done for every stage of the run."""
+    agents_live.emit(store, {"event": event, "agent_id": f"stage:{actor}", "role": actor, "run": run_id,
+                             "subject": actor, "at": agents_live._now(), "summary": summary, "stage": actor, **counts})
+
+
 def write_last_run(store: Store, info: dict) -> dict:
     """last_run.json next to the findings: what GET /api/metrics measures from. Never breaks a run."""
     rec = {**info, "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -212,8 +232,17 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
             flock.flush()  # the live board shows each agent's latest state during the pause
             time.sleep(pace)
 
+    def stage(actor: str, event: str, summary: str, **counts) -> None:
+        stage_event(store, run_id, actor, event, summary, **counts)
+
+    raw_dir = Path(data.get("raw") or formatter.RAW)
+    manifest = raw_dir / "manifest.csv"
+    n_raw = max(0, len(manifest.read_text().splitlines()) - 1) if manifest.exists() else 0
+    stage("collector", "done", f"{n_raw} raw files collected (untouched copies, sha256 in the manifest)"
+          if fixtures is None else "fixtures run: no raw files to collect", count=n_raw)
     context: dict = {}
-    findings, source = detect(fixtures, progress, context, agents=flock, source_label=source_label, **data)
+    findings, source = detect(fixtures, progress, context, agents=flock, source_label=source_label, stage=stage,
+                              **data)
     if rollup and (context.get("tables") or {}).get("payout_lines"):
         findings = roll_up(findings, context["tables"]["payout_lines"], flock)
     print(f"\n== Flock run on {source}: {len(findings)} findings ==")
@@ -231,7 +260,9 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
             if f["state"] == "CHECKED" and (t := investigator.detection_trigger(f))]
     if jobs:
         progress.stage("investigate", total=len(jobs), unit="findings")
+        stage("investigator", "working", f"building case files for {len(jobs)} unexplained finding(s)")
         investigator.run(store, jobs, book, flock)
+    stage("investigator", "done", f"{len(jobs)} case file(s) for unexplained findings", count=len(jobs))
 
     rules = learner.approved_rules(rules_path)
     weights = market.weights(store)  # balances carried over from earlier weeks' settled bets
@@ -270,12 +301,14 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
         investigator.run(store, jobs, book, flock)
 
     todo = [f for f in store.all() if f["state"] == "JUDGED" and f["outcome"] == "recoverable"]
+    stage("ranker", "working", f"ranking {len(todo)} recoverable finding(s)")
     progress.stage("rank", total=len(todo), unit="findings")
     for i, f in enumerate(todo, 1):
         move(f["finding_id"], "rank", ranker.ACTOR, patch={"rank_score": ranker.score(f)},
              reason="gap x win probability - effort")
         progress.update(i)
 
+    stage("ranker", "done", f"ranked {len(todo)} by dollars x win odds - effort", count=len(todo))
     for f in ranker.within_budget([x for x in store.all() if x["state"] == "JUDGED" and x["outcome"] == "recoverable"]):
         writer = flock.spawn("writer", parent=flock.judge_of.get(f["finding_id"]), subject=f["finding_id"],
                              agent_id=f"writer:{f['finding_id']}").working("drafting the dispute")
@@ -296,6 +329,10 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
         filed = clicky.file_approved(store, portal)
         bot.done(f"filed {len(filed)} disputes in the sandbox portal", filed=len(filed))
         print(f"Clicky filed {len(filed)} disputes in the sandbox portal")
+    else:
+        ready = sum(1 for f in store.all() if f["state"] == "JUDGED" and f.get("dispute_draft"))
+        stage("clicky", "done", f"standing by: {ready} drafted dispute(s) wait for a human to approve before "
+                                "anything is filed", count=0, waiting=ready)
 
     if context.get("stories"):
         jagent = flock.spawn("journal", subject="journal entries", agent_id="journal").working(

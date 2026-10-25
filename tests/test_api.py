@@ -267,10 +267,10 @@ def test_metrics_trace_to_inputs(dataset):
     assert t["inputs"]["agent_seconds"] == run["seconds"]
     assert t["value"]["agent_hours"] == round(run["seconds"] / 3600, 6)
     assert t["inputs"]["store_weeks"] == run["data"]["store_weeks"] == 3 * 2
-    assert t["inputs"]["human_baseline"] == "ASSUMPTION" and t["inputs"]["minutes_per_store_week"] == 60.0
+    assert t["inputs"]["human_baseline"] == "INDUSTRY ESTIMATE" and t["inputs"]["minutes_per_store_week"] == 60.0
     assert t["value"]["human_hours"] == 6 * 60 / 60
     src = next(s for s in t["sources"] if s["what"] == "minutes_per_store_week")
-    assert src["label"] == "ASSUMPTION" and src["source"].startswith("https://lunchbox.io") and "§7" in src["cited_in"]
+    assert src["label"] == "INDUSTRY ESTIMATE" and src["source"].startswith("https://lunchbox.io") and "§7" in src["cited_in"]
 
     acc = cards["accuracy"]
     score = client.get("/api/score")[1]
@@ -315,7 +315,7 @@ def test_human_baseline_prefers_a_measured_benchmark(tmp_path, monkeypatch):
     monkeypatch.setenv("FLOCK_HUMAN_MINUTES_PER_STORE_WEEK", "30")
     assert frontend.human_baseline(tmp_path / "none.json")["minutes_per_store_week"] == 30.0
     monkeypatch.delenv("FLOCK_HUMAN_MINUTES_PER_STORE_WEEK")
-    assert frontend.human_baseline(tmp_path / "none.json")["label"] == "ASSUMPTION"
+    assert frontend.human_baseline(tmp_path / "none.json")["label"] == "INDUSTRY ESTIMATE"
     store = JsonStore(tmp_path / "s")
     card = frontend.accuracy_card(store, results)
     assert card["benchmark"]["human"]["accuracy"] == 0.8 and card["benchmark"]["rules"]["accuracy"] == 1.0

@@ -98,13 +98,13 @@ def test_demo_click_path(served):
         expect(page.locator("#apiBase")).to_contain_text(base)
         expect(page.locator("#metrics [data-how]")).to_have_count(4)
         metrics = page.locator("#metrics").inner_text()
-        assert "—" not in metrics and "100%" in metrics and "$" in metrics and "ASSUMPTION" in metrics
+        assert "—" not in metrics and "100%" in metrics and "$" in metrics
         expect(page.locator("#showtimeBanner")).to_contain_text(payout_id)
         expect(page.locator("#showtimeBanner")).to_contain_text(f"${info['lump_sum']['short']:,.2f}")
         expect(page.locator("#agentChain [data-agent]")).to_have_count(len(a.agents()["agents"]))
         expect(page.locator("#logList button").first).to_be_visible()
         page.locator("[data-how='agent_time']").click()
-        expect(page.locator("#modalBody")).to_contain_text("ASSUMPTION")
+        expect(page.locator("#modalBody")).to_contain_text("Lunchbox")
         expect(page.locator("#modalBody")).to_contain_text("Formula")
         shot("01_overview_how_we_got_this")
         page.locator("[data-close-modal]").click()
