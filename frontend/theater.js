@@ -708,7 +708,7 @@
             const r = await fetch(`${S.api}/api/me`, { headers: { Authorization: `Bearer ${tk}` }, cache: 'no-store' });
             if (!r.ok) return;
             const me = await r.json(), u = me.user || me;
-            const org = u.org || 'Ringtide Bagels', name = u.name || u.username || 'Preet';
+            const org = u.org || "Noah's Bagels", name = u.name || u.username || 'Preet';
             $('orgName').textContent = org;
             $('orgLogo').textContent = org.replace(/['’]s\b/g, '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
             $('actorBadge').textContent = name.slice(0, 1).toUpperCase(); $('actorBadge').title = name;

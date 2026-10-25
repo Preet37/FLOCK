@@ -2045,7 +2045,7 @@ function setUser(user) {
     settings.user = user || null;
     settings.actor = user?.name || user?.username || 'Preet';
     renderActor();
-    const org = String(user?.org || 'Ringtide Bagels').replace(/\s*\(simulated\)\s*/i, '').trim() || 'Ringtide Bagels';
+    const org = String(user?.org || "Noah's Bagels").replace(/\s*\(simulated\)\s*/i, '').trim() || "Noah's Bagels";
     $('orgName').textContent = org;
     $('orgLogo').textContent = org.replace(/['’]s\b/g, '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
     if (route().name === 'overview') setWelcome();

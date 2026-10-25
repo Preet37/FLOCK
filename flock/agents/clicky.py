@@ -308,7 +308,7 @@ def _notify_filed(store: Store, f: dict[str, Any], ref: str) -> None:
                 f"Claim reference: {ref}\nAmount: ${amount:,.2f}\nCheck: {f.get('check_type') or f.get('trap_type') or '-'}\n"
                 f"Finding: {f['finding_id']}\nPayout: {f.get('payout_id') or '-'}\n\n"
                 f"A person approved this claim before it was filed; every step is in the audit log.\n"
-                f"Simulated data (Ringtide Bagels demo).")
+                f"Simulated data (Noah's Bagels demo).")
         mailer.send(to, f"Claim filed: ${amount:,.2f} {channel} ({ref})", body, state_dir=store.dir,
                     meta={"finding_id": f["finding_id"], "claim_ref": ref, "kind": "filing_notice"})
     except Exception:

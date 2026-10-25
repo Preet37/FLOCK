@@ -324,7 +324,8 @@ def live(seed: int | None = None, stores: int | None = None, month: str | None =
     shutil.copy(ROOT / "mappings.json", mappings)
     runs_path = pipeline.runs_default(store)
     t0 = time.monotonic()
-    market.reset(store, f"live run: fresh judge balances for {month_name(month)}, seed {seed}")
+    # no market reset: judge wallets carry over from the month before, so a live run moves the balances judges
+    # already earned (the track record is the point of the market)
     rec = run_month(ws, month, "demo_month", None, seed, stores, store, rules_path, portal, mappings, runs_path,
                     demo_approve=False, forget=False, quiet=quiet, period=f"{month_name(month)} (live, seed {seed})")
     rec["filed"] = []
