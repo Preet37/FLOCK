@@ -127,6 +127,14 @@ TOKEN = os.environ.get("FLOCK_API_TOKEN", "")
 CORS_ORIGIN = os.environ.get("FLOCK_CORS_ORIGIN", "*")
 MAX_STORES = int(os.environ.get("FLOCK_HOSTED_MAX_STORES", "56"))   # caps for POST /api/run {"dataset": "demo"}
 MAX_WEEKS = int(os.environ.get("FLOCK_HOSTED_MAX_WEEKS", "8"))
+def demo_user() -> dict[str, Any] | None:
+    """The user named by FLOCK_DEMO_USER, so the hosted demo needs no sign-in (every visitor acts as them)."""
+    name = os.environ.get("FLOCK_DEMO_USER", "").strip()
+    if not (name and auth):
+        return None
+    return next((auth.public(u) for u in auth.users() if u.get("username") == name), None)
+
+
 LIVE_JUDGE_BUDGET = int(os.environ.get("FLOCK_LIVE_RUN_JUDGE_BUDGET", "6"))   # live models on a live run's riskiest N
 BENCHMARKS_JSON = ROOT / "docs" / "gx10_results.json"
 SSE_POLL, SSE_HEARTBEAT, SSE_MAX = 0.5, 15.0, 600.0   # seconds, for GET /api/stream/sse
@@ -1027,7 +1035,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
                 return None
             if parts == ["api", "me"]:
-                u = auth.user_for(self._bearer(), a.dir) if auth else None
+                u = (auth.user_for(self._bearer(), a.dir) if auth else None) or demo_user()
                 return self._send(200, {"user": u}) if u else self._send(401, {"error": "not logged in"})
             if parts == ["api", "connectors"]:
                 from flock import connectors
@@ -1153,8 +1161,10 @@ class Handler(BaseHTTPRequestHandler):
         return hmac.compare_digest(got, f"Bearer {TOKEN}".encode())   # constant time
 
     def _session(self) -> dict[str, Any] | None:
-        """The logged-in user behind the bearer token (flock/auth.py), or None."""
-        return auth.user_for(self._bearer(), self.api.dir) if auth else None
+        """The logged-in user behind the bearer token (flock/auth.py), or None. With FLOCK_DEMO_USER set (a username
+        from the users list), a request without a session acts as that user: no sign-in page for the demo."""
+        u = auth.user_for(self._bearer(), self.api.dir) if auth else None
+        return u or demo_user()
 
     def do_POST(self) -> None:  # noqa: N802
         self._t0 = time.monotonic()

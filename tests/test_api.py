@@ -662,3 +662,13 @@ def test_an_agent_cannot_approve_and_the_refusal_comes_back(server):
     assert a.store.get(fid)["state"] == "JUDGED"
     code, out = client.post(f"/api/findings/{fid}/approve", {"actor": "maja", "reason": "checks out"})
     assert code == 200 and out["finding"]["state"] in ("APPROVED", "FILED")
+
+
+def test_demo_user_needs_no_sign_in(monkeypatch):
+    """FLOCK_DEMO_USER: a request without a session acts as that user (the hosted demo has no sign-in page)."""
+    from flock import api as api_mod
+    monkeypatch.setenv("FLOCK_DEMO_USER", "preetkaria37@gmail.com")
+    u = api_mod.demo_user()
+    assert u and u["role"] == "owner" and u["name"] == "Preet Karia"
+    monkeypatch.delenv("FLOCK_DEMO_USER")
+    assert api_mod.demo_user() is None
