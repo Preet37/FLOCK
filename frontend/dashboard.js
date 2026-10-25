@@ -139,7 +139,7 @@ function setOnline(ok, msg) {
     if (state.online === ok && !msg) return;
     state.online = ok;
     $('liveStatus').innerHTML = ok
-        ? '<span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot"></span> Live'
+        ? '<span class="w-2 h-2 rounded-full bg-purpleAccent pulse-dot"></span> Live'
         : `<span class="w-2 h-2 rounded-full bg-red-500"></span> ${esc(msg || 'Offline')}`;
 }
 
@@ -167,7 +167,7 @@ async function pollSlow() {
         const r = route();
         if (findings && changed('findings', findings)) { state.findings = findings; if (r.name === 'overview') renderFindings(); }
         if (changed('approvals', { approvals, n: state.findings.length })) { state.approvals = approvals; renderQueueCount(); if (r.name === 'overview') renderApprovals(); }
-        if (changed('metrics', { metrics, score })) { state.metrics = metrics; state.score = score; if (r.name === 'overview') { renderMetrics(); renderCurve('curve'); } if (r.name === 'scoreboard') renderScoreboard(); }
+        if (changed('metrics', { metrics, score })) { state.metrics = metrics; state.score = score; if (r.name === 'overview') { renderMetrics(); renderHours(); } if (r.name === 'scoreboard') renderScoreboard(); }
         if (payouts && changed('payouts', payouts)) { state.payouts = payouts; if (r.name === 'lumpsums') renderLumpSums(); }
         if (changed('showtime', showtime)) { state.showtime = showtime && showtime.json ? showtime.json : null; renderBanner(); }
         if (market && changed('market', market)) { state.market = market; if (r.name === 'scoreboard') renderScoreboard(); }
@@ -211,7 +211,7 @@ const STATE_PILL = {
     RECOVERED: 'bg-limeAccent text-black',
 };
 const PAY_STATUS = {
-    matched: ['bg-emerald-100 text-emerald-800', 'matched'], owed: ['bg-red-100 text-red-700', 'owed'],
+    matched: ['bg-emerald-100 text-emerald-800', 'matched'], owed: ['bg-red-100 text-red-700', 'underpaid'],
     short_deposit: ['bg-amber-100 text-amber-800', 'short deposit'], missing_deposit: ['bg-red-100 text-red-700', 'missing deposit'],
     needs_review: ['bg-purpleAccent/10 text-purpleAccent', 'needs review'], recovered: ['bg-limeAccent text-black', 'recovered'],
 };
@@ -244,7 +244,7 @@ function statCard({ label: l, value, sub, icon, dark, how, cls = '' }) {
     return `<div class="${dark ? 'bg-cardDark text-white shadow-md' : 'bg-white text-gray-900 card-shadow border border-gray-100'} p-4 sm:p-5 rounded-3xl flex flex-col justify-between gap-2 min-w-0 ${cls}">
         <div class="flex items-center justify-between">
             <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-full ${dark ? 'bg-limeAccent text-black' : 'bg-gray-100 text-gray-800'} flex items-center justify-center shrink-0"><i data-lucide="${icon || 'circle'}" class="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]"></i></div>
-            ${how ? `<button data-how="${esc(how)}" class="text-[11px] font-bold ${dark ? 'text-gray-400 hover:text-white' : 'text-gray-400 hover:text-gray-800'} flex items-center gap-1"><i data-lucide="info" class="w-3.5 h-3.5"></i> How we got this</button>` : ''}
+            ${how ? `<button data-how="${esc(how)}" title="How we got this" aria-label="How we got this" class="w-8 h-8 rounded-full ${dark ? 'text-gray-400 hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-gray-800 hover:bg-gray-100'} flex items-center justify-center"><i data-lucide="more-vertical" class="w-4 h-4"></i></button>` : ''}
         </div>
         <div class="min-w-0">
             <p class="${dark ? 'text-gray-400' : 'text-gray-500'} text-xs font-medium mb-0.5">${esc(l)}</p>
@@ -254,7 +254,7 @@ function statCard({ label: l, value, sub, icon, dark, how, cls = '' }) {
 }
 function filterPills(options, current, attr) {
     return `<div class="flex items-center gap-1.5 flex-wrap">${options.map(([key, text, n]) => `
-        <button ${attr}="${esc(key)}" class="px-3 py-1.5 text-xs font-semibold rounded-full transition ${current === key ? 'bg-black text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">${esc(text)}${n != null ? ` <span class="text-[10px] ml-0.5 opacity-80">${n}</span>` : ''}</button>`).join('')}</div>`;
+        <button ${attr}="${esc(key)}" class="px-3 py-1.5 text-xs font-semibold rounded-full transition ${current === key ? 'bg-purpleAccent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">${esc(text)}${n != null ? ` <span class="text-[10px] ml-0.5 opacity-80">${n}</span>` : ''}</button>`).join('')}</div>`;
 }
 const empty = (msg, icon = 'hourglass') => `<div class="py-10 text-center text-gray-400 text-sm"><i data-lucide="${icon}" class="w-5 h-5 mx-auto mb-2"></i>${msg}</div>`;
 
@@ -269,9 +269,9 @@ function route() {
 }
 
 const TITLES = {
-    overview: ['Overview', 'What the deals say vs what was paid, live'],
-    lumpsums: ['Lump sums', 'Every deposit that hit the bank, broken down line by line'],
-    payout: ['Lump sum', 'Gross → each deduction (statement vs contract) → expected net → deposit → shortfall'],
+    overview: ['Welcome back!', 'Dashboard'],
+    lumpsums: ['Lump sums', 'Do the apps owe you money?'],
+    payout: ['Lump sum', 'What it should have been vs what arrived'],
     theater: ['Judge theater', 'Judges vote, bet and debate; people decide; Clicky files'],
     sources: ['Sources / Inbox', 'Slack and email batches the connectors brought in, judged against the contracts'],
     scoreboard: ['Scoreboard', 'Answer key, learning curve and the judge market'],
@@ -295,6 +295,7 @@ function renderView(r) {
     const [t, s] = TITLES[r.name] || TITLES.overview;
     $('pageTitle').textContent = r.name === 'payout' && r.id ? `Lump sum ${r.id}` : t;
     $('pageSub').textContent = s;
+    if (r.name === 'overview') setWelcome();
     document.querySelectorAll('.nav-btn').forEach((b) => {
         const on = b.dataset.nav === (r.name === 'payout' ? 'lumpsums' : r.name);
         b.classList.toggle('text-purpleAccent', on);
@@ -317,28 +318,23 @@ function renderView(r) {
 
 /* ---------------- showtime banner ---------------- */
 
+function setWelcome() {
+    const first = String(settings.actor || '').trim().split(/\s+/)[0] || 'there';
+    $('pageTitle').textContent = `Welcome back, ${first}!`;
+    $('pageSub').textContent = 'Dashboard';
+}
+
 function renderBanner() {
     const el = $('showtimeBanner');
     const st = state.showtime;
     const r = route();
-    if (!st || !st.lump_sum || !['overview', 'lumpsums'].includes(r.name)) { el.classList.add('hidden'); el.innerHTML = ''; state.cache.bannerHtml = null; return; }
+    if (!st || !st.lump_sum || r.name !== 'lumpsums') { el.classList.add('hidden'); el.innerHTML = ''; state.cache.bannerHtml = null; return; }
     const ls = st.lump_sum, h = st.headline || {};
     el.classList.remove('hidden');
     const html = `
-        <div class="bg-cardDark text-white rounded-3xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-md">
-            <div class="flex items-center gap-3 min-w-0">
-                <div class="w-10 h-10 rounded-full bg-limeAccent text-black flex items-center justify-center shrink-0"><i data-lucide="landmark" class="w-5 h-5 stroke-[2.5]"></i></div>
-                <div class="min-w-0">
-                    <p class="text-[11px] font-bold uppercase tracking-wider text-limeAccent">${esc(st.company || 'This month')} · ${esc(st.month_name || '')}</p>
-                    <p class="text-sm sm:text-base font-bold leading-snug">This month's lump sum: ${esc(ls.platform || chanName(ls.channel))} <span class="font-mono">${esc(ls.payout_id)}</span>
-                        short <span class="text-limeAccent tabular-nums">${money(ls.short)}</span>
-                        <span class="text-gray-400 font-medium">· ${num(ls.orders)} orders from ${num(ls.stores)} stores, one deposit of ${money(ls.arrived)}</span></p>
-                </div>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-                <a href="#/payout/${encodeURIComponent(ls.payout_id)}" data-test="banner-payout" class="rounded-2xl bg-limeAccent hover:bg-limeAccentHover text-black font-bold text-sm px-4 py-2.5 flex items-center gap-1.5">Open the lump sum <i data-lucide="arrow-right" class="w-4 h-4"></i></a>
-                ${h.finding_id ? `<a href="#/finding/${encodeURIComponent(h.finding_id)}" class="rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold text-sm px-4 py-2.5">Headline ${esc(h.finding_id)}</a>` : ''}
-            </div>
+        <div class="bg-cardDark text-white rounded-3xl px-4 sm:px-5 py-3 flex items-center justify-between gap-3 shadow-md">
+            <p class="text-sm sm:text-base font-bold truncate">${esc(st.month_name || 'This month')}: ${esc(ls.platform || chanName(ls.channel))} paid <span class="text-limeAccent tabular-nums">${money(ls.short)}</span> less than it should have</p>
+            <a href="#/payout/${encodeURIComponent(ls.payout_id)}" data-test="banner-payout" class="rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm px-4 py-2 flex items-center gap-1.5 shrink-0">Open <i data-lucide="arrow-right" class="w-4 h-4"></i></a>
         </div>`;
     if (changed('bannerHtml', html)) { el.innerHTML = html; icons(); }
 }
@@ -350,26 +346,28 @@ function renderOverviewShell() {
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 min-h-0 min-w-0">
             <div class="lg:col-span-8 flex flex-col gap-4 lg:gap-5 min-h-0 min-w-0">
                 <div id="approvals" class="shrink-0"></div>
-                <div id="metrics" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 lg:gap-4 shrink-0"></div>
+                <div id="metrics" class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 lg:gap-4 shrink-0"></div>
                 <div class="bg-white p-4 sm:p-5 rounded-3xl card-shadow border border-gray-100 flex flex-col shrink-0">
-                    <div class="flex items-center justify-between shrink-0 mb-1">
-                        <div><h3 class="font-bold text-gray-900 text-sm sm:text-base">Hand-offs to a human, month over month</h3>
-                        <p class="text-[11px] text-gray-400 font-medium">Lime: settled by learned rules · purple: sent to a human (from /api/score run history)</p></div>
-                        <a href="#/scoreboard" class="flex items-center gap-1 text-xs font-semibold text-gray-600 bg-gray-50 px-2.5 py-1 rounded-full hover:bg-gray-100 border border-gray-100">Scoreboard <i data-lucide="chevron-right" class="w-3 h-3 text-gray-400"></i></a>
+                    <div class="flex items-center justify-between shrink-0 mb-1 gap-3">
+                        <h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">Hours</h3>
+                        <div class="flex items-center gap-3">
+                            <span class="hidden sm:flex items-center gap-1.5 text-[11px] font-semibold text-gray-500"><span class="w-2.5 h-2.5 rounded-full bg-limeAccent"></span>Agent</span>
+                            <span class="hidden sm:flex items-center gap-1.5 text-[11px] font-semibold text-gray-500"><span class="w-2.5 h-2.5 rounded-full bg-purpleAccent"></span>Human</span>
+                            <select id="hoursYear" class="text-xs font-semibold text-gray-600 bg-gray-50 px-2.5 py-1 rounded-full border border-gray-100 focus:outline-none"></select>
+                        </div>
                     </div>
-                    <div id="curve" class="h-36"></div>
+                    <div id="hours" class="h-40"></div>
                 </div>
                 <div class="bg-white p-5 sm:p-6 rounded-3xl card-shadow border border-gray-100 flex flex-col min-h-0 min-w-0">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between shrink-0 mb-4 gap-3">
-                        <div><h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">Discrepancies</h3>
-                        <p class="text-xs text-gray-400 mt-0.5 font-medium">What the deal says vs what was paid. Click a row for the case file.</p></div>
+                        <h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">Discrepancies</h3>
                         <div id="findingFilters"></div>
                     </div>
                     <div class="flex flex-col min-h-0 overflow-x-auto">
                         <div class="min-w-[640px]">
                             <div class="grid grid-cols-12 px-3 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
                                 <div class="col-span-2">ID</div><div class="col-span-3">App</div><div class="col-span-2">Check</div>
-                                <div class="col-span-2 text-right">Expected</div><div class="col-span-2 text-right">Actual</div><div class="col-span-1 text-right">Gap</div>
+                                <div class="col-span-1 text-right">Expected</div><div class="col-span-1 text-right">Actual</div><div class="col-span-1 text-right">Gap</div><div class="col-span-2 text-right">Status</div>
                             </div>
                             <div id="findingRows" class="overflow-y-auto custom-scroll pr-1 flex flex-col max-h-96 min-h-0 divide-y divide-gray-50"></div>
                         </div>
@@ -382,7 +380,7 @@ function renderOverviewShell() {
                         <div><h3 class="text-lg font-bold tracking-tight">Audit Log</h3><p id="logCount" class="text-xs text-gray-400 font-medium"></p></div>
                     </div>
                     <div class="relative w-full shrink-0 bg-[#2B3048] border border-navy-2 rounded-3xl p-3 sm:p-4 shadow-xl">
-                        <div id="logList" class="flex flex-col gap-2.5 max-h-[26rem] overflow-y-auto pr-1 text-xs dark-scroll"></div>
+                        <div id="logList" class="flex flex-col gap-1.5 max-h-[26rem] overflow-y-auto pr-1 text-xs dark-scroll"></div>
                     </div>
                 </div>
                 <div class="shrink-0">
@@ -394,7 +392,7 @@ function renderOverviewShell() {
             </div>
         </div>`;
     state.cache.agentHtml = null;
-    renderApprovals(); renderMetrics(); renderCurve('curve'); renderFindings(); renderLog(); renderAgents();
+    renderApprovals(); renderMetrics(); renderHours(); renderFindings(); renderLog(); renderAgents();
 }
 
 /* ----- metric cards (GET /api/metrics, formula + inputs + labels behind "How we got this") ----- */
@@ -426,33 +424,23 @@ function metricCards(m) {
     const cards = m && Array.isArray(m.cards) ? m.cards : [];
     const by = Object.fromEntries(cards.map((c) => [c.id, c]));
     const out = [];
-    const t = by.agent_time, a = by.accuracy, c = by.cost, s = by.money_saved;
-    if (t) {
-        const v = t.value || {}, i = t.inputs || {};
-        const agent = v.agent_display || duration(i.agent_seconds ?? (v.agent_hours != null ? v.agent_hours * 3600 : null));
-        const human = v.human_display || duration(v.human_hours != null ? v.human_hours * 3600 : null);
-        out.push({ id: 'agent_time', label: 'Agent time vs a person', icon: 'timer', dark: true,
-            value: `${esc(agent)} <span class="text-gray-400 text-base font-bold">vs ~${esc(human)}</span>`,
-            sub: `${v.multiple ? `${num(v.multiple)}× faster · ` : ''}${num(i.store_weeks)} store-weeks${i.minutes_per_store_week ? ` at ~${num(i.minutes_per_store_week)} min each by hand` : ''}` });
-    }
-    if (a) {
-        const v = a.value || {};
-        out.push({ id: 'accuracy', label: 'Accuracy (answer key)', icon: 'target', value: pct(v.accuracy),
-            sub: `${num(v.caught)}/${num(v.total)} caught · ${num(v.false_alarms)} false alarms` });
+    const a = by.accuracy, c = by.cost, s = by.money_saved;
+    if (s) {
+        const v = s.value || {};
+        const yr = v.annualized ?? v.annualized_projection;
+        out.push({ id: 'money_saved', label: 'Total Saved', icon: 'wallet', dark: true, value: money(v.monthly ?? v.usd),
+            sub: yr != null ? `≈ ${money(yr).replace(/\.\d\d$/, '')} / year` : '' });
     }
     if (c) {
         const v = c.value || {};
         const est = v.usd != null ? null : (v.usd_estimate != null ? { usd: v.usd_estimate } : tokenEstimate(c.inputs));
         const usd = v.usd != null ? v.usd : est?.usd;
         const fmt = (n) => n === 0 ? '$0' : n != null && n < 1 ? `$${Number(n).toFixed(3)}` : money(n);
-        out.push({ id: 'cost', label: 'Agent cost', icon: 'dollar-sign', value: fmt(usd),
-            sub: `${num(v.model_calls)} model calls${est ? ' · estimated from tokens' : ''}${v.usd_per_1000_findings != null ? ` · ${money(v.usd_per_1000_findings)}/1k findings` : ''}` });
+        out.push({ id: 'cost', label: 'Agent Cost', icon: 'cpu', value: fmt(usd), sub: est ? 'estimated from tokens' : '' });
     }
-    if (s) {
-        const v = s.value || {};
-        const yr = v.annualized ?? v.annualized_projection;
-        out.push({ id: 'money_saved', label: 'Money found this month', icon: 'wallet', value: money(v.monthly ?? v.usd),
-            sub: `${yr != null ? `${money(yr)} a year at this rate · ` : ''}filed ${money(v.filed)} · waiting on you ${money(v.pending)}` });
+    if (a) {
+        const v = a.value || {};
+        out.push({ id: 'accuracy', label: 'Accuracy', icon: 'target', value: pct(v.accuracy), sub: `${num(v.caught)}/${num(v.total)} caught` });
     }
     return out;
 }
@@ -468,7 +456,7 @@ function renderMetrics() {
             statCard({ label: 'Recovered', value: money(s.recovered), sub: 'recoverable gaps found', icon: 'wallet' }),
             statCard({ label: 'Sent to a human', value: num(s.to_human), sub: 'judges disagreed', icon: 'user' }),
             statCard({ label: 'False alarms', value: num(s.false_alarms), sub: 'flagged but correct', icon: 'check' }),
-        ].join('') : `<div class="sm:col-span-2 xl:col-span-4">${whiteCard(empty('Waiting for /api/metrics…'))}</div>`;
+        ].slice(0, 3).join('') : `<div class="sm:col-span-3">${whiteCard(empty('Loading…'))}</div>`;
         return icons();
     }
     el.innerHTML = cards.map((c) => statCard({ ...c, how: c.id })).join('');
@@ -525,6 +513,54 @@ function renderCurve(id, tall = false) {
         </div>`;
     }).join('')}</div>`;
 }
+// Hours per month: agent = measured run time; human = industry estimate per store-week × stores × weeks in the month
+let hoursYear = null;
+function hoursRows() {
+    const runs = state.score?.runs || [];
+    const inputs = (state.metrics?.cards || []).find((c) => c.id === 'agent_time')?.inputs || {};
+    const minPer = inputs.minutes_per_store_week || 60;
+    return runs.map((r, i) => {
+        const m = String(r.source || '').match(/(\d+) stores x (\d+) days/);
+        const stores = r.stores ?? (m ? +m[1] : inputs.stores);
+        const days = r.days ?? (m ? +m[2] : (inputs.weeks || 4) * 7);
+        const last = i === runs.length - 1;
+        let secs = r.seconds ?? r.agent_seconds ?? (last ? inputs.agent_seconds : null);
+        let approx = false;
+        if (secs == null && i > 0) {   // back-to-back runs: time since the previous run finished
+            const d = (new Date(r.at) - new Date(runs[i - 1].at)) / 1000;
+            if (d > 0 && d < 7200) { secs = d; approx = true; }
+        }
+        const year = (String(r.label || r.period || '').match(/\d{4}/) || [String(r.at || '').slice(0, 4)])[0];
+        return { label: r.label || r.period || '', year, agent: secs != null ? secs / 3600 : null, approx,
+            human: stores && days ? stores * (days / 7) * minPer / 60 : null, last };
+    });
+}
+const hrs = (h) => h == null ? '—' : h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${Math.round(h).toLocaleString()} hrs`;
+function renderHours() {
+    const el = $('hours');
+    if (!el) return;
+    const all = hoursRows();
+    const years = [...new Set(all.map((r) => r.year).filter(Boolean))];
+    if (!hoursYear || !years.includes(hoursYear)) hoursYear = years[years.length - 1] || null;
+    $('hoursYear').innerHTML = years.map((y) => `<option ${y === hoursYear ? 'selected' : ''}>${esc(y)}</option>`).join('') || '<option>—</option>';
+    const rows = all.filter((r) => r.year === hoursYear).slice(-12);
+    if (!rows.length) { el.innerHTML = empty('Hours fill in after the first run.', 'bar-chart-3'); return icons(); }
+    const max = Math.max(1, ...rows.map((r) => Math.max(r.human || 0, r.agent || 0)));
+    const H = 110;
+    el.innerHTML = `<div class="h-full flex items-end justify-between px-1 gap-2 pt-7">${rows.map((r, i) => {
+        const last = i === rows.length - 1;
+        const ah = r.agent == null ? 0 : Math.max(6, Math.round(H * r.agent / max)), hh = Math.max(6, Math.round(H * (r.human || 0) / max));
+        return `<div class="flex flex-col items-center gap-1.5 flex-1 relative group min-w-0">
+            <div class="absolute -top-7 left-1/2 -translate-x-1/2 bg-cardDark text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md z-10 whitespace-nowrap ${last ? '' : 'opacity-0 group-hover:opacity-100'} transition-opacity pointer-events-none">Agent: ${r.approx ? '≈' : ''}${hrs(r.agent)} | Human: ${hrs(r.human)}</div>
+            <div class="flex items-end justify-center w-full gap-1.5">
+                <div class="w-full max-w-[30px] rounded-full ${r.agent == null ? 'striped-bar' : 'bg-limeAccent'}" style="height:${ah || 6}px"></div>
+                <div class="w-full max-w-[30px] rounded-full ${last ? 'bg-purpleAccent' : 'hatched-blue'}" style="height:${hh}px"></div>
+            </div>
+            <span class="text-[10px] sm:text-xs ${last ? 'font-bold text-gray-900' : 'font-semibold text-gray-400'} truncate max-w-full">${esc(shortMonth(r.label).split(' ')[0])}</span>
+        </div>`;
+    }).join('')}</div>`;
+}
+
 function shortMonth(s) {
     const m = String(s || '').match(/^([A-Z][a-z]+) (\d{4})$/);
     return m ? `${m[1].slice(0, 3)} ${m[2].slice(2)}` : String(s || '').slice(0, 10);
@@ -532,6 +568,14 @@ function shortMonth(s) {
 
 /* ----- discrepancies (findings) ----- */
 
+// One status pill per row: what it needs, or where it got to
+function rowPill(f) {
+    if (needsHuman(f)) return `<span title="${esc(VERDICT.conflict[1])}">${pill('bg-purpleAccent text-white', 'Needs you')}</span>`;
+    if (['FILED', 'RECOVERED'].includes(f.state)) return pill(STATE_PILL[f.state], f.state === 'FILED' ? 'Filed' : 'Recovered');
+    if (f.state === 'REJECTED') return pill(STATE_PILL.REJECTED, 'Closed');
+    if (f.outcome === 'recoverable') return `<span title="${esc(VERDICT.recoverable[1])}">${pill(OUTCOME.recoverable, 'Claim it')}</span>`;
+    return f.outcome ? pill(OUTCOME[f.outcome] || 'bg-gray-100 text-gray-600', label(f.outcome)) : pill('bg-gray-100 text-gray-600', label(f.state).toLowerCase());
+}
 const needsHuman = (f) => f.needs_human ?? (f.state === 'JUDGED');
 
 // GET /api/approvals when the API has it; otherwise the findings waiting for a person
@@ -578,9 +622,7 @@ function renderApprovals() {
     const total = items.reduce((t, it) => t + (Number(it.gap ?? it.amount) || 0), 0);
     const html = items.length ? `<section data-test="approvals" class="bg-purpleAccent text-white rounded-3xl p-4 sm:p-5 shadow-md">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <div><p class="text-[11px] font-bold uppercase tracking-wider text-limeAccent">Nothing is filed until a person says so</p>
-            <h3 class="text-lg font-extrabold">Needs your approval (${items.length}) <span class="text-white/70 font-bold">· ${money(total)}</span></h3></div>
-            <span class="text-xs text-white/70 font-semibold">Approve → Clicky files it → the vendor gets an email</span></div>
+            <h3 class="text-lg font-extrabold">Needs you (${items.length}) <span class="text-white/70 font-bold">· ${money(total)}</span></h3></div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">${items.slice(0, 4).map((it) => approvalRow(it, true)).join('')}</div>
         ${items.length > 4 ? `<button data-bell class="mt-2 text-xs font-bold text-limeAccent">+${items.length - 4} more</button>` : ''}</section>` : '';
     if (changed('approvalsHtml', html)) { el.innerHTML = html; icons(); }
@@ -592,33 +634,22 @@ function renderFindings() {
     const all = state.findings;
     const count = (fn) => all.filter(fn).length;
     $('findingFilters').innerHTML = filterPills([
-        ['all', 'All', all.length], ['review', 'Needs review', count(needsHuman)],
-        ['recoverable', 'Recoverable', count((f) => f.outcome === 'recoverable')],
-        ['conflict', 'Conflict', count((f) => f.outcome === 'conflict')],
+        ['all', 'All', all.length], ['review', 'Needs you', count(needsHuman)],
+        ['recoverable', 'Claim it', count((f) => f.outcome === 'recoverable')],
         ['filed', 'Filed', count((f) => f.state === 'FILED')],
     ], state.findingFilter, 'data-ffilter');
     const rows = all.filter((f) => state.findingFilter === 'all' ? true : state.findingFilter === 'review' ? needsHuman(f)
         : state.findingFilter === 'filed' ? f.state === 'FILED' : f.outcome === state.findingFilter);
     const headline = state.showtime?.headline?.finding_id;
     el.innerHTML = rows.length ? rows.map((f) => `
-        <div data-finding="${esc(fidOf(f))}" class="grid grid-cols-12 items-center px-3 py-3 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800 ${fidOf(f) === headline ? 'bg-limeAccent/10' : ''}">
-            <div class="col-span-2 min-w-0">
-                <div class="font-mono font-bold text-gray-900 text-xs truncate">${esc(fidOf(f))}</div>
-                <div class="mt-1 flex flex-wrap gap-1">${pill(STATE_PILL[f.state] || 'bg-gray-100 text-gray-600', f.state)}${needsHuman(f) ? pill('bg-purpleAccent text-white', 'you') : ''}</div>
-            </div>
-            <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700 min-w-0">
-                ${chanBadge(f.channel)}
-                <div class="min-w-0"><div class="truncate">${esc(chanName(f.channel))}</div>
-                <div class="text-[11px] text-gray-400 truncate">${esc(f.orders_label || '')}</div></div>
-            </div>
-            <div class="col-span-2 font-normal text-gray-500 lowercase min-w-0">
-                <div class="truncate" title="${esc(checkHelp(f.check_type))}">${esc(label(f.check_type))}</div>
-                ${checkHelp(f.check_type) ? `<div class="text-[10px] normal-case text-gray-400 leading-tight line-clamp-2">${esc(checkHelp(f.check_type).replace(/^[^:]+: /, ''))}</div>` : ''}
-                <div class="mt-1">${verdictPill(f.outcome, f.confidence, ' ')}</div>
-            </div>
-            <div class="col-span-2 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.expected)}</div>
-            <div class="col-span-2 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.actual)}</div>
+        <div data-finding="${esc(fidOf(f))}" class="grid grid-cols-12 items-center px-3 py-3 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800 ${fidOf(f) === headline ? 'bg-purpleAccent/5' : ''}">
+            <div class="col-span-2 font-mono font-bold text-gray-900 text-xs truncate">${esc(fidOf(f))}</div>
+            <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700 min-w-0">${chanBadge(f.channel)}<span class="truncate">${esc(chanName(f.channel))}</span></div>
+            <div class="col-span-2 font-normal text-gray-500 lowercase truncate" title="${esc(checkHelp(f.check_type))}">${esc(label(f.check_type))}</div>
+            <div class="col-span-1 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.expected).replace(/\.\d\d$/, '')}</div>
+            <div class="col-span-1 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.actual).replace(/\.\d\d$/, '')}</div>
             <div class="col-span-1 text-right font-mono font-bold tabular-nums ${f.gap > 0 ? 'text-red-600' : 'text-gray-900'}">${money(f.gap)}</div>
+            <div class="col-span-2 text-right">${rowPill(f)}</div>
         </div>`).join('')
         : `<div class="py-8 text-center text-gray-400 text-sm">No findings ${state.findingFilter === 'all' ? 'yet' : 'in this view'}.</div>`;
 }
@@ -655,6 +686,22 @@ function logRow(e, fresh) {
         </button>`;
 }
 
+function shortAction(e) {
+    const id = e.subject_id || '';
+    const verbs = { file: 'Filed claim', approve: 'Approved', reject: 'Rejected', judge: 'Judged', check: 'Checked', rank: 'Ranked',
+        draft: 'Drafted', send: 'Sent', follow_up: 'Followed up', learn: 'Learned rule', investigate: 'Investigated' };
+    const v = verbs[e.action] || label(e.action).replace(/^./, (c) => c.toUpperCase());
+    return e.allowed === false ? `Refused: ${label(e.action)} ${id}` : `${v} ${id}`;
+}
+function logLine(e, fresh) {
+    const human = e.role === 'human', refused = e.allowed === false;
+    return `<button data-finding="${e.subject_type === 'finding' ? esc(e.subject_id) : ''}" class="w-full text-left flex items-center gap-2.5 px-3 py-2.5 rounded-2xl ${refused ? 'bg-red-500/15' : 'bg-navy-1/70 hover:bg-navy-1'} transition ${fresh ? 'flash' : ''}">
+        <span class="font-bold text-gray-100 text-xs truncate max-w-[34%]">${esc(e.actor)}</span>
+        <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 ${refused ? 'bg-red-500/30 text-red-200' : human ? 'bg-limeAccent/25 text-limeAccent' : 'bg-purpleAccent/40 text-blue-100'}">${refused ? 'refused' : human ? 'human' : 'agent'}</span>
+        <span class="text-[11px] text-gray-300 truncate flex-1 min-w-0">${esc(shortAction(e))}</span>
+        <span class="text-[10px] font-semibold text-gray-500 whitespace-nowrap shrink-0 tabular-nums">${esc(clock(e.at).replace(/:\d\d(\s|$)/, '$1'))}</span></button>`;
+}
+
 function renderLog() {
     const el = $('logList');
     if (!el) return;
@@ -662,8 +709,8 @@ function renderLog() {
     const fresh = state.seenLog ? state.log.length - state.seenLog : 0;
     state.seenLog = state.log.length;
     const refused = state.log.filter((e) => e.allowed === false).length;
-    $('logCount').textContent = `${num(state.log.length)} entries${refused ? ` · ${refused} refused` : ''}`;
-    el.innerHTML = entries.length ? entries.map((e, i) => logRow(e, i < fresh)).join('')
+    $('logCount').textContent = `${num(state.log.length)} entries`;
+    el.innerHTML = entries.length ? entries.map((e, i) => logLine(e, i < fresh)).join('')
         : '<p class="text-gray-500 text-sm text-center py-8">Nothing has happened yet.</p>';
     icons();
 }
@@ -675,10 +722,10 @@ const AGENT_ICON = {
     anomaly: 'activity', investigator: 'search', panel: 'scale', ranker: 'list-ordered', dispute_writer: 'pen-line',
     gatekeeper: 'shield-check', clicky: 'mouse-pointer-click', follow_up: 'mail', journal: 'book-open', learner: 'graduation-cap',
 };
-const AGENT_COLORS = ['bg-red-600', 'bg-orange-600', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-600', 'bg-emerald-600', 'bg-teal-600',
-    'bg-cyan-600', 'bg-sky-600', 'bg-blue-600', 'bg-indigo-600', 'bg-purple-600', 'bg-fuchsia-600', 'bg-pink-600', 'bg-rose-600'];
+const AGENT_COLORS = ['bg-[#012F8A]', 'bg-[#0146A9]', 'bg-[#0159C4]', 'bg-[#017AF0]', 'bg-[#0084FF]', 'bg-[#2EA7FF]', 'bg-[#4A628A]',
+    'bg-[#5890CB]', 'bg-[#60AAEF]', 'bg-[#0146A9]', 'bg-[#017AF0]', 'bg-[#2EA7FF]', 'bg-[#0159C4]', 'bg-[#5890CB]', 'bg-[#012F8A]'];
 
-const STATUS_DOT = { working: 'bg-limeAccent pulse-dot', done: 'bg-emerald-400', error: 'bg-red-500', idle: 'bg-gray-500' };
+const STATUS_DOT = { working: 'bg-limeAccent pulse-dot', done: 'bg-emerald-400', error: 'bg-red-500', idle: 'bg-gray-400' };
 function agentStatus(ag) {
     const st = String(ag.status || ag.state || '').toLowerCase();
     if (['working', 'running', 'active', 'busy'].includes(st)) return 'working';
@@ -704,26 +751,17 @@ function renderAgents() {
     if (!el || !state.agents) return;
     const list = state.agents.agents || [];
     const working = list.filter((a) => agentStatus(a) === 'working').length;
-    $('agentCount').textContent = `${list.length} agents${working ? ` · ${working} working now` : ''} · click one for its activity`;
-    const per = 5;
-    const rows = [];
-    for (let i = 0; i < list.length; i += per) rows.push(list.slice(i, i + per).map((a, j) => [a, i + j]));
-    const html = rows.map((row, ri) => `
-        <div class="grid grid-cols-5 gap-2 relative ${ri % 2 ? 'direction-rtl' : ''}" style="${ri % 2 ? 'direction:rtl' : ''}">
-            ${row.map(([ag, i]) => {
-                const st = agentStatus(ag);
-                const working = st === 'working';
-                return `<button data-agent="${esc(ag.actor)}" style="direction:ltr" class="flex flex-col items-center gap-1 group min-w-0" title="${esc(ag.name)}: ${esc(ag.job || '')}">
-                    <div class="relative w-11 h-11 rounded-2xl ${AGENT_COLORS[i % AGENT_COLORS.length]} ${st === 'idle' ? 'opacity-50' : ''} flex items-center justify-center text-white border-2 ${working ? 'border-limeAccent' : 'border-transparent'} group-hover:border-limeAccent transition shadow-sm">
-                        <i data-lucide="${AGENT_ICON[ag.actor] || 'bot'}" class="w-5 h-5"></i>
-                        <span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ${STATUS_DOT[st] || 'bg-gray-500'}"></span>
-                    </div>
-                    <span class="text-[10px] font-semibold text-gray-300 truncate max-w-full">${esc(ag.name)}</span>
-                    <span class="text-[9px] ${working ? 'text-limeAccent' : 'text-gray-500'} tabular-nums truncate max-w-full">${esc(agentStatusText(ag, st))}</span>
-                    ${ag.actor === 'clicky' && filedFindings().length ? '<span class="text-[9px] font-bold text-orange-300 underline">screens</span>' : ''}
-                </button>`;
-            }).join('')}
-        </div>`).join('<div class="flex justify-center text-limeAccent/70"><i data-lucide="chevrons-down" class="w-4 h-4"></i></div>');
+    $('agentCount').textContent = working ? `${working} working now` : `${list.length} agents`;
+    const html = `<div class="grid grid-cols-5 gap-x-2 gap-y-3">${list.map((ag, i) => {
+        const st = agentStatus(ag);
+        return `<button data-agent="${esc(ag.actor)}" class="flex flex-col items-center gap-1 group min-w-0" title="${esc(ag.name)}: ${esc(agentStatusText(ag, st))}">
+            <div class="relative w-11 h-11 rounded-full ${AGENT_COLORS[i % AGENT_COLORS.length]} flex items-center justify-center text-white border-2 ${st === 'working' ? 'border-limeAccent' : 'border-transparent'} group-hover:border-limeAccent transition shadow-sm">
+                <i data-lucide="bot" class="w-5 h-5"></i>
+                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-cardDark ${STATUS_DOT[st] || 'bg-gray-500'}"></span>
+            </div>
+            <span class="text-[10px] font-semibold text-gray-300 truncate max-w-full">${esc(String(ag.name).split(' ')[0])}</span>
+        </button>`;
+    }).join('')}</div>`;
     if (changed('agentHtml', html)) { el.innerHTML = html; icons(); }
 }
 
@@ -740,23 +778,23 @@ function renderLumpSums() {
     const statusCounts = Object.entries(s.by_status || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${PAY_STATUS[k]?.[1] || label(k)}`).join(' · ');
     el.innerHTML = `
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
-            ${statCard({ label: 'Still owed', value: money(s.owed), sub: `${money(s.open_gaps)} open gaps + ${money(s.deposit_owed)} short deposits`, icon: 'wallet', dark: true })}
-            ${statCard({ label: 'Expected net (per contract)', value: money(s.expected_net), sub: `statements said ${money(s.net)}`, icon: 'file-text' })}
-            ${statCard({ label: 'Deposits received', value: money(s.received), sub: `shortfall ${money(s.shortfall)}`, icon: 'landmark' })}
-            ${statCard({ label: 'Lump sums', value: num(s.payouts), sub: statusCounts || 'none', icon: 'banknote' })}
-            ${statCard({ label: 'In question', value: money(s.in_question), sub: 'conflicts waiting for a human, not counted', icon: 'scale' })}
+            ${statCard({ label: 'Apps owe you', value: money(s.owed), icon: 'wallet', dark: true })}
+            ${statCard({ label: 'Should have been paid', value: money(s.expected_net), icon: 'file-text' })}
+            ${statCard({ label: 'Actually paid', value: money(s.received), icon: 'landmark' })}
+            ${statCard({ label: 'Deposits', value: num(s.payouts), icon: 'banknote' })}
+            ${statCard({ label: 'Needs your call', value: money(s.in_question), icon: 'scale' })}
         </div>
-        ${whiteCard(`${cardHead('Deposits', esc(d.source || ''), `<span class="text-[11px] text-gray-400 font-semibold">expected net = statement net + every gap owed back</span>`)}
+        ${whiteCard(`${cardHead('Deposits')}
             ${rows.length ? `<div class="overflow-x-auto"><div class="min-w-[860px]">
                 <div class="grid grid-cols-12 px-3 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
                     <div class="col-span-1">Paid</div><div class="col-span-2">Platform</div><div class="col-span-2">Payout</div><div class="col-span-1 text-right">Orders</div>
-                    <div class="col-span-2 text-right">Expected net</div><div class="col-span-2 text-right">Received</div><div class="col-span-1 text-right">Short</div><div class="col-span-1 text-right">Status</div>
+                    <div class="col-span-2 text-right">Should have been</div><div class="col-span-2 text-right">Paid</div><div class="col-span-1 text-right">Missing</div><div class="col-span-1 text-right">Status</div>
                 </div>
                 <div class="flex flex-col divide-y divide-gray-50">${rows.map((p) => `
                     <a href="#/payout/${encodeURIComponent(p.payout_id)}" data-payout="${esc(p.payout_id)}" class="grid grid-cols-12 items-center px-3 py-3 hover:bg-gray-50/80 transition text-xs sm:text-sm font-medium text-gray-800 ${p.payout_id === headline ? 'bg-limeAccent/15 ring-1 ring-limeAccent rounded-2xl' : ''}">
                         <div class="col-span-1 text-gray-500 text-xs">${esc((p.deposit_date || p.payout_date || '').slice(5))}</div>
                         <div class="col-span-2 flex items-center gap-2 min-w-0">${chanBadge(p.channel)}<span class="truncate">${esc(p.platform || chanName(p.channel))}</span></div>
-                        <div class="col-span-2 font-mono font-bold text-gray-900 text-xs truncate">${esc(p.payout_id)}<div class="font-normal text-gray-400">${esc(p.deposit_id || 'no deposit')} · ${num(p.stores)} stores</div></div>
+                        <div class="col-span-2 font-mono font-bold text-gray-900 text-xs truncate">${esc(p.payout_id)}</div>
                         <div class="col-span-1 text-right tabular-nums text-gray-500">${num(p.orders)}</div>
                         <div class="col-span-2 text-right font-mono tabular-nums text-gray-700">${money(p.expected_net)}${p.expected_net_computable ? '' : '<span class="text-gray-400" title="a deduction has no deal term behind it">*</span>'}</div>
                         <div class="col-span-2 text-right font-mono tabular-nums text-gray-500">${money(p.received)}</div>
@@ -856,11 +894,11 @@ function renderPayout() {
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 mb-3"><a href="#/lumpsums" class="flex items-center gap-1 hover:text-gray-900"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> Lump sums</a>
             <span>/</span><span class="font-mono">${esc(p.payout_id)}</span> ${payPill(p.status)}</div>
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
-            ${statCard({ label: 'Gross on the statement', value: money(p.gross), sub: `${money(p.deductions_total)} deducted`, icon: 'banknote' })}
-            ${statCard({ label: 'Expected net (per contract)', value: money(p.expected_net), sub: p.expected_net_computable ? 'every line checked against a deal term' : `no deal term for: ${esc((p.not_computable || []).join(', '))}`, icon: 'file-text' })}
-            ${statCard({ label: 'Deposit received', value: money(p.received), sub: esc(p.deposit_id || 'no bank deposit found'), icon: 'landmark' })}
-            ${statCard({ label: 'Shortfall', value: `<span class="${p.shortfall > 0.05 ? 'text-red-600' : ''}">${money(p.shortfall)}</span>`, sub: 'expected net − received', icon: 'triangle-alert' })}
-            ${statCard({ label: 'Still owed', value: money(ob.total), sub: `${money(ob.open_gaps)} open gaps + ${money(ob.deposit_shortfall)} deposit`, icon: 'wallet', dark: true })}
+            ${statCard({ label: 'Sales', value: money(p.gross), icon: 'banknote' })}
+            ${statCard({ label: 'Should have been paid', value: money(p.expected_net), icon: 'file-text' })}
+            ${statCard({ label: 'Actually paid', value: money(p.received), icon: 'landmark' })}
+            ${statCard({ label: 'Missing', value: `<span class="${p.shortfall > 0.05 ? 'text-red-600' : ''}">${money(p.shortfall)}</span>`, icon: 'triangle-alert' })}
+            ${statCard({ label: 'Apps owe you', value: money(ob.total), icon: 'wallet', dark: true })}
         </div>
         ${whiteCard(`${cardHead('Waterfall', 'Gross → each deduction (statement vs contract) → statement net → expected net → deposit → shortfall')}
             <div id="waterfall">${waterfallSvg(steps)}</div>
@@ -875,7 +913,7 @@ function renderPayout() {
                     <td class="py-2 pr-3 text-right font-mono font-bold tabular-nums ${s.gap > 0 || (s.key === 'shortfall' && s.amount > 0.05) ? 'text-red-600' : 'text-gray-300'}">${s.kind === 'deduction' ? (s.gap ? money(s.gap) : '') : s.key === 'shortfall' ? money(s.amount) : ''}</td>
                     <td class="py-2 text-xs text-gray-500">${esc(s.basis || s.note || '')} ${(s.finding_ids || []).map((f) => `<a href="#/finding/${encodeURIComponent(f)}" class="font-mono font-bold text-purpleAccent hover:underline">${esc(f)}</a>`).join(' ')}</td>
                 </tr>`).join('')}</tbody></table></div>
-            <div class="mt-4 rounded-2xl bg-lightCardBg p-3 text-xs text-gray-600"><b class="text-gray-900">Still owed ${money(ob.total)}</b> = ${money(ob.open_gaps)} open recoverable gaps + ${money(ob.deposit_shortfall)} deposit shortfall. ${esc(ob.formula || '')}</div>`, 'mb-4 lg:mb-5')}
+            <div class="mt-4 rounded-2xl bg-lightCardBg p-3 text-xs text-gray-600"><b class="text-gray-900">Apps owe you ${money(ob.total)}</b> = ${money(ob.open_gaps)} open recoverable gaps + ${money(ob.deposit_shortfall)} deposit shortfall. ${esc(ob.formula || '')}</div>`, 'mb-4 lg:mb-5')}
         ${whiteCard(`${cardHead('Findings inside this lump sum', `${(p.findings_detail || []).length} · click one for the case file`)}
             ${(p.findings_detail || []).length ? `<div class="flex flex-col divide-y divide-gray-50">${p.findings_detail.map((f) => `
                 <div data-finding="${esc(f.finding_id)}" class="grid grid-cols-12 items-center gap-2 px-3 py-3 hover:bg-gray-50/80 cursor-pointer text-xs sm:text-sm">
@@ -1091,7 +1129,7 @@ function renderScoreboard() {
             ].join('') : `<div class="sm:col-span-2 xl:col-span-4">${whiteCard(empty('Waiting for /api/score…'))}</div>`}
         </div>
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-5 mb-4 lg:mb-5">
-            ${whiteCard(`${cardHead('Learning curve', 'Hand-offs to a human by month (purple) and findings settled by rules people approved (lime)')}<div id="curveBig" class="h-56"></div>
+            ${whiteCard(`${cardHead('Hand-offs to a human', 'per month')}<div id="curveBig" class="h-56"></div>
                 <div class="mt-3 flex flex-wrap gap-2">${(s?.runs || []).map((r) => `<span class="text-xs font-semibold rounded-full bg-lightCardBg px-3 py-1">${esc(r.label || r.period || '')}: <b>${num(r.to_human)}</b> to a human</span>`).join('')}</div>`)}
             ${whiteCard(`${cardHead('By trap type', 'Every planted mistake, caught or not (simulated answer key)')}
                 <div class="flex flex-col divide-y divide-gray-50 max-h-72 overflow-y-auto custom-scroll">${Object.entries(byType).map(([k, b]) => `
@@ -1235,7 +1273,7 @@ function followUpCard(f, fu) {
     const btn = (step, text, cls, icon) => `<button data-fu="${step}" class="flex-1 rounded-2xl ${cls} font-bold text-sm py-2.5 flex items-center justify-center gap-1.5"><i data-lucide="${icon}" class="w-4 h-4"></i> ${text}</button>`;
     let actions = '';
     if (!fu || st === 'REJECTED') actions = btn('draft', st === 'REJECTED' ? 'Draft a new follow-up' : 'Draft follow-up', 'bg-purpleAccent hover:bg-purpleAccentHover text-white', 'pen-line');
-    else if (st === 'DRAFT') actions = btn('approve', 'Approve', 'bg-limeAccent hover:bg-limeAccentHover text-black', 'check') + btn('reject', 'Reject', 'bg-cardDark hover:bg-black text-white', 'x');
+    else if (st === 'DRAFT') actions = btn('approve', 'Approve', 'bg-purpleAccent hover:bg-purpleAccentHover text-white', 'check') + btn('reject', 'Reject', 'bg-cardDark hover:bg-black text-white', 'x');
     else if (st === 'APPROVED') actions = btn('send', 'Send via Clicky', 'bg-purpleAccent hover:bg-purpleAccentHover text-white', 'send');
     return card(`<span class="flex items-center gap-2"><i data-lucide="mail" class="w-4 h-4 text-purpleAccent"></i> Vendor follow-up ${st ? pill(stCls, st) : ''}</span>`, `
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-3">
@@ -1605,6 +1643,10 @@ function setUser(user) {
     settings.user = user || null;
     settings.actor = user?.name || user?.username || 'Preet';
     renderActor();
+    const org = user?.org || "Noah's Bagels";
+    $('orgName').textContent = org;
+    $('orgLogo').textContent = org.replace(/['’]s\b/g, '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+    if (route().name === 'overview') setWelcome();
 }
 function showLogin(msg = '') {
     $('loginError').textContent = msg;
@@ -1737,6 +1779,7 @@ document.addEventListener('click', (e) => {
     if (fu && state.drawer) return followUp(state.drawer.id, fu.dataset.fu);
     const th = t.closest('[data-th]');
     if (th) return theaterStart(th.dataset.th);
+    if (t.id === 'hoursYear') return;
     const sp = t.closest('[data-speed]');
     if (sp) { theater.speed = Number(sp.dataset.speed); return theaterStart('replay'); }
     if (t.closest('a[href^="#"]')) return;   // plain links route themselves
@@ -1750,6 +1793,7 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeScreen(); toggleBell(false); closeDrawer(); closeSettings(); closeModal(); } });
 window.addEventListener('hashchange', onRoute);
+document.addEventListener('change', (e) => { if (e.target.id === 'hoursYear') { hoursYear = e.target.value; renderHours(); } });
 
 $('loginForm').onsubmit = (e) => { e.preventDefault(); login($('loginUser').value.trim(), $('loginPass').value); };
 $('tokenForm').onsubmit = (e) => { e.preventDefault(); finishToken($('tokenOnce').value.trim() || null); };

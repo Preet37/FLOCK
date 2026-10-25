@@ -67,6 +67,8 @@
             background: repeating-linear-gradient(-45deg, #D2F5FF, #D2F5FF 5px, #EEF8FF 5px, #EEF8FF 10px);
         }
 
+        .hatched-blue { background: repeating-linear-gradient(-45deg, #0084FF, #0084FF 4px, #97E2FF 4px, #97E2FF 8px); }
+
         /* Soft Card Shadows */
         .card-shadow { box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.03); }
 
@@ -109,9 +111,6 @@
             <a href="theater.html" title="Agent theater: agents spawning and earning" aria-label="Agent theater" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
                 <i data-lucide="network" class="w-5 h-5 stroke-[2]"></i>
             </a>
-            <a href="#/theater" data-nav="theater" title="Judge theater" aria-label="Judge theater" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
-                <i data-lucide="clapperboard" class="w-5 h-5 stroke-[2]"></i>
-            </a>
             <a href="#/sources" data-nav="sources" title="Sources / Inbox" aria-label="Sources" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
                 <i data-lucide="inbox" class="w-5 h-5 stroke-[2]"></i>
             </a>
@@ -135,7 +134,6 @@
         <a href="#/" data-nav="overview" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Overview"><i data-lucide="house" class="w-6 h-6"></i></a>
         <a href="#/lumpsums" data-nav="lumpsums" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Lump sums"><i data-lucide="landmark" class="w-6 h-6"></i></a>
         <a href="theater.html" class="p-2 hover:text-white rounded-xl" aria-label="Agent theater"><i data-lucide="network" class="w-6 h-6"></i></a>
-        <a href="#/theater" data-nav="theater" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Judge theater"><i data-lucide="clapperboard" class="w-6 h-6"></i></a>
         <a href="#/sources" data-nav="sources" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Sources"><i data-lucide="inbox" class="w-6 h-6"></i></a>
         <a href="#/scoreboard" data-nav="scoreboard" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Scoreboard"><i data-lucide="trophy" class="w-6 h-6"></i></a>
         <a href="#/benchmarks" data-nav="benchmarks" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Benchmarks"><i data-lucide="flask-conical" class="w-6 h-6"></i></a>
@@ -173,6 +171,10 @@
                         <span id="queueCount" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-purpleAccent text-white text-[10px] font-extrabold flex items-center justify-center"></span>
                     </button>
                     <div id="bellPanel" class="hidden absolute right-0 top-12 z-[55] w-[min(92vw,380px)] bg-white rounded-3xl shadow-2xl border border-gray-100 p-3"></div>
+                </div>
+                <div id="orgPill" class="hidden md:flex items-center gap-2 bg-white rounded-full pl-1 pr-3.5 h-10 border border-gray-200/50 shadow-sm">
+                    <span id="orgLogo" class="w-8 h-8 rounded-full bg-cardDark text-white text-[11px] font-extrabold flex items-center justify-center">NB</span>
+                    <span id="orgName" class="text-sm font-bold text-gray-800 whitespace-nowrap">Noah's Bagels</span>
                 </div>
                 <button data-user-menu id="actorBadge" class="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-white shadow-sm shrink-0 hover:ring-2 hover:ring-purpleAccent/50 transition bg-purpleAccent text-white text-xs font-extrabold flex items-center justify-center" aria-label="Account" title="Account">
                     <i data-lucide="key-round" class="w-4 h-4"></i>
