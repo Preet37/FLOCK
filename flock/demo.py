@@ -4,6 +4,7 @@
   python -m flock.demo --seed 4821 --profile ca_bagel_chain --weeks 1
   python -m flock.demo --seed 4821 --keep                            # leave the run on the dashboard afterwards
   python -m flock.demo --seed 4821 --confirm                         # accept the unseen layout without asking
+  python -m flock.demo --seed 4821 --sources email,slack,notes --confirm   # deal changes in .eml, Slack, notes
 
 What it does, in order (one progress bar the whole way, also on the dashboard's live board):
   1. generate   generator/generate.py into a temp folder (never generator/out, never data/answer_key.csv)
@@ -77,8 +78,10 @@ class Snapshot:
 def run_demo(seed: int, profile: str = generator.DEFAULT_PROFILE, weeks: int = 2, days: int | None = None,
              stores: int | None = None, trap_rate: float | None = None, keep: bool = False, confirm: bool = False,
              forget: bool = False, approve: bool = True, pace: float = 0.0, store: Store | None = None,
-             portal: Path | None = None, workdir: Path | None = None, interactive: bool = True) -> dict[str, Any]:
+             portal: Path | None = None, workdir: Path | None = None, interactive: bool = True,
+             sources: list[str] | str | None = None) -> dict[str, Any]:
     """Generate -> collect -> pipeline -> score on a fresh seed; restore the previous demo state unless keep.
+    sources: deal-source formats for the generator (None = the profile's; see generate.py --sources).
     store / portal default to the real ones (data/state, sandbox portal); tests pass temp ones."""
     store = store or get_store()
     state_dir = Path(getattr(store, "dir", STATE_DIR))
@@ -103,7 +106,7 @@ def run_demo(seed: int, profile: str = generator.DEFAULT_PROFILE, weeks: int = 2
     print(f"== {label} ==", flush=True)
     print(f"   {prof['description']}", flush=True)
     try:
-        world = generator.generate(seed, n_stores, days, None, out, prof, trap_rate, progress)
+        world = generator.generate(seed, n_stores, days, None, out, prof, trap_rate, progress, sources)
         planted = sorted({r["trap_no"] for r in world["key"]})
         print(f"generated {len(world['orders']):,} orders, {len(world['deposits'])} bank deposits, "
               f"{len(world['emails'])} emails; {len(world['key'])} answer key rows covering traps {planted}")
@@ -146,9 +149,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--no-approve", action="store_true", help="leave conflicts and drafts for a human on the dashboard")
     ap.add_argument("--pace", type=float, default=0.0, help="seconds per move, so the live board visibly ticks")
     ap.add_argument("--workdir", help="keep the generated files here instead of a temp folder")
+    ap.add_argument("--sources", default=None,
+                    help="deal-source formats: json,email,slack,notes (default: the profile's)")
     a = ap.parse_args(argv)
     r = run_demo(a.seed, a.profile, a.weeks, a.days, a.stores, a.trap_rate, keep=a.keep, confirm=a.confirm,
-                 forget=a.forget, approve=not a.no_approve, pace=a.pace,
+                 forget=a.forget, approve=not a.no_approve, pace=a.pace, sources=a.sources,
                  workdir=Path(a.workdir) if a.workdir else None)
     sys.exit(0 if r["total"] else 1)
 

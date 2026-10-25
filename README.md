@@ -204,6 +204,17 @@ python generator/generate.py --profile ca_bagel_chain --weeks 52   # another (si
 - `data/std/` gets `orders.csv`, `payout_lines.csv`, `bank_deposits.csv` (CONTRACT.md columns; payout lines add `promo_total, promo_code, placed_at`), plus `error_charges.csv`, `refunds.csv`, `payout_summaries.csv`, `duplicates_removed.csv`.
 - Column maps live in `mappings.json`. Unknown layouts get a proposed mapping (Claude, or a header-name heuristic offline) that a human confirms once; then it's saved and automatic. Run with `--mappings /tmp/m.json` if you want to rehearse the demo moment without touching the committed file.
 - `data/raw/` and `data/std/` are gitignored. To get back to a fixtures-only Quickstart: `rm -rf data/raw/*/ data/raw/manifest.csv data/std/*.csv`.
+- **Deal changes scattered across email, Slack and calls** (`--sources email,slack,notes`, on by default for
+  `ca_bagel_chain`; the default profile stays JSON-only and byte-identical): emails as `.eml` (with a quoted reply
+  chain), a real-layout Slack export in `slack/` (shared `#<platform>-partnership` channels with the platform's reps,
+  `#ops-promos`, threads, edits, reactions, noise), meeting notes in `notes/*.md`, and contracts that list
+  `authorized_contacts` (emails and `@handles`). The Deal Keeper reads all of them with one authority rule: the sender
+  is matched against that list (on it = binding; same company, not on it = conflict; unknown = conflict). Every claim
+  keeps an exact quote (asserted verbatim) and a locator (Slack `ts`, email/note line); in a thread the latest binding
+  message wins. Traps 19-22 live only in Slack: an authorized waiver (recoverable), an unauthorized promise (conflict),
+  and a thread whose second message moves the waiver (new day recoverable, retracted day correct). Outside connectors
+  (a CREAO agent watching Slack/Gmail) hand off through a drop folder: [`docs/connectors.md`](docs/connectors.md),
+  `python -m flock.connectors ingest`. `python -m flock.demo --seed 4821 --sources email,slack,notes --confirm`.
 
 ## Anomaly Detector (learned, not written)
 

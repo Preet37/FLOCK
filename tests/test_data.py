@@ -9,7 +9,7 @@ import pytest
 
 from flock.agents import collector, formatter
 from flock.store import ROOT
-from generator.generate import TRAPS, generate
+from generator.generate import SOURCE_TRAPS, TRAPS, generate
 
 
 def read(path):
@@ -59,7 +59,7 @@ def test_mini_milestone(tmp_path):
 
 def test_every_trap_planted_and_key_format(world):
     assert header(world["out"] / "answer_key.csv") == header(ROOT / "data" / "answer_key.csv")
-    assert {r["trap_type"] for r in world["key"]} == {t for t, _ in TRAPS.values()}
+    assert {r["trap_type"] for r in world["key"]} == {t for no, (t, _) in TRAPS.items() if no not in SOURCE_TRAPS}
     for r in world["key"]:
         assert r["expected_outcome"] in ("correct", "recoverable", "conflict")
         float(r["amount"])
