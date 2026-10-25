@@ -13,12 +13,15 @@
 #   scripts/gx10.sh pull large
 #   scripts/gx10.sh log                 # last lines of the GX10's ~/flock-pulls.log
 #
+#   env --hybrid  judges on the GX10, reviewer/writer/mapper/reader on CREAO (needs CREAO_API_KEY)
 # Presets:  small = qwen3:8b gemma3:12b llama3.1:8b      large = gpt-oss:20b qwen3:30b gemma3:27b      all = both
 #
 # Env knobs (defaults in brackets):
 #   GX10_HOST [gx10]  ssh host / alias (~/.ssh/config)     GX10_PORT [11435]  laptop port for the tunnel
 #   GX10_REMOTE_PORT [11434]  Ollama's port on the GX10    GX10_RETRY [3]     seconds between reconnects
-#   GX10_JUDGE_MODELS [gpt-oss:20b,qwen3:30b,gemma3:27b]  one per judge (strict, operator, skeptic)
+#   GX10_JUDGE_MODELS [flock-judge-v1 x3]  one per judge (strict, operator, skeptic). Default: our LoRA-tuned judge
+#                     (916/916 on held-out seeds, docs/gx10_results.md). Old mix: gpt-oss-20b-8k,qwen3-30b-instruct-8k,gemma3-27b-8k
+#   GX10_MODEL        [gpt-oss:20b]  reviewer, writer and mapper (the tuned model only learned verdicts)
 #   GX10_MODEL [first judge model]  writer / mapper (and reviewer with --airgap)
 #   FLOCK_LOCAL_REASONING [auto]  env sets it: gpt-oss reasons "low", Qwen3 thinking off (see flock/llm.py)
 #
@@ -29,8 +32,8 @@ HOST="${GX10_HOST:-gx10}"
 PORT="${GX10_PORT:-11435}"
 REMOTE_PORT="${GX10_REMOTE_PORT:-11434}"
 RETRY="${GX10_RETRY:-3}"
-JUDGE_MODELS="${GX10_JUDGE_MODELS:-gpt-oss:20b,qwen3:30b,gemma3:27b}"
-MODEL="${GX10_MODEL:-${JUDGE_MODELS%%,*}}"
+JUDGE_MODELS="${GX10_JUDGE_MODELS:-flock-judge-v1,flock-judge-v1,flock-judge-v1}"
+MODEL="${GX10_MODEL:-gpt-oss:20b}"
 URL="http://127.0.0.1:${PORT}"
 PULL_LOG='~/flock-pulls.log'
 
@@ -102,6 +105,16 @@ EOF
         cat <<EOF
 export FLOCK_REVIEWER_PROVIDER=local
 export FLOCK_AIRGAP=1
+EOF
+    elif [ "${1:-}" = "--hybrid" ]; then
+        # judges on the GX10 (our tuned model); reviewer memo, dispute writer, mapper and document reader on CREAO.
+        # Needs CREAO_API_KEY in the environment. Add FLOCK_AIRGAP=1 later and the CREAO roles fall back offline
+        # while judging keeps running on the box.
+        cat <<EOF
+export FLOCK_REVIEWER_PROVIDER=creao
+export FLOCK_WRITER_PROVIDER=creao
+export FLOCK_MAPPER_PROVIDER=creao
+export FLOCK_READER_PROVIDER=creao
 EOF
     fi
 }
