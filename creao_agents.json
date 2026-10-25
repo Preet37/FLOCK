@@ -3,47 +3,80 @@
   "api": "v2",
   "agents": {
     "judge.strict": {
-      "agent_id": "cd2bbb20-5f7f-4928-b2ab-cbbd879c7c55",
+      "agent_id": "3d20277a-82d3-477e-bb8e-148b9beb4e4a",
       "name": "Flock Judge: Strict Auditor",
-      "created_at": "2026-10-25T01:17:00Z",
-      "creation_run": "5e3fc41c-4385-4351-a4fb-f7ca95d0b050",
-      "model": "anthropic/claude-haiku-4-5"
+      "created_at": "2026-10-25T04:47:54.973Z",
+      "creation_run": "71eaf8b3-6efc-4bdb-8c48-09ad5b3276dd"
     },
     "judge.operator": {
-      "agent_id": "4f2ca337-a2f5-4893-a648-30d68315bd05",
+      "agent_id": "a7bbdf78-a105-479a-b0e5-803a5e94918d",
       "name": "Flock Judge: Operator",
-      "created_at": "2026-10-25T01:19:13.695Z",
-      "creation_run": "b4db664c-fc76-469e-8b82-09a9903a23c5"
+      "created_at": "2026-10-25T04:48:31.847Z",
+      "creation_run": "991d8e34-8e3d-407e-8ca5-141d5be00281"
     },
     "judge.skeptic": {
-      "agent_id": "afebcafb-96e1-4a08-b5f9-310117591eb6",
+      "agent_id": "cca38db1-c5cc-4351-9fcb-543fa4597894",
       "name": "Flock Judge: Skeptic",
-      "created_at": "2026-10-25T01:19:53.738Z",
-      "creation_run": "d98b11aa-9f91-489e-94a0-c7e5b2c937e2"
+      "created_at": "2026-10-25T04:49:06.761Z",
+      "creation_run": "06655d34-8cd0-40f1-9c9c-cfe079cde66b"
     },
     "reviewer": {
-      "agent_id": "647ec622-7be8-45ba-b6da-f6847c2fac41",
+      "agent_id": "04d36aab-5912-4e39-a128-1168350a30bd",
       "name": "Flock Reviewer",
-      "created_at": "2026-10-25T01:20:36.871Z",
-      "creation_run": "466001d3-de54-4dec-b34b-c1cbbe56afa5"
+      "created_at": "2026-10-25T04:49:47.811Z",
+      "creation_run": "b40fa3f0-cdce-430b-b8d4-d77bc7c38c02"
     },
     "writer": {
-      "agent_id": "849ad6cf-b0d0-44b3-a9a6-0eee04712f87",
+      "agent_id": "22884722-1234-44dd-b97c-4d3f0cc735c7",
       "name": "Flock Dispute Writer",
-      "created_at": "2026-10-25T01:21:18.167Z",
-      "creation_run": "f0806aef-d6af-4503-83df-177e034391e5"
+      "created_at": "2026-10-25T04:50:30.199Z",
+      "creation_run": "3decb42e-2aa0-4e17-951a-c5cea16ba5f9"
     },
     "mapper": {
-      "agent_id": "f3abb1a3-8bc0-40db-9c06-7fbedd709a60",
+      "agent_id": "08958631-3138-472b-b020-8fab5b62fea2",
       "name": "Flock Column Mapper",
-      "created_at": "2026-10-25T01:21:58.234Z",
-      "creation_run": "f1ec3826-da38-4220-bad7-1b72340afcc7"
+      "created_at": "2026-10-25T04:51:11.693Z",
+      "creation_run": "92fe7db1-b806-43c8-8a98-06df6146e588"
     },
     "reader": {
-      "agent_id": "5e3d91f3-3c9d-4a58-b59d-8fdcd2827576",
+      "agent_id": "754e34bb-c404-4e33-a80d-0c8f22999cb0",
       "name": "Flock Document Reader",
-      "created_at": "2026-10-25T01:22:44.946Z",
-      "creation_run": "4fb84389-0a64-4a4d-9441-f746b611b772"
+      "created_at": "2026-10-25T04:51:55.235Z",
+      "creation_run": "adf40fb9-e358-4d3d-a732-8ee2e60101db"
     }
-  }
+  },
+  "apps": {
+    "judge.strict": {
+      "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "name": "Flock Judge",
+      "page": "https://agent.creao.ai/apps/9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "inputs": [
+        "instructions",
+        "request"
+      ],
+      "run_share_link": "https://agent.creao.ai/share/db6b2917902c5799ac9fee5906942a58"
+    },
+    "judge.operator": {
+      "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "name": "Flock Judge",
+      "page": "https://agent.creao.ai/apps/9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "inputs": [
+        "instructions",
+        "request"
+      ],
+      "run_share_link": "https://agent.creao.ai/share/db6b2917902c5799ac9fee5906942a58"
+    },
+    "judge.skeptic": {
+      "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "name": "Flock Judge",
+      "page": "https://agent.creao.ai/apps/9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
+      "inputs": [
+        "instructions",
+        "request"
+      ],
+      "run_share_link": "https://agent.creao.ai/share/db6b2917902c5799ac9fee5906942a58"
+    }
+  },
+  "apps_url": "https://agent.creao.ai",
+  "account": "thabhelo.duve@talladega.edu"
 }
