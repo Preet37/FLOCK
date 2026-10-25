@@ -33,6 +33,7 @@ Flock does the boring job a restaurant pays an accountant to do by hand: it take
 | `docs/PLAN.md` | The plan: benchmark design, timeline, demo script, who's on what. |
 | `docs/connectors.md` | How Slack, Gmail and call notes get into Flock (drop-folder JSON contract for a CREAO connector). |
 | `docs/DEPLOY.md` | Hosting the API (and optionally the dashboard) on Railway. |
+| `docs/DEMO.md` | The 3-minute demo run sheet: `python -m flock.showtime prepare` the night before, the exact clicks, what to say, fallbacks, timings. |
 | `docs/API.md` | The deployed JSON API for the frontend: every endpoint, real example responses, auth, CORS, which panel each feeds, how the metrics are computed. |
 | `docs/benchmark_schema.md` | Result file schema for the judge load test. |
 | `dashboard/README.md` | Dashboard screens and its API. |
@@ -60,6 +61,11 @@ Storage is picked by `FLOCK_STORE` through `flock.store.get_store()`: `json` (de
 The Quickstart runs on `fixtures/fake_findings.json` (6 hand-written findings). The company story is Noah's NY Bagels, simulated with `--profile ca_bagel_chain` (see Data and Live seed demo); the generator's `default` profile is still the original 12-store hot chicken company.
 
 That week 1 vs week 2 drop is the "self-improving" demo moment.
+
+**The 3-minute demo** runs on a prepared month instead (`docs/DEMO.md`): `python -m flock.showtime prepare` (~50 s
+offline) runs four prior months and September 2026 of the simulated bagel chain (~100K orders a month, findings rolled
+up per weekly lump sum), leaves the headline finding for the presenter to approve live, and writes the cheat sheet to
+`data/state/showtime.md`. `showtime status` / `restore` / `reset` (back to this Quickstart).
 With nothing set (or `FLOCK_OFFLINE=1`) everything runs on offline rules, exactly as above.
 
 ## Models (local first, Claude as reviewer)
@@ -265,6 +271,12 @@ python generator/generate.py --profile ca_bagel_chain --weeks 52   # another (si
 
 - Same `--seed` and args = byte-identical files. `--traps 3,7,16` picks traps, `--days N` overrides `--weeks`. Traps 2 and 5 need `--weeks 2`.
 - **Company profiles** (`profiles/*.json`, `--profile NAME`): name, stores and cities, channels, orders per store per day by channel, menu / average ticket, weekday + monthly seasonality, dayparts, catering, and the contract terms per channel. `default` is the original 12-store company (same bytes as before profiles existed). `ca_bagel_chain` is a **fictional, simulated** 56-store California bagel chain (morning-heavy, weekend peaks, catering orders; ~1.2M orders a year); no real company, people or contract terms. `--stores` defaults to the profile's store count.
+- **Scenarios** (`--scenario demo_month`, `--scenario prior_month --plan 0..3`, `--month YYYY-MM`): one calendar month
+  of the bagel chain with a handful of hand-placed incidents instead of traps 1-22. `demo_month` = DoorDash keeps
+  charging the pre-amendment 25% at 3 stores all month (the amendment cut it to 20% on day 1), plus a short deposit, a
+  BOGO split, a late error charge, a sold-never-paid order, a legit charge, and two rep promises with no authority.
+  The dollar impact is computed from the generated data and written to `scenario.json` (never collected).
+  `flock.showtime` uses it; see `docs/DEMO.md`.
 - **Traps across a year:** each trap is planted `max(1, round(trap_rate x weight x store_weeks / 100))` times, spread across the period (`--trap-rate`, default 2 per 100 store-weeks; a 2-week demo still gets exactly one of each, 12 stores x 52 weeks gets 12 of most, 56 x 52 gets 58). Waiver traps 14/15 are weighted lower, the unseen layout (2) happens once. The answer key scales with it.
 - **Year scale** (offline, laptop, full chain `generate -> collect -> format -> pipeline -> score`, all traps caught, 0 false alarms): 12 stores x 2 weeks (3.2k orders) **2s**; 12 x 52 weeks (83k orders) **9s**; bagel chain 56 x 52 weeks (1.24M orders, 2.5M std rows): **124s** with traps 1-22 (9,655/9,655 answer-key rows, 342 sent to a human; `python -m flock.demo --seed 42 --profile ca_bagel_chain --weeks 52 --confirm`, Oct 24). Before traps 18-22 existed the same run was 84s with 1,126 rows. The formatter streams and converts column-wise, the pipeline splits the std tables by store and runs Matcher + Checkers in parallel processes (`flock/scan.py`, `FLOCK_WORKERS`), deal terms are cached per store/day, and the JSON store batches writes. The pipeline reuses `data/std/` when the raw files and mappings haven't changed.
 - **Progress:** the formatter and pipeline draw a terminal progress bar (stage, done/total, rows/sec) and write `data/state/progress.json`; the dashboard's live board shows it (`GET /api/progress`).
@@ -502,10 +514,12 @@ flock/connectors.py    drop-folder hand-off for Slack / Gmail / call-note connec
 flock/workflow.py      Clicky's learned workflow: learn, human approval, stale detection (flock/recorder.py records)
 flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
 flock/demo.py          live seed demo: generate -> collect -> pipeline -> score, then restore
+flock/showtime.py      the 3-minute demo: prepare (prior months + demo month), status, approve, restore, reset
+flock/rollup.py        per-order findings that break one deal term in one weekly payout -> one finding (opt-in)
 flock/progress.py      terminal progress bar + data/state/progress.json
 flock/api.py           stdlib JSON API (port 8787, Procfile, bearer token on writes)
 flock/agents/          one file per agent, owner at the top: collector, formatter, matcher, deal_keeper, checkers,
-                       anomaly, investigator, panel, ranker, dispute_writer, clicky, journal, learner
+                       anomaly, investigator, panel, ranker, dispute_writer, clicky, journal, learner, follow_up
 dashboard/             Flask + one page (python -m dashboard.app, port 5050)
 generator/             seeded data generator, traps 1-22, answer key (output in generator/out/)
 profiles/              company profiles (default, ca_bagel_chain: simulated)

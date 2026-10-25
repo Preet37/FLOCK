@@ -158,6 +158,8 @@ def test_prepare_shows_a_learning_curve(prepared):
     assert all(m["caught"] == m["total"] and m["false_alarms"] == 0 for m in info["months"])
     runs = [json.loads(x) for x in (base / "state" / "runs.jsonl").read_text().splitlines()]
     assert [r["to_human"] for r in runs] == hand_offs
+    from flock.demo import scoreboard
+    assert [r["label"] for r in scoreboard.history(base / "state" / "runs.jsonl")] == [m["name"] for m in info["months"]]
     assert len(learner.approved_rules(base / "rules.json")) >= 2
     from flock import market
     assert any(b != market.START for b in market.balances(store).values())
@@ -193,6 +195,10 @@ def test_status_restore_reset(prepared):
     showtime.restore(store, kw["rules_path"], kw["portal"], kw["workdir"])
     assert store.get(hid)["state"] == "JUDGED"
     assert "ready for the presenter" in showtime.status(store, kw["rules_path"])
+    r = showtime.approve_headline("presenter", store, kw["portal"])            # the terminal fallback
+    assert r["state"] == "FILED" and r["portal_ref"] in r["filed"]
+    assert [e["actor"] for e in store.log(hid) if e["action"] == "approve"] == ["presenter"]
+    showtime.restore(store, kw["rules_path"], kw["portal"], kw["workdir"])
     showtime.reset(store, kw["rules_path"], kw["portal"], quiet=True)
     assert "No showtime loaded" in showtime.status(store, kw["rules_path"])
     assert len(store.all()) == 6 and not kw["rules_path"].exists()              # the Quickstart's fixtures, week 1

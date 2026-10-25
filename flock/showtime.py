@@ -5,6 +5,7 @@ few mistakes, and shows what's still owed.
 
   python -m flock.showtime prepare [--months 4] [--seed 2025]   # ~2 min offline; prints the cheat sheet
   python -m flock.showtime status                               # what's loaded, and whether it's still untouched
+  python -m flock.showtime approve --actor preet                # fallback: approve the headline from a terminal
   python -m flock.showtime restore                              # put the prepared state back after a rehearsal
   python -m flock.showtime reset                                # back to the plain Quickstart demo state
 
@@ -45,7 +46,7 @@ from typing import Any
 from flock import frontend, pipeline, rollup
 from flock.agents import clicky, collector, follow_up, learner, panel
 from flock.demo import generator, scoreboard
-from flock.gatekeeper import GATEKEEPER, transition
+from flock.gatekeeper import GATEKEEPER, Denied, transition
 from flock.models import Actor, money
 from flock.progress import Progress, progress_path
 from flock.store import ROOT, STATE_DIR, Store, get_journal_store, get_store
@@ -109,7 +110,8 @@ def run_month(ws: Path, month: str, scenario: str, plan: int | None, seed: int, 
     with log.open("w") as fh, contextlib.redirect_stdout(fh):
         pipeline.run(reset=True, forget=forget, demo_approve=demo_approve, store=store, rules_path=rules_path,
                      portal=portal, raw=raw, std=std, mappings=mappings, confirm=True, interactive=False,
-                     progress=progress, runs_path=runs_path, label=label, source_label=source, rollup=True)
+                     progress=progress, runs_path=runs_path, label=label, source_label=source, rollup=True,
+                     period=month_name(month))
         result = scoreboard.score(store, verbose=True, runs_path=runs_path, answer_key=out / "answer_key.csv")
     rows = store.all()
     return {"month": month, "name": month_name(month), "scenario": scenario, "plan": plan, "seed": seed,
@@ -442,6 +444,7 @@ def cheat_sheet(info: dict[str, Any]) -> str:
             "", "API instead of the dashboard (approve also files via Clicky):",
             f"`curl -X POST {API}/api/findings/{hid}/approve -H 'Content-Type: application/json' "
             "-d '{\"actor\": \"<you>\", \"reason\": \"amendment says 20%\"}'`",
+            "No browser at all: `python -m flock.showtime approve --actor <you>` (same gatekeeper move, then Clicky).",
             "", "After a rehearsal: `python -m flock.showtime restore` (seconds). Back to the Quickstart: "
             "`python -m flock.showtime reset`."]
     return "\n".join(out)
@@ -509,6 +512,19 @@ def status(store: Store | None = None, rules_path: Path | None = None) -> str:
     return "\n".join(lines)
 
 
+def approve_headline(actor: str, store: Store | None = None, portal: Path | None = None,
+                     reason: str = "Amendment says 20%; DoorDash charged 25%") -> dict[str, Any]:
+    """The on-stage move without a browser: a human approves the headline (gatekeeper), then Clicky files it."""
+    store = store or get_store()
+    info = load(store)
+    if not info or not info.get("headline"):
+        raise SystemExit("no showtime headline loaded: python -m flock.showtime prepare")
+    fid = info["headline"]["finding_id"]
+    transition(store, fid, "approve", Actor(id=actor, role="human"), reason=reason)
+    refs = clicky.file_approved(store, Path(portal or clicky.PORTAL))
+    return {"finding_id": fid, "filed": refs, "state": store.get(fid)["state"], "portal_ref": store.get(fid).get("portal_ref")}
+
+
 def reset(store: Store | None = None, rules_path: Path | None = None, portal: Path | None = None,
           quiet: bool = False) -> None:
     """The plain Quickstart demo state: fixtures, no learned rules, week 1 run with the demo human."""
@@ -524,14 +540,21 @@ def reset(store: Store | None = None, rules_path: Path | None = None, portal: Pa
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m flock.showtime", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["prepare", "status", "restore", "reset"])
+    ap.add_argument("command", choices=["prepare", "status", "approve", "restore", "reset"])
     ap.add_argument("--months", type=int, default=DEFAULT_MONTHS, help="prior months before the demo month")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--stores", type=int, default=None, help="default: the profile's 56")
     ap.add_argument("--month", default=generator.DEMO_MONTH, help="the demo month, YYYY-MM")
+    ap.add_argument("--actor", default="presenter", help="approve: who is approving (a human)")
     a = ap.parse_args(argv)
     if a.command == "prepare":
         prepare(max(0, a.months), a.seed, a.stores, a.month)
+    elif a.command == "approve":
+        try:
+            r = approve_headline(a.actor)
+        except Denied as e:
+            sys.exit(f"showtime: {e} (python -m flock.showtime restore puts it back)")
+        print(f"{r['finding_id']} approved by {a.actor}; Clicky filed it in the sandbox portal as {r['portal_ref']}")
     elif a.command == "restore":
         restore()
         print(status())

@@ -129,13 +129,15 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
         fixtures: Path | None = None, raw: Path | None = None, std: Path | None = None,
         mappings: Path | None = None, confirm: bool = False, interactive: bool = False,
         progress: Progress | None = None, runs_path: Path | None = None, label: str = "",
-        attention_budget: int | None = None, source_label: str | None = None, rollup: bool = False) -> Store:
+        attention_budget: int | None = None, source_label: str | None = None, rollup: bool = False,
+        period: str | None = None) -> Store:
     """store / rules_path / portal / fixtures default to the repo paths; tests point them at a temp dir.
     raw / std / mappings point the Formatter at another dataset (flock.demo); confirm / interactive are its
     unseen-layout question. progress defaults to a terminal bar + progress.json next to the store.
     attention_budget defaults to env FLOCK_ATTENTION_BUDGET (10). source_label: a readable name for the data (else the
     std folder's path). rollup: group per-order findings that break the same deal term in the same weekly payout into
-    one finding per lump sum (flock/rollup.py; flock.showtime turns it on)."""
+    one finding per lump sum (flock/rollup.py; flock.showtime turns it on). period: what the run covers, for the
+    scoreboard's history ("May 2026"; default "Week N")."""
     store = store or get_store()
     rules_path = Path(rules_path or learner.RULES)
     portal = Path(portal or clicky.PORTAL)
@@ -162,7 +164,7 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     try:
         with batched(store):
             info = _run(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path,
-                        jstore, attention_budget, source_label, rollup)
+                        jstore, attention_budget, source_label, rollup, period)
     except BaseException:
         progress.finish("failed")
         raise
@@ -189,20 +191,21 @@ def write_last_run(store: Store, info: dict) -> dict:
 
 def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
          pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
-         source_label: str | None = None, rollup: bool = False) -> dict:
+         source_label: str | None = None, rollup: bool = False, period: str | None = None) -> dict:
     run_id = "RUN-" + uuid.uuid4().hex[:8]
     flock = agents_live.Tracker(store, run_id)
     try:
         return {"run_id": run_id, **_stages(store, rules_path, portal, fixtures, data, demo_approve, pace, progress,
                                             runs_path, jstore, attention_budget, run_id, flock, source_label,
-                                            rollup)}
+                                            rollup, period)}
     finally:
         flock.close()
 
 
 def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
             pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
-            run_id: str, flock: agents_live.Tracker, source_label: str | None = None, rollup: bool = False) -> dict:
+            run_id: str, flock: agents_live.Tracker, source_label: str | None = None, rollup: bool = False,
+            period: str | None = None) -> dict:
     def move(finding_id: str, action: str, actor: Actor, **kw) -> None:
         transition(store, finding_id, action, actor, **kw)
         if pace:
@@ -309,7 +312,7 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
     teacher = flock.spawn("learner", subject="rules", agent_id="learner").working("reading human decisions")
     proposed = learner.propose(store, rules_path)
     teacher.done(f"proposed {len(proposed)} rule(s)", proposed=len(proposed))
-    record_run(store, source, runs_path, rules_path)
+    record_run(store, source, runs_path, rules_path, period)
     summary(store, proposed)
     market_summary(store)
     print("flock: " + ", ".join(f"{n} {role}{'s' if n != 1 else ''}" for role, n in flock.counts.items())
@@ -452,9 +455,11 @@ def runs_default(store: Store) -> Path:
     return Path(d) / "runs.jsonl"
 
 
-def record_run(store: Store, source: str, runs_path: Path | None = None, rules_path: Path | None = None) -> dict:
+def record_run(store: Store, source: str, runs_path: Path | None = None, rules_path: Path | None = None,
+               period: str | None = None) -> dict:
     """One line per run so the scoreboard can show week 1 vs week 2 human hand-offs.
-    learned_rules counts the rules this run used (rules_path), not the repo's rules.json."""
+    learned_rules counts the rules this run used (rules_path), not the repo's rules.json. period (optional) names what
+    the run covers ("May 2026"); the scoreboard labels the run with it instead of "Week N"."""
     rows = store.all()
     rec = [f for f in rows if f.get("outcome") == "recoverable"]
     entry = {
@@ -467,6 +472,8 @@ def record_run(store: Store, source: str, runs_path: Path | None = None, rules_p
         "by_rule": sum(1 for f in rows if f.get("reason", "").startswith("Applied approved rule")),
         "learned_rules": len(learner.approved_rules(rules_path)),
     }
+    if period:
+        entry["period"] = period
     runs_path = Path(runs_path or runs_default(store))
     runs_path.parent.mkdir(parents=True, exist_ok=True)
     with runs_path.open("a") as fh:
