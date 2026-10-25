@@ -254,6 +254,13 @@ const cardHead = (title, sub = '', right = '') => `
     <div class="flex flex-col sm:flex-row sm:items-center justify-between shrink-0 mb-4 gap-3">
         <div class="min-w-0"><h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">${title}</h3>
         ${sub ? `<p class="text-xs text-gray-400 mt-0.5 font-medium">${sub}</p>` : ''}</div>${right}</div>`;
+// Long figures ($1,734,123.45) step down a size instead of being cut off with an ellipsis
+function statSize(value) {
+    const n = String(value).replace(/<[^>]*>/g, '').length;
+    if (n > 12) return 'text-lg sm:text-xl xl:text-2xl xl:leading-none';
+    if (n > 8) return 'text-xl sm:text-2xl xl:text-[1.75rem] xl:leading-none';
+    return 'text-2xl sm:text-3xl xl:text-[2.5rem] xl:leading-none';
+}
 function statCard({ label: l, labelHtml, value, sub, icon, dark, how, cls = '' }) {
     return `<div class="${dark ? 'bg-cardDark text-white shadow-md' : 'bg-white text-gray-900 card-shadow border border-gray-100'} p-4 sm:p-5 rounded-3xl flex flex-col justify-between gap-2 min-w-0 ${cls}">
         <div class="flex items-center justify-between">
@@ -262,7 +269,7 @@ function statCard({ label: l, labelHtml, value, sub, icon, dark, how, cls = '' }
         </div>
         <div class="min-w-0">
             <p class="${dark ? 'text-gray-400' : 'text-gray-500'} text-xs font-medium mb-0.5">${labelHtml || esc(l)}</p>
-            <h2 class="text-2xl sm:text-3xl xl:text-[2.5rem] xl:leading-none font-extrabold tracking-tight tabular-nums truncate">${value}</h2>
+            <h2 class="${statSize(value)} font-extrabold tracking-tight tabular-nums whitespace-nowrap" title="${esc(String(value).replace(/<[^>]*>/g, ''))}">${value}</h2>
             ${sub ? `<p class="${dark ? 'text-limeAccent' : 'text-gray-500'} text-xs font-semibold mt-1">${sub}</p>` : ''}
         </div></div>`;
 }
