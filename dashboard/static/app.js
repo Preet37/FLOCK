@@ -56,6 +56,49 @@ async function decide(id, action, reason, role = "human") {
   } finally { busy = false; await refresh(true); }
 }
 
+// vendor follow-up on a filed, unpaid claim: draft (agent) -> approve / reject (you) -> send (gatekeeper via Clicky)
+async function followUp(id, step, role = "human") {
+  busy = true;
+  const box = document.querySelector(`textarea[data-reason="${CSS.escape("fu:" + id)}"]`);
+  const reason = box ? box.value.trim() : "";
+  try {
+    const path = `/api/findings/${encodeURIComponent(id)}/follow_up${step === "draft" ? "" : "/" + step}`;
+    const out = await api(path, { method: "POST", body: JSON.stringify({ actor: role === "human" ? actorName() : "follow_up", role, reason }) });
+    const did = { draft: "follow-up drafted by the follow_up agent", approve: `follow-up approved by ${actorName()}`,
+      reject: `follow-up rejected by ${actorName()}`, send: `follow-up sent by Clicky as ${out.portal_ref}` }[step];
+    toast(`${id}: ${did}. Logged by the gatekeeper.`);
+  } catch (e) {
+    toast(e.status === 403 ? `Gatekeeper denied it: ${e.message}. The attempt is in the audit log.` : e.message, true);
+  } finally { busy = false; await refresh(true); }
+}
+
+function followUpCard(f) {
+  const fu = f.follow_up;
+  const id = esc(f.finding_id);
+  if (!fu) {
+    return f.state === "FILED" ? `<section class="card"><div class="card-head"><h2>Vendor follow-up</h2><span class="muted">claim ${esc(f.portal_ref || "")} not paid yet</span></div>
+      <div class="card-pad q-actions"><button data-act="fu-draft" data-id="${id}">Draft a follow-up</button>
+        <span class="muted">the follow_up agent drafts; nothing is sent until you approve</span></div></section>` : "";
+  }
+  const who = fu.state === "APPROVED" ? `approved by ${esc(fu.approved_by)}` : fu.state === "REJECTED" ? `rejected by ${esc(fu.rejected_by)}`
+    : fu.state === "SENT" ? `sent ${when(fu.sent_at)} · approved by ${esc(fu.approved_by)}` : "waiting for a human";
+  const again = f.state === "FILED" && (fu.state === "SENT" || fu.state === "REJECTED");
+  return `<section class="card"><div class="card-head"><h2>Vendor follow-up</h2>
+      <span>${badge(fu.state, fu.state)} <span class="muted">${who}</span></span></div>
+    <div class="card-pad"><b class="mono">${esc(fu.claim_ref)}</b> filed ${esc(fu.filed_on || "?")} · ${usd(fu.amount)} to ${esc(fu.platform || chan(fu.channel))}
+      ${fu.sent_ref ? ` · sent as <b class="mono">${esc(fu.sent_ref)}</b> <span class="muted">(sandbox portal)</span>` : ""}</div>
+    <pre class="draft">${esc(fu.draft)}</pre>
+    ${fu.state === "DRAFT" ? `<div class="card-pad q-actions">
+      <textarea data-reason="fu:${id}" rows="1" placeholder="Reason (goes in the audit log)"></textarea>
+      <button class="btn-ok" data-act="fu-approve" data-id="${id}">Approve</button>
+      <button class="btn-bad" data-act="fu-reject" data-id="${id}">Reject</button>
+      <button class="btn-ghost" data-act="fu-agent-try" data-id="${id}" title="Shows the gatekeeper refusing an agent">Try as an agent</button></div>` : ""}
+    ${fu.state === "APPROVED" ? `<div class="card-pad q-actions"><button class="btn-ok" data-act="fu-send" data-id="${id}">Send via Clicky</button>
+      <span class="muted">the gatekeeper sends it to the sandbox portal and logs the reference</span></div>` : ""}
+    ${again ? `<div class="card-pad q-actions"><button data-act="fu-draft" data-id="${id}">Draft another follow-up</button></div>` : ""}
+  </section>`;
+}
+
 async function fileApproved() {
   try {
     const r = await api("/api/file-approved", { method: "POST" });
@@ -111,6 +154,10 @@ document.addEventListener("click", (ev) => {
     if (b.dataset.act === "recover") decide(id, "recover", "Platform paid the dispute");
     if (b.dataset.act === "agent-try") decide(id, "approve", "Agent tried to approve its own call", "agent");
     if (b.dataset.act === "file") fileApproved();
+    if (b.dataset.act && b.dataset.act.startsWith("fu-")) {
+      const step = b.dataset.act.slice(3);
+      if (step === "agent-try") followUp(id, "approve", "agent"); else followUp(id, step);
+    }
     if (b.dataset.act === "rule") approveRule(id);
     if (b.dataset.act === "je-approve" || b.dataset.act === "je-reject") decideJe(id, b.dataset.act.slice(3), reason);
     if (b.dataset.act === "je-agent-try") decideJe(id, "approve", "Agent tried to approve its own journal entry", "agent");
@@ -247,7 +294,7 @@ async function renderQueue() {
   const item = (f) => `<article class="card card-pad q-item">
       <div class="q-top">
         <div><div class="q-title"><a href="#/finding/${esc(f.finding_id)}" class="mono">${esc(f.finding_id)}</a>
-          · ${chan(f.channel)} ${label(f.check_type)} · ${esc(f.order_ids.join(", "))}</div>
+          · ${chan(f.channel)} ${label(f.check_type)} · ${esc(f.orders_label || f.order_ids.join(", "))}</div>
           <div class="reason">${esc(f.reason)}</div></div>
         <div style="text-align:right"><div class="gap">${usd(f.gap)}</div>${badge(f.outcome, f.outcome === "conflict" ? "conflict: judges split" : "dispute drafted")}
           ${attentionTag(f)}</div>
@@ -316,7 +363,7 @@ async function renderFinding(id) {
   view.innerHTML = `
     <div class="pr-head">
       <div class="muted"><a href="#/">Live board</a> / finding</div>
-      <h1 style="margin-top:6px">${chan(f.channel)} ${label(f.check_type)} on ${esc(f.order_ids.join(", "))} <span class="id">${esc(f.finding_id)}</span></h1>
+      <h1 style="margin-top:6px">${chan(f.channel)} ${label(f.check_type)} on ${esc(f.orders_label || f.order_ids.join(", "))} <span class="id">${esc(f.finding_id)}</span></h1>
       <div class="pr-meta">
         <span class="badge pr-state b-${esc(f.state)}">${esc(stateWord)}</span>
         ${f.outcome ? badge(f.outcome, f.outcome) : ""}
@@ -352,6 +399,7 @@ async function renderFinding(id) {
         ${f.dispute_draft ? `<section class="card"><div class="card-head"><h2>Dispute draft</h2><span class="muted">dispute_writer · not sent until a human approves</span></div><pre class="draft">${esc(f.dispute_draft)}</pre></section>` : ""}
         ${d.filed ? `<section class="card"><div class="card-head"><h2>Filed</h2><span class="muted">sandbox portal (never a real one)</span></div>
           <div class="card-pad"><b class="mono">${esc(d.filed.portal_ref)}</b> · ${usd(d.filed.amount)} to ${chan(d.filed.channel)} · ${when(d.filed.at)}</div></section>` : ""}
+        ${followUpCard(f)}
 
         <section><h2>Audit trail</h2>${timeline(d.log)}
           ${d.needs_human ? `<div class="card card-pad decide"><b>Your call, ${esc(actorName())}.</b>

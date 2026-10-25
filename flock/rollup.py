@@ -102,6 +102,10 @@ def merge(members: list[dict[str, Any]], payout_id: str, index: dict[str, dict[s
                   f"gap {gap:,.2f}. One order: {first['reason']}")
     f = Finding(order_ids=ids, channel=ch, check_type=ct, expected=expected, actual=actual, gap=gap,
                 evidence=evidence, reason=reason).to_dict()
+    by_store: dict[str, float] = defaultdict(float)
+    for m in members:
+        by_store[index[m["order_ids"][0]].get("store_id") or "UNKNOWN"] += money(m["gap"])
     f["rollup"] = {"payout_id": payout_id, "orders": len(ids), "stores": stores, "gross": gross,
+                   "by_store": {k: money(v) for k, v in sorted(by_store.items())},
                    "parts": {m["order_ids"][0]: money(m["gap"]) for m in members}}
     return f

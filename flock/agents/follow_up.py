@@ -17,6 +17,9 @@ FILED finding, so it is logged like every other move and the finding carries it 
   python -m flock.agents.follow_up approve F-1234 --actor preet --send   # a human approves; Clicky sends it
   python -m flock.agents.follow_up reject F-1234 --actor preet
   python -m flock.agents.follow_up send                     # send every approved follow-up
+
+Over HTTP (flock/api.py, dashboard/app.py): POST /api/findings/<id>/follow_up (draft), .../follow_up/approve,
+.../follow_up/reject ({actor, reason}), .../follow_up/send (Clicky, returns the portal reference).
 """
 from __future__ import annotations
 
@@ -155,6 +158,22 @@ def reject(store: Store, finding_id: str, actor: Actor, reason: str = "") -> dic
     fu.update(state="REJECTED", rejected_by=actor.id, rejected_at=_now())
     return transition(store, finding_id, "reject_follow_up", actor, patch={"follow_up": fu},
                       reason=reason or "Follow-up rejected; not sent")
+
+
+def send(store: Store, finding_id: str, portal_path: Any = None) -> str:
+    """Clicky sends this one approved follow-up; the gatekeeper records SENT. Returns the portal reference. Not
+    approved yet (DRAFT, REJECTED, none) or not FILED: the gatekeeper refuses the send, logs it, raises Denied."""
+    from flock.agents import clicky
+
+    f = store.get(finding_id)
+    fu = f.get("follow_up") or {}
+    if f["state"] != "FILED" or fu.get("state") != "APPROVED":   # let the gatekeeper say no, on the record
+        transition(store, finding_id, "send_follow_up", clicky.GATEKEEPER,
+                   patch={"follow_up": {**fu, "state": "SENT"}}, reason="Send follow-up (not approved by a human)")
+    refs = clicky.send_follow_ups(store, portal_path, finding_ids=[finding_id])
+    if not refs:   # transition() above always raises in that case; this is a guard for odd stores
+        raise Denied(f"follow-up on {finding_id} was not sent")
+    return refs[0]
 
 
 def show(store: Store) -> str:

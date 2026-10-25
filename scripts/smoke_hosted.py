@@ -188,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
     health = call(a.url, "GET", "/api/health")[1]
     if isinstance(health, dict) and health.get("auth_required_for_post"):
         results.append(("POST /api/run without token -> 401", code == 401, f"HTTP {code}"))
+        code, out, _ = call(a.url, "POST", "/api/findings/F-0000/follow_up/send", {})
+        results.append(("POST .../follow_up/send without token -> 401", code == 401, f"HTTP {code}"))
     else:
         results.append(("POST /api/run without token -> 401", False, "server has no FLOCK_API_TOKEN set"))
 

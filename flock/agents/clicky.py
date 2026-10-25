@@ -361,12 +361,13 @@ def file_approved(store: Store, portal_path: Path | None = None, mode: str | Non
     return filed
 
 
-def send_follow_ups(store: Store, portal_path: Path | None = None) -> list[str]:
+def send_follow_ups(store: Store, portal_path: Path | None = None, finding_ids: list[str] | None = None) -> list[str]:
     """Send every human-approved vendor follow-up (flock/agents/follow_up.py) to the sandbox portal, then the
     gatekeeper records it as SENT with the portal's reference. File mode only: the portal's form is for new disputes,
-    so a follow-up is appended to the portal's filings as kind 'follow_up', pointing at the claim it chases."""
+    so a follow-up is appended to the portal's filings as kind 'follow_up', pointing at the claim it chases.
+    finding_ids: only these (POST /api/findings/<id>/follow_up/send)."""
     sent = []
-    for f in store.all():
+    for f in (store.get(i) for i in finding_ids) if finding_ids is not None else store.all():
         fu = f.get("follow_up") or {}
         if f["state"] != "FILED" or fu.get("state") != "APPROVED":
             continue

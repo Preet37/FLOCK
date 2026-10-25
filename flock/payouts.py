@@ -75,8 +75,12 @@ def counts_as(f: dict[str, Any]) -> str:
 
 def _brief(f: dict[str, Any], line: str, store: str | None) -> dict[str, Any]:
     r = frontend.risk(f)
+    ru = f.get("rollup") or {}
+    if ru.get("stores"):   # a rolled-up finding covers many orders (and often several stores) in one payout
+        store = ", ".join(ru["stores"])
     return {"finding_id": f["finding_id"], "check_type": f.get("check_type"), "line": line, "store_id": store,
-            "order_ids": (f.get("order_ids") or [])[:4], "expected": f.get("expected"), "actual": f.get("actual"),
+            "order_ids": (f.get("order_ids") or [])[:4], "orders": len(f.get("order_ids") or []),
+            "orders_label": frontend.orders_label(f), "rollup": bool(ru), "expected": f.get("expected"), "actual": f.get("actual"),
             "gap": f.get("gap"), "outcome": f.get("outcome"), "state": f.get("state"), "counts_as": counts_as(f),
             "risk": r["risk"], "risk_label": r["risk_label"], "portal_ref": f.get("portal_ref"),
             "attention": f.get("attention"), "needs_human": f.get("state") == "JUDGED" and (
@@ -304,6 +308,21 @@ def detail(doc: dict[str, Any] | None, findings: list[dict[str, Any]], key: str)
     out = compute(p, by_id, stores, detail=True)
     rows = _rows_by_txn(doc)
     per = []
+    seen: set[str] = set()   # a rolled-up finding sits on every store row it spans; count its gap once
+
+    def store_gap(f: dict[str, Any], store: str) -> int:
+        """This store's part of an open gap: a rolled-up finding's rollup.by_store share (or all of it at the first
+        store row it appears on, for findings rolled up before by_store existed); otherwise the whole gap."""
+        ru = f.get("rollup")
+        if not ru:
+            return _c(f.get("gap"))
+        if ru.get("by_store"):
+            return _c(ru["by_store"].get(store, 0))
+        if f["finding_id"] in seen:
+            return 0
+        seen.add(f["finding_id"])
+        return _c(f.get("gap"))
+
     for tid in p["txn_ids"]:
         r = rows.get(tid)
         if r is None:
@@ -313,7 +332,7 @@ def detail(doc: dict[str, Any] | None, findings: list[dict[str, Any]], key: str)
                     "deductions": r["deductions"]["total"], "net": r["net"],
                     "received": (r.get("deposit") or {}).get("store_share") or 0.0, "deposit_gap": r["deposit_gap"],
                     "findings": len(r["finding_ids"]),
-                    "open_gaps": _d(sum(_c(f.get("gap")) for f in fs if counts_as(f) == "owed")),
+                    "open_gaps": _d(sum(store_gap(f, r["store_id"]) for f in fs if counts_as(f) == "owed")),
                     "share_of_gross": round(_c(r["gross"]) / _c(p["gross"]), 4) if _c(p["gross"]) else None})
     out["stores_detail"] = sorted(per, key=lambda s: s["store_id"] or "")
     out["source"], out["built_at"], out["formula"] = doc.get("source"), doc.get("built_at"), FORMULA

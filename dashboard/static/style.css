@@ -251,7 +251,7 @@ td.mono, td .mono { white-space: nowrap; }
 .spark.down polyline { stroke: var(--bad); }
 /* journal entries */
 .b-DRAFT { background: var(--info-soft); color: var(--info); }
-.b-POSTED { background: var(--done-soft); color: var(--done); }
+.b-POSTED, .b-SENT { background: var(--done-soft); color: var(--done); }
 .je-group { margin-top: 18px; }
 .je-group h3 { margin: 0 0 8px; }
 .je-lines td.memo { max-width: 360px; }
