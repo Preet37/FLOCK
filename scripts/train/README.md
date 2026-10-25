@@ -8,7 +8,7 @@ first run: [`docs/gx10_results.md`](../../docs/gx10_results.md).
 | `setup_env.sh` | `~/flock-train` venv: PyTorch CUDA wheel for aarch64 (tries cu130, cu129, cu128), checks the GB10 with a bf16 matmul, installs transformers, peft, trl, datasets, accelerate |
 | `train_lora.py` | LoRA (r 16, alpha 32, all attention + MLP projections) on `data/training/judge_train.jsonl`, bf16, 1 epoch. Loss on the assistant turn only. Eval loss on `judge_val.jsonl` before training and every `--eval-steps`. Writes `adapter/`, `loss.json`, `run.json` |
 | `merge_export.py` | Merges the adapter into the base and saves safetensors. `--no-adapter` exports the untouched base the same way |
-| `ollama_import.sh` | `ollama create <name> --quantize int8` from a safetensors folder, ChatML template. Works without sudo (the CLI streams the files to the service) |
+| `ollama_import.sh` | Converts the safetensors folder to GGUF q8_0 with llama.cpp's converter (user-space clone), then `ollama create` with a ChatML template. No sudo (the CLI streams the file to the service) |
 | `run_all.sh` | dataset, train, merge, import tuned as `flock-judge-v1`, export and import the base as `flock-judge-base` |
 
 ## Rerun it
@@ -37,7 +37,7 @@ Knobs for `run_all.sh`: `BASE` (default `Qwen/Qwen2.5-7B-Instruct`, ungated), `S
 - Labels are synthetic: they come from the generator's answer key, not from people. The offline rules already score
   100% on these seeds, so the tuned model can at best tie the rules here. What it can show: a small local model
   learning the panel's judgment format and labels, measured on seeds it never saw.
-- Base and tuned go through the same export, the same int8 quantization and the same template, so the comparison
+- Base and tuned go through the same export, the same GGUF q8_0 conversion and the same template, so the comparison
   measures the fine-tune, not the packaging.
 
 ## Gotchas we hit
