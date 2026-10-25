@@ -121,6 +121,17 @@ python -m flock.slack_pull --since 0       # everything (ignores the cursor)
 Over HTTP: `POST /api/connectors/slack/pull` (token-protected, optional `{"since": "<ts>"}`) returns the pull result
 (channels, messages, the claims Flock understood, files, attachments). `GET /api/connectors` lists the batches.
 
+## Simulated inbox (`flock/email_sim.py`)
+
+Every demo month (showtime prepare's month on stage and each live run) also gets a simulated accounting inbox, built
+from that month's generated stores, contracts and orders, sent through `connectors.receive` (source `email`, connector
+`email-sim`) before the pipeline runs, so the Sources page shows email next to Slack and the Deal Keeper uses it:
+an authorized rep's fee waiver the platform never applied (recoverable), the same promise from an unlisted person at
+the platform (conflict: needs you), a thread whose reply confirms the store and day (recoverable), two platform
+statements with CSV attachments (`data/state/inbox/email_files/<month>/`), a promo note and a support reply. Their
+expected outcomes are added to the month's answer key. All `.example` addresses, marked simulated.
+`FLOCK_EMAIL_SIM=0` turns it off.
+
 ## Plan for the live Slack demo (Thabhelo: CREAO side)
 
 1. Create a demo Slack workspace (or a channel in ours) named like `#doordash-partnership` / `#ubereats-partnership`.
