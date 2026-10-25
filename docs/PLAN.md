@@ -11,8 +11,8 @@ Everything below runs today with `FLOCK_OFFLINE=1` and no API key.
 | Piece | Status |
 | --- | --- |
 | Pipeline: collect, format, match, deal terms, check, judge, rank, draft, human, file, learn | Works end to end |
-| Generator + answer key | 17 trap types; `--profile ca_bagel_chain` = fictional 56-store chain |
-| Scale | 56 stores x 52 weeks = 1.24M orders, 1,126/1,126 traps caught, 0 false alarms, 84s on a laptop |
+| Generator + answer key | 22 trap types (19-22 live in Slack); `--profile ca_bagel_chain` = fictional 56-store chain |
+| Scale | 56 stores x 52 weeks = 1.24M orders, 9,655/9,655 answer-key rows (traps 1-22) caught, 0 false alarms, 124s on a laptop (see `docs/STATUS.md`) |
 | Live seed demo | `python -m flock.demo --seed <judge's number> --confirm` |
 | Judge panel | 3 judges, one debate round on splits, Claude writes a memo for the human (never breaks the tie), 10% random audit |
 | Judge market | Brier-scored bets settle on human decisions and RECOVERED; votes weighted by balance; attention budget |
@@ -20,7 +20,7 @@ Everything below runs today with `FLOCK_OFFLINE=1` and no API key.
 | Clicky | Files approved disputes in a localhost sandbox portal with a real browser; learns the form from one human demonstration, a human approves, stops and asks again when the form changes |
 | Dashboard | Live board, human queue, PR-style finding page, journal, judge market, scoreboard, progress bar |
 | Models | Provider switch per role: local (vLLM/Ollama), Groq, NVIDIA, Claude; `python scripts/llm_check.py` |
-| Tests | 337 passing |
+| Tests | 472 passing, 2 skipped (`FLOCK_OFFLINE=1 pytest -q`) |
 
 ## What's next: show what the GX10 can do
 
@@ -76,8 +76,8 @@ Output: `scripts/benchmark.py` writes one results table (CSV + JSON) that the da
 | --- | --- | --- |
 | **Preet** | **Hosting** (Railway: Flock's API live, tell Thabhelo the URL + token) and **all ML + benchmarking**: GX10 models, local judges, fine-tuned judge, `scripts/benchmark.py` runs (rules / local / tuned / CREAO / Claude / human), results write-up; merging into `main` | `flock/llm.py`, `panel.py`, `market.py`, `scripts/benchmark.py`, `scripts/judge_*.py`, `scripts/gx10.sh`, `scripts/train/`, `anomaly.py`, deploy config |
 | **Thabhelo** | **CREAO**: all AI roles as hosted CREAO agents (`scripts/creao_setup.py`), CREAO connectors for Slack/Gmail into Flock, CREAO on the deployed API, talk to the CREAO booth about their judging | `flock/llm.py` (creao provider), `scripts/creao_setup.py`, `flock/api.py`, `matcher.py`, `checkers.py`, `deal_keeper.py` |
-| **Himaja** | UI: the demo flow on the dashboard (live board, progress bar, finding page, market, journal, benchmark tab) | `dashboard/`; still owns `generator/`, `collector.py`, `formatter.py`, `profiles/` |
-| **Ira** | [confirm] SpacetimeDB backend (findings, audit log, agent_status, live dashboard), pitch, video, Figma/Notability process tracks | `flock/store.py` (SpacetimeStore), `gatekeeper.py`, `scripts/score.py` |
+| **Himaja** | UI, in her own frontend folder (not merged yet; `dashboard/` is what runs today): live board, progress bar, finding page, market, journal, benchmark tab | the frontend; still owns `generator/`, `collector.py`, `formatter.py`, `profiles/` |
+| **Ira** | [confirm] Pitch, demo video, Devpost | SpacetimeDB (`SpacetimeStore` stub) and the Figma/Notability process tracks are unassigned unless Ira confirms |
 
 One UI: the dashboard in this repo (`dashboard/`). If anyone has UI work in another repo, move it here so judges see one codebase.
 

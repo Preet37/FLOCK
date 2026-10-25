@@ -1,4 +1,4 @@
-# Dashboard (owner: Ira)
+# Dashboard (built by Ira; UI owner now Himaja)
 
 A small Flask server (`dashboard/app.py`) serving one plain HTML/JS page (`dashboard/static/`). No Node, no build step.
 Reads through the `Store` protocol (`flock.store.get_store()`, picked by env `FLOCK_STORE`, JSON by default).

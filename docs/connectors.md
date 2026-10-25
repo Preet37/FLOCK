@@ -113,7 +113,7 @@ Result with the simulated bagel chain's contracts: one claim, `fee = 0` for S06 
 the Uber Eats contract's authorized contacts), quoted from the correction with `locator: ts=1768909380.000012
 thread_ts=1768907280.000011`; the Saturday claim is superseded; the ops message is ignored.
 
-## Proposed CONTRACT.md additions (not applied; team to agree)
+## CONTRACT.md additions (applied Oct 24; CONTRACT.md is the source of truth)
 
 - Folders: `data/raw/<source>/` also takes `slack/` (Slack export layout) and `notes/` (`.md` meeting notes);
   `emails/` also takes `.eml`. Drop folder for connectors: `data/inbox/connectors/`.
