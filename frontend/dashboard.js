@@ -1772,8 +1772,11 @@ function openAgentScreen(id) {
         <button aria-label="Close" style="position:absolute;top:14px;right:16px;width:34px;height:34px;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:18px;cursor:pointer">×</button></div>`;
     back.querySelector('button').onclick = () => { back.remove(); state.cache.findings = state.cache.drawer = null; refreshDrawer(); };
     document.body.appendChild(back);
+    const esc = (e) => { if (e.key === 'Escape' && document.body.contains(back)) { back.querySelector('button').click(); document.removeEventListener('keydown', esc); } };
+    document.addEventListener('keydown', esc);
 }
 window.addEventListener('message', (e) => {
+    if (e.data?.type === 'clicky-close') { document.querySelector('#agentScreenModal button')?.click(); return; }
     if (e.data?.type === 'clicky-filed') { toast(`Clicky filed ${e.data.finding_id}: ${e.data.portal_ref}`, 'ok'); state.cache.findings = state.cache.drawer = state.cache.approvals = null; }
 });
 

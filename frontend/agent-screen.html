@@ -27,6 +27,8 @@
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,77,94,.55); } 70% { box-shadow: 0 0 0 9px rgba(255,77,94,0); } 100% { box-shadow: 0 0 0 0 rgba(255,77,94,0); } }
   .speed { margin-left: auto; display: flex; gap: 6px; }
   .speed button { background: var(--navy-2); color: var(--muted); border: 0; border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .exit-btn { margin-left: 10px; background: rgba(255,255,255,.12); color: #fff; border: 0; border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .exit-btn:hover { background: rgba(255,255,255,.22); }
   .speed button.on { background: var(--blue); color: #fff; }
   .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   /* the browser window */
@@ -86,6 +88,7 @@
       <h1>Clicky's screen</h1>
       <span class="live"><i></i>LIVE</span>
       <div class="speed" id="speed"><button data-s="1">1×</button><button data-s="2">2×</button><button data-s="4">4×</button></div>
+      <button id="exitScreen" class="exit-btn" title="Back to the dashboard (Esc)">✕ Exit</button>
     </div>
     <div class="browser">
       <div class="tabs"><div class="dots"><i></i><i></i><i></i></div><div class="tab" id="tab"><span class="spin" id="tabspin"></span><span id="tabtitle">Sandbox portal</span></div></div>
@@ -111,5 +114,16 @@
   </aside>
 </div>
 <script src="agent-screen.js"></script>
+<script>
+  (function () {
+    function exitScreen() {
+      if (window.parent && window.parent !== window) { window.parent.postMessage({ type: 'clicky-close' }, '*'); return; }
+      var q = new URLSearchParams(location.search), api = q.get('api');
+      location.href = './' + (api ? '?api=' + encodeURIComponent(api) : '');
+    }
+    document.getElementById('exitScreen').onclick = exitScreen;
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') exitScreen(); });
+  })();
+</script>
 </body>
 </html>
