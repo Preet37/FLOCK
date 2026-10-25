@@ -294,7 +294,15 @@ def evaluate(payload: dict[str, Any], contracts: Path | None) -> dict[str, Any]:
         for c in claims:
             c["binding"] = c.get("authority") in deal_keeper.BINDING
     return {"claims": claims, "superseded": len(got.get("superseded") or []), "ignored": got.get("ignored"),
-            "unread": [str(u) for u in got.get("unread") or []]}
+            "unread": [_relative(u, stage) for u in got.get("unread") or []]}
+
+
+def _relative(ref: Any, stage: Path) -> str:
+    """A message reference inside the payload ("emails/<file>.eml#line 13"), never the temp folder it was read in."""
+    text = str(ref)
+    for prefix in (str(stage) + "/", str(Path(stage).resolve()) + "/"):
+        text = text.replace(prefix, "")
+    return text
 
 
 def received(state_dir: Path, limit: int = 50, recheck: bool = True) -> list[dict[str, Any]]:
@@ -315,6 +323,7 @@ def received(state_dir: Path, limit: int = 50, recheck: bool = True) -> list[dic
     out = out[::-1][:limit]
     contracts = contracts_dir(state_dir) if recheck else None
     for rec in out:
+        rec["unread"] = [re.sub(r"^.*?flock_receive_[^/]+/", "", str(u)) for u in rec.get("unread") or []]
         payload = rec.pop("payload", None)
         if recheck and payload and contracts and not rec.get("contracts_from"):
             try:

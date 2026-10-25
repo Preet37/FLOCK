@@ -83,7 +83,7 @@ CONTESTANTS: dict[str, dict[str, Any]] = {
                     "env": {"FLOCK_JUDGE_PROVIDERS": "local", "FLOCK_JUDGE_MODELS": "${TUNED}",
                             "FLOCK_REVIEWER_PROVIDER": "offline", "FLOCK_WRITER_PROVIDER": "offline",
                             "FLOCK_MAPPER_PROVIDER": "offline"}},
-    "creao": {"label": "CREAO hosted agents", "offline": False,
+    "creao": {"label": "CREAO hosted agents (Claude Haiku 4.5)", "offline": False,
               "needs": "CREAO_API_KEY (project key, funded USD wallet) and creao_agents.json (scripts/creao_setup.py --create)",
               "env": {"FLOCK_JUDGE_PROVIDERS": "creao", "FLOCK_REVIEWER_PROVIDER": "offline",
                       "FLOCK_WRITER_PROVIDER": "offline", "FLOCK_MAPPER_PROVIDER": "offline"}},

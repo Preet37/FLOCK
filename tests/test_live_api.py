@@ -235,3 +235,24 @@ def test_agents_carry_provider_badges(server):  # noqa: F811
     assert by["checkers"]["provider"] == "code" and by["matcher"]["provider"] == "code"
     assert by["panel"]["provider"] in ("code", "creao", "gx10-tuned", "gx10", "mixed", "anthropic", "groq", "nvidia")
     assert all("provider" in x and "model" in x for x in out["agents"])
+
+
+def test_benchmarks_headline_has_three_sourced_columns():
+    b = api.Api.benchmarks(api.Api.__new__(api.Api))
+    h = b["headline"]
+    assert h["tuned"]["caught"] == 916 and h["tuned"]["accuracy"] == 1.0
+    assert "status" in h["frontier"] or h["frontier"]["total"]
+    assert h["team"]["accuracy"] is None and h["team"]["accuracy_note"] == "not measured"
+    assert h["team"]["hours_per_month"] == round(56 * 52 / 12, 1) and all(s["source"].startswith("https://")
+                                                                         for s in h["team"]["sources"])
+
+
+def test_received_batches_never_show_temp_paths(tmp_path):
+    from flock import connectors
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / connectors.RECEIVED).write_text(json.dumps(
+        {"at": "x", "connector": "c", "source": "email", "items": 1, "claims": [], "contracts_from": "/c",
+         "unread": ["/tmp/flock_receive_ab12/emails/promo.eml#line 13"]}) + "\n")
+    [rec] = connectors.received(state, recheck=False)
+    assert rec["unread"] == ["emails/promo.eml#line 13"]

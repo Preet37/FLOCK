@@ -459,8 +459,8 @@ class Api:
         """GX10 + training + held-out benchmark (docs/gx10_results.json, from docs/gx10_results.md), plus the latest
         local harness results if scripts/benchmark.py ran on this box."""
         doc = json.loads(BENCHMARKS_JSON.read_text()) if BENCHMARKS_JSON.exists() else {}
-        harness = frontend.read_json(frontend.RESULTS_JSON)
-        return {**doc, "harness": (harness or {}).get("current"),
+        harness = (frontend.read_json(frontend.RESULTS_JSON) or {}).get("current")
+        return {**doc, "harness": harness, "team": team_row(), "headline": headline(doc, harness),
                 "models": {"judges_default": "flock-judge-v1 x3 on the GX10 (scripts/gx10.sh env)",
                            "hosted": "CREAO hosted agents (Claude Haiku 4.5 inside) on Railway"}}
 
@@ -827,6 +827,57 @@ def _human(body: dict[str, Any], user: dict[str, Any] | None = None) -> Actor:
     name = str(body.get("actor") or "human")
     agent = name in AGENT_IDS or str(body.get("role") or "").strip().lower() == "agent"
     return Actor(id=name, role="agent" if agent else "human")
+
+
+STAFF_ACCOUNTANT_SALARY = 70_000   # FLOCK_CONTEXT.md: AppleOne posting, staff accountant incl. delivery reconciliation
+HOURS_PER_YEAR = 2080              # 40 h x 52 weeks: salary -> hourly (salary only, no benefits or overhead)
+STORES = 56
+
+
+def team_row() -> dict[str, Any]:
+    """Today's finance team, sourced numbers only: ~1 h per location per week (Lunchbox, an industry estimate) and a
+    $70,000 staff accountant salary (a posted LA role that includes delivery reconciliation). Accuracy: not measured."""
+    hours_month = round(STORES * 1.0 * 52 / 12, 1)
+    rate = round(STAFF_ACCOUNTANT_SALARY / HOURS_PER_YEAR, 2)
+    return {"who": "today's finance team (staff accountant + disputes clerk)", "stores": STORES,
+            "hours_per_store_week": 1.0, "hours_per_month": hours_month,
+            "hourly_usd": rate, "cost_per_month_usd": round(hours_month * rate, 2),
+            "accuracy": None, "accuracy_note": "not measured",
+            "sources": [{"what": "~1 h per location per week", "label": "INDUSTRY ESTIMATE",
+                         "source": "https://lunchbox.io/third-party-disputes-the-silent-restaurant-revenue-killer"},
+                        {"what": "$70,000/yr staff accountant (delivery platform reconciliation in the role)",
+                         "source": "https://www.appleone.com/CareerSearch/JobDetail/Staff-Accountant-1776310WR",
+                         "note": "hourly = salary / 2,080 h; salary only, no benefits"}]}
+
+
+def headline(doc: dict[str, Any], harness: dict[str, Any] | None) -> dict[str, Any]:
+    """Three columns for the pitch: our tuned local judge, a frontier model as run here, today's finance team. Only
+    measured or sourced numbers; a contestant that was not run says so."""
+    bench = doc.get("benchmark") or {}
+    rows = {r.get("kind"): r for r in bench.get("rows") or []}
+    total = bench.get("total")
+    tuned = rows.get("tuned") or {}
+    out = {"tuned": {"name": tuned.get("contestant"), "where": "GX10, on our network",
+                     "caught": tuned.get("caught"), "total": total,
+                     "accuracy": round(tuned["caught"] / total, 4) if tuned.get("caught") is not None and total else None,
+                     "false_alarms": tuned.get("false_alarms"), "p50_s": tuned.get("p50_s"),
+                     "usd_per_1000": tuned.get("usd_per_1000"), "run": tuned.get("run")}}
+    fr = (harness or {}).get("creao") or doc.get("frontier") or {}
+    if fr and fr.get("status", "ok") == "ok" and fr.get("total"):
+        out["frontier"] = {"name": fr.get("label") or "CREAO hosted agents (Claude Haiku 4.5)", "where": "CREAO cloud",
+                           "caught": fr.get("caught"), "total": fr.get("total"),
+                           "accuracy": fr.get("accuracy") if fr.get("accuracy") is not None else
+                           round(fr["caught"] / fr["total"], 4),
+                           "false_alarms": fr.get("false_alarms"), "p50_s": fr.get("p50_s"),
+                           "usd_per_1000": fr.get("cost_per_1000"), "seeds": fr.get("seeds"), "run": fr.get("run_id")}
+    else:
+        out["frontier"] = {"name": "Claude via CREAO", "status": "not run on the held-out seeds yet",
+                           "note": "Sonnet/Opus not run: no Anthropic key"}
+    t = team_row()
+    out["team"] = {"name": t["who"], "hours_per_month": t["hours_per_month"],
+                   "cost_per_month_usd": t["cost_per_month_usd"], "accuracy": None, "accuracy_note": "not measured",
+                   "sources": t["sources"]}
+    return out
 
 
 # roster agent -> the model role it calls (flock/llm.py route); agents not listed are plain code by design: the money
