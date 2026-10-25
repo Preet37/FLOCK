@@ -100,7 +100,7 @@ def deliver(p: dict, post: str | None, api_token: str) -> str:
         req = urllib.request.Request(post.rstrip("/") + "/api/connectors", data=json.dumps(p).encode(), method="POST",
                                      headers={"Content-Type": "application/json", "User-Agent": "flock-slack-watcher/1.0",
                                               **({"Authorization": f"Bearer {api_token}"} if api_token else {})})
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=600) as r:   # a reader model may take a while per message
             body = json.load(r)
         claims = body.get("claims", [])
         return f"POST {post} -> {len(claims)} claim(s): " + "; ".join(
