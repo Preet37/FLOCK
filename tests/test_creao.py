@@ -417,3 +417,17 @@ def test_app_polls_survive_a_rate_limit_and_count_against_the_budget(creaoapp, m
     text, _ = llm.complete("s", "u", 10, ("creaoapp", "app-judge"))
     assert json.loads(text) == VOTE and 3.0 in waits, "a 429 on a poll waits Retry-After and polls again"
     assert len(llm._app_times) == len(f.calls), "every create and poll was counted against the per-key budget"
+
+
+def test_app_reason_comes_from_the_marked_line_in_chat_text(creaoapp):
+    compact = {"request": "{...}", "check_type": "commission", "channel": "doordash", "outcome": "recoverable", "confidence": 0.86}
+    chat = ("I'll start by reading the skill. The contract says 20% and the payout shows 32.5%.\n"
+            "FLOCK_ANSWER: " + json.dumps({"outcome": "recoverable", "confidence": 0.86, "reason": "Contract says 20%; 6.50 on 20.00 is 32.5%."}))
+    creaoapp({("POST", "/api/v1/apps/app-judge/runs"): json.dumps({"id": "r5", "status": "pending"}).encode(),
+              ("GET", "/api/v1/apps/app-judge/runs/r5"): json.dumps({"id": "r5", "status": "completed",
+                                                                     "result": {"text": json.dumps(compact), "chatText": chat}}).encode()})
+    text, _ = llm.complete("s", "u", 10, ("creaoapp", "app-judge"))
+    got = json.loads(text)
+    assert got["outcome"] == "recoverable" and got["confidence"] == 0.86
+    assert got["reason"].startswith("Contract says 20%"), "the reason lives in chatText's FLOCK_ANSWER line"
+    assert "request" not in got, "echoed inputs are stripped"
