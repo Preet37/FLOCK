@@ -53,7 +53,8 @@
       "inputs": [
         "instructions",
         "request"
-      ]
+      ],
+      "run_share_link": "https://agent.creao.ai/share/db6b2917902c5799ac9fee5906942a58"
     },
     "judge.operator": {
       "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
@@ -62,7 +63,8 @@
       "inputs": [
         "instructions",
         "request"
-      ]
+      ],
+      "run_share_link": "https://agent.creao.ai/share/db6b2917902c5799ac9fee5906942a58"
     },
     "judge.skeptic": {
       "app_id": "9f48f380-fcd8-44d3-8387-ab9f85cd1c50",
@@ -71,7 +73,8 @@
       "inputs": [
         "instructions",
         "request"
-      ]
+      ],
+      "run_share_link": "https://agent.creao.ai/share/db6b2917902c5799ac9fee5906942a58"
     }
   },
   "apps_url": "https://agent.creao.ai",

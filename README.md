@@ -122,6 +122,25 @@ A laptop serializes the requests; the GX10 numbers go next to it.
 Serving with vLLM instead (OpenAI-compatible on `:8000`): point `FLOCK_LOCAL_URL` at it (tunnel or the Tailscale
 address) and set `FLOCK_LOCAL_MODEL` / `FLOCK_JUDGE_MODELS` to the ids it reports.
 
+## CREAO track: the agent built on agent.creao.ai
+
+The track's one requirement: at least one CREAO agent built on agent.creao.ai does the core work of the project, its
+agent ID and a share link to one of its runs are in the README, and it runs in the demo. Ours is the judge.
+
+| | |
+| --- | --- |
+| Agent | **Flock Judge**, built on agent.creao.ai (team: Thabhelo's team, thabhelo.duve@talladega.edu) |
+| Agent ID (app id) | `9f48f380-fcd8-44d3-8387-ab9f85cd1c50` |
+| Agent page | https://agent.creao.ai/apps/9f48f380-fcd8-44d3-8387-ab9f85cd1c50 |
+| Run share link | https://agent.creao.ai/share/db6b2917902c5799ac9fee5906942a58 (expires 2026-11-23; a judge run of the strict auditor on F-0001) |
+| What it does | The panel's three judges (strict auditor, operator, skeptic) each run as this agent with their own persona prompt; it returns the `{outcome, confidence, reason}` verdict the gatekeeper records |
+| How Flock calls it | provider `creaoapp` in `flock/llm.py`: app-scoped API Trigger, `POST /api/v1/apps/{appId}/runs` with `inputs: {instructions, request}`, polled until completed, paced to the key's 30 requests a minute |
+| Switch it on | `export CREAO_APP_KEY=capi_... FLOCK_JUDGE_PROVIDERS=creaoapp` and `unset FLOCK_OFFLINE` (the app id is read from `creao_agents.json`) |
+| First real run | three judges plus a debate round on fixture finding F-0001: recoverable at 0.81 in 78 s, no fallbacks |
+
+The seven hosted agents on the Developer Platform (next section) are the same roles on the API side; the track
+requirement is met by this one, which lives in the chat product where the judges can open it.
+
 ## Run every AI role on CREAO
 
 [CREAO](https://creao.ai) hosts agents created from a plain-language description and runs them through its Developer
