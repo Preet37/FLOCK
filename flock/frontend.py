@@ -478,12 +478,44 @@ def money_card(store: Store, run: dict[str, Any] | None, jstore: Store | None = 
     }
 
 
+def money_history(store: Store, results_json: Path | None = None) -> dict[str, Any]:
+    """Money and hours month by month from the real run history (runs.jsonl since the last --forget: every month
+    showtime or a live run processed), not extrapolated. The newest row is the month in the store now, so its
+    filed / recovered come from the findings as they stand. recovered = only claims the portal marked paid."""
+    rows = [json.loads(x) for x in (state_dir(store) / "runs.jsonl").read_text().splitlines() if x.strip()] \
+        if (state_dir(store) / "runs.jsonl").exists() else []
+    minutes = human_baseline(results_json)["minutes_per_store_week"]
+    rec = [f for f in store.all() if f.get("outcome") == "recoverable"]
+    now = {"found": money(sum(abs(f["gap"]) for f in rec)),
+           "filed": money(sum(abs(f["gap"]) for f in rec if f["state"] in ("FILED", "RECOVERED"))),
+           "recovered": money(sum(abs(f["gap"]) for f in rec if f["state"] == "RECOVERED"))}
+    by_month = []
+    for i, r in enumerate(rows):
+        last = i == len(rows) - 1
+        sw = r.get("store_weeks")
+        by_month.append({"month": r.get("month") or r.get("period") or f"run {i + 1}", "label": r.get("period"),
+                         "found": now["found"] if last else money(r.get("dollars") or 0.0),
+                         "filed": now["filed"] if last else money(r.get("filed_usd") or 0.0),
+                         "recovered": now["recovered"] if last else money(r.get("recovered_usd") or 0.0),
+                         "agent_hours": round(r["seconds"] / 3600, 4) if r.get("seconds") is not None else None,
+                         "agent_seconds": r.get("seconds"),
+                         "human_hours_est": round(sw * minutes / 60, 1) if sw else None,
+                         "to_human": r.get("to_human"), "live": bool(r.get("live"))})
+    tot = {k: money(sum(m[k] for m in by_month)) for k in ("found", "filed", "recovered")}
+    n = len(by_month)
+    return {"month": now, "ytd": {**tot, "months": n, "by_month": by_month},
+            "annualized_run_rate": money(tot["found"] / n * 12) if n else None,
+            "basis": "runs.jsonl: every month processed since the last reset; the newest month from the findings now. "
+                     "human_hours_est = store-weeks x the industry estimate (~1 h per location per week)."}
+
+
 def metrics(store: Store, jstore: Store | None = None, results_json: Path | None = None) -> dict[str, Any]:
     run = last_run(store)
     return {"run": {k: (run or {}).get(k) for k in ("run_id", "label", "source", "started_at", "finished_at",
                                                     "seconds", "findings", "data")} if run else None,
             "cards": [time_card(store, run, results_json), accuracy_card(store, results_json), cost_card(store, run),
-                      money_card(store, run, jstore)]}
+                      money_card(store, run, jstore)],
+            "money": money_history(store, results_json)}
 
 
 # agents --------------------------------------------------------------------------------------------------------------

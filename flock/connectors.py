@@ -263,6 +263,23 @@ def receive(payload: Any, state_dir: Path, contracts: Path | None = None, raw: P
     if problems:
         raise PayloadError(problems)
     contracts = contracts if contracts is not None else contracts_dir(state_dir)
+    got = evaluate(payload, contracts)
+    copied = write_payload(payload, raw)
+    rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "connector": payload["connector"],
+           "source": payload["source"], "items": len(payload["items"]), "simulated": bool(payload.get("simulated")),
+           **got, "contracts_from": str(contracts) if contracts else None,
+           "copied": [str(c) for c in copied], "payload": payload}
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / RECEIVED).open("a") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    return rec
+
+
+def evaluate(payload: dict[str, Any], contracts: Path | None) -> dict[str, Any]:
+    """The Deal Keeper's reading of one payload next to `contracts`: claims (with binding), superseded, ignored,
+    unread."""
+    from flock.agents import deal_keeper
     with tempfile.TemporaryDirectory(prefix="flock_receive_") as tmp:
         stage = Path(tmp)
         _render(payload, stage)
@@ -276,21 +293,16 @@ def receive(payload: Any, state_dir: Path, contracts: Path | None = None, raw: P
         claims = [{k: c.get(k) for k in keep if c.get(k) is not None} for c in mine]
         for c in claims:
             c["binding"] = c.get("authority") in deal_keeper.BINDING
-        copied = write_payload(payload, raw)
-    rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "connector": payload["connector"],
-           "source": payload["source"], "items": len(payload["items"]), "simulated": bool(payload.get("simulated")),
-           "claims": claims, "superseded": len(got.get("superseded") or []), "ignored": got.get("ignored"),
-           "unread": [str(u) for u in got.get("unread") or []], "contracts_from": str(contracts) if contracts else None,
-           "copied": [str(c) for c in copied]}
-    state_dir = Path(state_dir)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    with (state_dir / RECEIVED).open("a") as fh:
-        fh.write(json.dumps(rec) + "\n")
-    return rec
+    return {"claims": claims, "superseded": len(got.get("superseded") or []), "ignored": got.get("ignored"),
+            "unread": [str(u) for u in got.get("unread") or []]}
 
 
-def received(state_dir: Path, limit: int = 50) -> list[dict[str, Any]]:
-    """The last connector batches received over HTTP, newest first (skips a half-written last line)."""
+def received(state_dir: Path, limit: int = 50, recheck: bool = True) -> list[dict[str, Any]]:
+    """The last connector batches received over HTTP, newest first (skips a half-written last line).
+
+    recheck: a batch that was read with no contracts on file is read again against the contracts on file now, so the
+    same message never shows two different authorities because one batch arrived before the contracts were kept. A batch kept without its payload
+    (older format) that was read with no contracts is marked stale instead."""
     path = Path(state_dir) / RECEIVED
     if not path.exists():
         return []
@@ -300,7 +312,20 @@ def received(state_dir: Path, limit: int = 50) -> list[dict[str, Any]]:
             out.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-    return out[::-1][:limit]
+    out = out[::-1][:limit]
+    contracts = contracts_dir(state_dir) if recheck else None
+    for rec in out:
+        payload = rec.pop("payload", None)
+        if recheck and payload and contracts and not rec.get("contracts_from"):
+            try:
+                rec.update(evaluate(payload, contracts), rechecked_against=str(contracts))
+            except Exception as e:   # keep what was recorded; say why it wasn't rechecked
+                rec["recheck_error"] = f"{type(e).__name__}: {e}"
+        elif recheck and not rec.get("contracts_from") and contracts:
+            rec["stale"] = True
+            rec["stale_reason"] = ("received before the contracts were on file, so no sender could be matched to "
+                                   "the authorized contacts; send the batch again to re-check it")
+    return out
 
 
 def main(argv: list[str] | None = None) -> None:

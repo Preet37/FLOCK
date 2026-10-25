@@ -123,3 +123,23 @@ def test_outbox_and_missing_screen(server):  # noqa: F811
     assert code == 200 and out["messages"] == []
     code, out = client.get("/api/filings/F-nope/screen")
     assert code == 404
+
+
+def test_money_history_and_measured_seconds(live):
+    client, a, r = live
+    code, m = client.get("/api/metrics")
+    money = m["money"]
+    assert money["ytd"]["months"] == 1 and money["month"]["found"] > 0 and money["month"]["recovered"] == 0
+    [row] = money["ytd"]["by_month"]
+    assert row["agent_seconds"] > 0 and row["human_hours_est"] > row["agent_hours"] and row["live"] is True
+    assert money["annualized_run_rate"] == round(money["ytd"]["found"] * 12, 2)
+    code, s = client.get("/api/score")
+    assert s["runs"][-1]["seconds"] > 0 and s["runs"][-1]["month"]
+
+
+def test_short_deposit_is_caught_by_the_deposit_check(live):
+    """The deposit reconciler finds the short Uber Eats deposit; offline the panel calls it recoverable (on the hosted
+    CREAO run one judge's split sent the $71 version to a human: a judging call, not a missed detection)."""
+    _, a, _ = live
+    dep = [f for f in a.store.all() if f["check_type"] == "deposit" and f["channel"] == "ubereats"]
+    assert dep and max(abs(f["gap"]) for f in dep) > 10_000 and all(f["outcome"] == "recoverable" for f in dep)

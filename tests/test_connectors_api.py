@@ -68,3 +68,17 @@ def test_api_route_requires_token_and_records_agent(tmp_path, monkeypatch):
 def test_contracts_dir_prefers_state_copy(tmp_path):
     kept = contract(tmp_path / "state", ["sam.takahashi@ubereats.example"])
     assert connectors.contracts_dir(tmp_path / "state") == kept
+
+
+
+def test_received_batches_are_rechecked_against_the_contracts_now(tmp_path, monkeypatch):
+    """A batch kept before the contracts were on file shows the same authority as one received after."""
+    state = tmp_path / "state"
+    monkeypatch.setattr(connectors, "contracts_dir", lambda state_dir=None: None)
+    early = connectors.receive(example_payload(), state, raw=tmp_path / "raw")
+    assert early["contracts_from"] is None and not any(c.get("binding") for c in early["claims"])
+    good = contract(tmp_path, ["sam.takahashi@ubereats.example"])
+    monkeypatch.setattr(connectors, "contracts_dir", lambda state_dir=None: good)
+    [rec] = connectors.received(state)
+    assert "payload" not in rec and rec["rechecked_against"] == str(good)
+    assert any(c["binding"] and c["authority"] == "auth_email" for c in rec["claims"])

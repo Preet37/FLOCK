@@ -182,9 +182,34 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
         progress.finish("failed")
         raise
     progress.finish()
+    seconds = round(time.monotonic() - t0, 3)
     write_last_run(store, {**info, "label": label or "pipeline", "started_at": started_at,
-                           "seconds": round(time.monotonic() - t0, 3), "pace": pace})
+                           "seconds": seconds, "pace": pace})
+    vol = info.get("data") or {}
+    update_last_run_row(runs_path, started_at, seconds=seconds, store_weeks=vol.get("store_weeks"),
+                        stores=vol.get("stores"), weeks=vol.get("weeks"))
     return store
+
+
+def update_last_run_row(runs_path: Path, since: str | None = None, **fields) -> dict | None:
+    """Add measured fields (seconds, store_weeks, later filed/recovered dollars) to the newest runs.jsonl row, if it
+    was written by this run (its `at` is not before `since`). Never breaks a run."""
+    try:
+        path = Path(runs_path)
+        lines = [ln for ln in path.read_text().splitlines() if ln.strip()] if path.exists() else []
+        if not lines:
+            return None
+        row = json.loads(lines[-1])
+        if since and str(row.get("at", "")) < since:
+            return None
+        row.update({k: v for k, v in fields.items() if v is not None})
+        lines[-1] = json.dumps(row)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("\n".join(lines) + "\n")
+        tmp.replace(path)
+        return row
+    except (OSError, ValueError):
+        return None
 
 
 # (check_type, raw file stem prefix) -> the column whose cell shows the gap, so evidence points at one cell
@@ -539,6 +564,8 @@ def record_run(store: Store, source: str, runs_path: Path | None = None, rules_p
     }
     if period:
         entry["period"] = period
+    entry["filed_usd"] = round(sum(abs(f["gap"]) for f in rec if f["state"] in ("FILED", "RECOVERED")), 2)
+    entry["recovered_usd"] = round(sum(abs(f["gap"]) for f in rec if f["state"] == "RECOVERED"), 2)
     runs_path = Path(runs_path or runs_default(store))
     runs_path.parent.mkdir(parents=True, exist_ok=True)
     with runs_path.open("a") as fh:

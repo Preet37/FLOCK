@@ -97,6 +97,10 @@ try:
     from flock import auth
 except ImportError:  # pragma: no cover
     auth = None
+try:
+    from flock import slack_pull
+except ImportError:  # pragma: no cover
+    slack_pull = None
 
 sys.path.insert(0, str(ROOT))
 from scripts.score import score  # noqa: E402
@@ -663,6 +667,7 @@ class Api:
         from flock import agents_live, connectors
         try:
             rec = connectors.receive(body, self.dir)
+            rec.pop("payload", None)
         except connectors.PayloadError as e:
             raise BadRequest("; ".join(e.problems))
         agents_live.emit(self.store, {"event": "done", "agent_id": f"connector:{rec['connector']}",
@@ -978,6 +983,11 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "connectors"]:
                 with a.write_lock:
                     return self._send(200, a.connector(body))
+            if parts == ["api", "connectors", "slack", "pull"]:
+                if slack_pull is None:
+                    return self._send(404, {"error": "Slack pull is not available on this server"})
+                with a.write_lock:
+                    return self._send(200, slack_pull.pull(a.dir))
             if len(parts) == 4 and parts[:2] == ["api", "findings"] and parts[3] in ("approve", "reject"):
                 return self._send(200, a.decide(parts[2], parts[3], body, user))
             if len(parts) in (4, 5) and parts[:2] == ["api", "findings"] and parts[3] == "follow_up":

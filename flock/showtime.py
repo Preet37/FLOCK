@@ -255,6 +255,10 @@ def prepare(months: int = DEFAULT_MONTHS, seed: int = DEFAULT_SEED, stores: int 
         last = i == months - 1
         keep = pick_unpaid(store) if last else None
         rec["recovered"] = len(platform_pays(store, keep["finding_id"] if keep else None, m))
+        rows = store.all()   # the month's money once its claims were filed and paid (only the portal's payments count)
+        pipeline.update_last_run_row(runs_path, None, month=m,
+                                     filed_usd=money(sum(abs(f["gap"]) for f in rows if f["state"] in ("FILED", "RECOVERED"))),
+                                     recovered_usd=money(sum(abs(f["gap"]) for f in rows if f["state"] == "RECOVERED")))
         if keep:
             claim = keep_claim(store, store.get(keep["finding_id"]), portal, m)
         proposals = learner._read(learner._proposed_path(store))
@@ -270,6 +274,7 @@ def prepare(months: int = DEFAULT_MONTHS, seed: int = DEFAULT_SEED, stores: int 
                      runs_path, demo_approve=False, forget=(months == 0), quiet=quiet)
     headline = pick_headline(store)
     demo["filed"] = []   # nothing on stage is approved for the presenter: every drafted dispute waits for a human
+    pipeline.update_last_run_row(runs_path, None, month=month)
     carried = None
     if claim:
         carried = carry_over(store, claim, portal)
@@ -316,6 +321,7 @@ def live(seed: int | None = None, stores: int | None = None, month: str | None =
     rec = run_month(ws, month, "demo_month", None, seed, stores, store, rules_path, portal, mappings, runs_path,
                     demo_approve=False, forget=False, quiet=quiet, period=f"{month_name(month)} (live, seed {seed})")
     rec["filed"] = []
+    pipeline.update_last_run_row(runs_path, None, month=month, live=True)
     shutil.copy(Path(rec["out"]) / "answer_key.csv", state_dir / pipeline.LIVE_KEY)
     keep_contracts(state_dir, Path(rec["out"]).parent / "raw")
     info = summarize(store, [], rec, pick_headline(store), None, seed, month, round(time.monotonic() - t0, 1),
