@@ -17,7 +17,7 @@ Everything below runs today with `FLOCK_OFFLINE=1` and no API key.
 | Judge panel | 3 judges, one debate round on splits, Claude writes a memo for the human (never breaks the tie), 10% random audit |
 | Judge market | Brier-scored bets settle on human decisions and RECOVERED; votes weighted by balance; attention budget |
 | Journal Entry Drafter | Balanced entries per store x channel x payout, disputed money to "Due from Platform", human approves, NetSuite/QuickBooks CSV |
-| Clicky | Files approved disputes in a localhost sandbox portal with a real browser |
+| Clicky | Files approved disputes in a localhost sandbox portal with a real browser; learns the form from one human demonstration, a human approves, stops and asks again when the form changes |
 | Dashboard | Live board, human queue, PR-style finding page, journal, judge market, scoreboard, progress bar |
 | Models | Provider switch per role: local (vLLM/Ollama), Groq, NVIDIA, Claude; `python scripts/llm_check.py` |
 | Tests | 337 passing |

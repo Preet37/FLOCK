@@ -1,4 +1,4 @@
-// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/flock  #/finding/<id>  #/journal  #/journal/<id>  #/score  #/market
+// Flock dashboard. Plain JS, hash routes: #/  #/queue  #/flock  #/finding/<id>  #/clicky  #/journal  #/journal/<id>  #/score  #/market
 // Polls /api/summary every second; re-renders the current view when the audit log grows.
 // Also polls /api/progress and updates the live board's progress bar in place (no re-render), and
 // /api/agents?since=<cursor> for the Flock view (only agents that changed come back).
@@ -115,6 +115,9 @@ document.addEventListener("click", (ev) => {
     if (b.dataset.act === "je-agent-try") decideJe(id, "approve", "Agent tried to approve its own journal entry", "agent");
     if (b.dataset.act === "je-export") exportJournal();
     if (b.dataset.act === "src") showSource(b);
+    if (b.dataset.act === "wf-approve") decideWorkflow("approve");
+    if (b.dataset.act === "wf-reject") decideWorkflow("reject");
+    if (b.dataset.act === "wf-agent-try") decideWorkflow("approve", "agent");
     return;
   }
   const row = ev.target.closest("tr[data-href]");
@@ -158,7 +161,7 @@ function activity(entries) {
   return `<ul class="feed">${entries.map((e) => `<li>
       <span class="dot ${e.allowed ? esc(e.role) : "denied"}"></span>
       <span><b>${esc(e.actor)}</b> ${e.allowed ? esc(e.action) : `tried to <b>${esc(e.action)}</b>, denied`}
-        <a href="${e.subject_type === "journal_entry" ? "#/journal/" : "#/finding/"}${esc(e.subject_id)}" class="mono">${esc(e.subject_id)}</a></span>
+        <a href="${e.subject_type === "workflow" ? "#/clicky" : (e.subject_type === "journal_entry" ? "#/journal/" : "#/finding/") + esc(e.subject_id)}" class="mono">${esc(e.subject_id)}</a></span>
       <span class="meta">${esc(e.before)} → ${esc(e.after)} · ${when(e.at)}</span></li>`).join("")}</ul>`;
 }
 
@@ -683,6 +686,136 @@ function findingAgents(agents) {
   return agents.map((a) => `<div class="fl-mini"><span class="fl-chip r-${esc(a.role)} s-${esc(a.state)}"><span class="fl-dot"></span>${esc(a.role)}</span> <span class="muted">${esc(a.summary || stateWord[a.state] || "")}</span></div>`).join("");
 }
 
+// ---------- Clicky: the workflow it learned from watching a human (flock/workflow.py -> /api/clicky) ----------
+const FEED_FIELD = { finding_id: "finding ID", order_ids: "order IDs", amount: "dispute amount", channel: "sales channel",
+  category: "dispute category", dispute_draft: "approved dispute message" };
+const WF_BADGE = { DRAFT: "JUDGED", APPROVED: "APPROVED", STALE: "REJECTED", REJECTED: "REJECTED", RETIRED: "NEW" };
+
+async function decideWorkflow(action, role = "human") {
+  busy = true;
+  try {
+    const r = await api(`/api/clicky/${action}`, {
+      method: "POST", body: JSON.stringify({ actor: role === "human" ? actorName() : "clicky", role }),
+    });
+    toast(`${r.workflow.workflow_id} ${action === "approve" ? "approved" : "rejected"} by ${actorName()}. Logged with its hash.`);
+  } catch (e) {
+    toast(e.status === 403 ? `Gatekeeper denied it: ${e.message}. The attempt is in the audit log.` : e.message, true);
+  } finally { busy = false; await refresh(true); }
+}
+
+function feedChip(s) {
+  const src = s.source || {};
+  if (src.kind === "finding") return `<span class="chip feed-f">finding · ${esc(FEED_FIELD[src.field] || src.field)}</span>`;
+  if (src.kind === "env") return `<span class="chip feed-e">${src.secret ? "secret" : "setting"} · <span class="mono">${esc(src.name)}</span></span>`;
+  if (src.kind === "constant") return `<span class="chip feed-c" title="${esc(src.value)}">constant</span>`;
+  return "";
+}
+
+function wfStep(s, d) {
+  const wf = d.workflow;
+  const stale = wf.state === "STALE" && wf.stale_step === s.n;
+  const t = s.target || {};
+  const where = [t.label && `label “${t.label}”`, t.role && t.text && `${t.role} “${t.text}”`, t.name && `name=${t.name}`]
+    .filter(Boolean).join(" · ");
+  const shown = s.demo_value != null && !(s.source || {}).secret
+    ? `<div class="wf-val mono" title="${esc(s.demo_value)}">typed in the demo: ${esc(s.demo_value.length > 90 ? s.demo_value.slice(0, 87) + "…" : s.demo_value)}</div>` : "";
+  const img = s.screenshot && d.demo && d.demo.exists
+    ? `<a href="${esc(d.demo.base + s.screenshot)}" target="_blank" rel="noopener"><img class="wf-thumb" loading="lazy" src="${esc(d.demo.base + s.screenshot)}" alt="screenshot of step ${s.n}"></a>`
+    : `<div class="wf-thumb none">no screenshot</div>`;
+  return `<li class="wf-step ${stale ? "stale" : ""}">
+    <span class="wf-n">${s.n}</span>
+    <div class="wf-main">
+      <div class="wf-desc">${esc(s.describe)}</div>
+      <div class="wf-meta"><span class="chip">${esc(s.phase === "login" ? "sign in (once)" : "per dispute")}</span>${feedChip(s)}
+        ${where ? `<span class="muted mono">${esc(where)}</span>` : s.action === "goto" ? `<span class="muted mono">${esc(s.path)}</span>` : ""}</div>
+      ${shown}
+      ${stale ? `<div class="wf-stale">Clicky stopped here: ${esc(wf.stale_reason)}</div>` : ""}
+    </div>${img}</li>`;
+}
+
+async function renderClicky() {
+  const d = await api("/api/clicky");
+  const wf = d.workflow;
+  const head = `<div class="page-head"><div><h1>Clicky</h1>
+      <div class="sub">Clicky watched a person file one dispute in the sandbox portal and learned the steps. Each typed value was matched
+        to the finding field it came from, so Clicky can fill the form for any approved finding. It may only use the workflow after a
+        human approves it; if the portal changes, it stops and asks for one new demonstration.</div></div></div>`;
+  if (!wf) {
+    view.innerHTML = head + `<div class="card empty section-gap">Nothing learned yet. Clicky files with its built-in selectors until someone shows it.
+      <br><br>Record a demonstration: <code>python -m flock.agents.clicky record</code></div>`;
+    return;
+  }
+  const fed = Object.keys(wf.fields || {}).length;
+  let banner = "";
+  if (wf.state === "DRAFT") {
+    banner = `<div class="card card-pad wf-banner warn"><b>Waiting for your approval, ${esc(actorName())}.</b>
+      <span>Check each step and which finding field feeds it. Clicky won't file in browser mode until a human approves.</span>
+      ${d.missing_required.length ? `<div class="bad-t">Can't be approved: no step takes the ${esc(d.missing_required.map((m) => FEED_FIELD[m]).join(" or "))} from the finding.</div>` : ""}
+      <div class="q-actions">
+        <button class="btn-ok" data-act="wf-approve">Approve workflow</button>
+        <button class="btn-bad" data-act="wf-reject">Reject</button>
+        <button class="btn-ghost" data-act="wf-agent-try" title="Shows the gatekeeper refusing an agent">Try as an agent</button>
+      </div></div>`;
+  } else if (wf.state === "STALE") {
+    banner = `<div class="card card-pad wf-banner bad"><b>The portal changed. Clicky stopped.</b>
+      <span>${esc(wf.stale_reason)}. ${wf.stale_submitted ? "A dispute may have been submitted; check the portal." : "Nothing was typed or submitted."}
+        Clicky never guesses on a money form.</span>
+      <div><b>Show it once more:</b> <code>python -m flock.agents.clicky record</code> (file one dispute the new way), then approve the new version here.</div></div>`;
+  } else if (wf.state === "APPROVED") {
+    banner = `<div class="card card-pad wf-banner ok"><b>Approved by ${esc(wf.approved_by)}</b> <span class="muted">${when(wf.approved_at)}</span>
+      <span>Hash <span class="mono">${esc((wf.approved_hash || "").slice(0, 12))}</span>. In browser mode (<code>FLOCK_CLICKY_MODE=browser</code>) Clicky replays these steps
+        for every approved finding, and each filing's audit entry names this workflow and hash.</span></div>`;
+  } else if (wf.state === "REJECTED") {
+    banner = `<div class="card card-pad wf-banner">Rejected. Clicky uses its built-in selectors. Record again to propose a new workflow.</div>`;
+  }
+  const v = d.demo;
+  const steps = wf.steps.map((s) => wfStep(s, d)).join("");
+  view.innerHTML = head + `
+    <div class="pr-meta" style="margin-bottom:12px">${badge(WF_BADGE[wf.state] || "NEW", wf.state)}
+      <span class="mono">${esc(wf.workflow_id)}</span><span>learned ${when(wf.learned_at)} from demonstration <span class="mono">${esc(wf.learned_from)}</span></span>
+      <span>portal form ${esc(wf.portal_layout || "?")} (serving ${esc(d.layout)})</span><span>labels: ${esc(wf.labeled_by)}</span>
+      <span>Clicky mode now: ${esc(d.mode)}. In browser mode it ${esc(d.uses === "learned" ? "replays this workflow" : d.uses === "stopped" ? "files nothing until this is resolved" : "uses its built-in selectors")}</span></div>
+    ${banner}
+    <div class="stats section-gap">
+      <div class="card stat"><div class="label">Steps</div><div class="value">${wf.steps.length}</div>
+        <div class="hint">${wf.steps.filter((s) => s.phase === "login").length} to sign in, ${wf.steps.filter((s) => s.phase === "file").length} per dispute</div></div>
+      <div class="card stat accent"><div class="label">Filled from the finding</div><div class="value">${fed}</div>
+        <div class="hint">${esc(Object.keys(wf.fields || {}).map((k) => FEED_FIELD[k]).join(", ") || "none")}</div></div>
+      <div class="card stat"><div class="label">Constants</div><div class="value">${(wf.constants || []).length}</div>
+        <div class="hint">same value every time</div></div>
+      <div class="card stat"><div class="label">Hash</div><div class="value mono" style="font-size:18px">${esc(wf.hash.slice(0, 12))}</div>
+        <div class="hint">what a human approves</div></div>
+    </div>
+    ${(wf.warnings || []).length ? `<div class="card card-pad section-gap"><b>Check these</b><ul class="notes">${wf.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
+    <div class="grid-2">
+      <section class="card"><div class="card-head"><h2>Learned steps</h2><span class="muted">in the order the person did them</span></div>
+        <ol class="wf-steps">${steps}</ol></section>
+      <div class="stack" style="align-content:start">
+        <section class="card"><div class="card-head"><h2>The recording</h2></div><div class="card-pad">
+          ${v && v.video ? `<video class="wf-video" controls preload="metadata" src="${esc(v.video)}"></video>
+            <div><a href="${esc(v.video)}" target="_blank" rel="noopener">Open the video</a></div>` : `<div class="muted">No video for this demonstration.</div>`}
+          ${v && v.trace ? `<div class="muted" style="margin-top:6px">Step-by-step trace: <a href="${esc(v.trace)}">trace.zip</a> · <code>python -m playwright show-trace ${esc(v.trace_path)}</code></div>` : ""}
+        </div></section>
+        <section class="card"><div class="card-head"><h2>Versions</h2></div><div class="table-scroll"><table>
+          <thead><tr><th>Workflow</th><th>State</th><th>Form</th><th>Demo</th></tr></thead><tbody>
+          ${d.history.map((h) => `<tr><td class="mono">${esc(h.workflow_id)}</td><td>${badge(WF_BADGE[h.state] || "NEW", h.state)}</td>
+            <td>${esc(h.portal_layout || "?")}</td><td class="mono">${esc(h.learned_from)}</td></tr>`).join("")}
+          </tbody></table></div></section>
+        <section><h2>Audit trail</h2>${timeline(d.log)}</section>
+      </div>
+    </div>`;
+}
+
+async function pollClicky() {
+  try {
+    const d = await api("/api/clicky");
+    const c = $("#clicky-count");
+    const hot = d.needs_approval || d.needs_demo;
+    c.hidden = !hot; c.classList.toggle("hot", hot);
+    c.title = d.needs_demo ? "the portal changed: show Clicky once more" : d.needs_approval ? "a learned workflow waits for approval" : "";
+  } catch { /* the board works without it */ }
+}
+
 // ---------- router + polling ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
@@ -691,7 +824,9 @@ function route() {
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on",
     (a.dataset.view === "live" && (h === "/" || m)) || (a.dataset.view === "queue" && h === "/queue")
     || (a.dataset.view === "journal" && (h === "/journal" || jm)) || (a.dataset.view === "score" && h === "/score")
-    || (a.dataset.view === "market" && h === "/market") || (a.dataset.view === "flock" && h === "/flock")));
+    || (a.dataset.view === "market" && h === "/market") || (a.dataset.view === "flock" && h === "/flock")
+    || (a.dataset.view === "clicky" && h === "/clicky")));
+  if (h === "/clicky") return renderClicky();
   if (m) return renderFinding(decodeURIComponent(m[1]));
   if (jm) return renderJournalEntry(decodeURIComponent(jm[1]));
   if (h === "/journal") return renderJournal();
@@ -718,6 +853,7 @@ async function refresh(force = false) {
     if (force || (version !== lastVersion && !busy && !typing())) {
       lastVersion = version;
       await route();
+      pollClicky();
     }
   } catch (e) {
     $("#last-update").textContent = "can't reach the server, retrying…";
@@ -745,6 +881,7 @@ async function refresh(force = false) {
 api("/api/meta").then((m) => ($("#store-name").textContent = `store: ${m.store}`)).catch(() => {});
 window.addEventListener("hashchange", () => route());
 refresh(true);
+pollClicky();
 pollProgress();
 setInterval(refresh, 1000);
 setInterval(pollProgress, 700);

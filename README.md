@@ -271,6 +271,53 @@ if Playwright or a browser is missing, it falls back to the jsonl file. Other kn
 headed only), `FLOCK_CLICKY_CHANNEL=chrome`, `FLOCK_PORTAL_USER` / `FLOCK_PORTAL_PASS` / `FLOCK_PORTAL_PORT`.
 Real-browser test: `FLOCK_TEST_BROWSER=1 pytest tests/test_clicky.py`.
 
+### Clicky learns the form from one demonstration
+
+Instead of hard-coded selectors, Clicky can learn the dispute form by watching a person file one dispute
+(`flock/recorder.py`, `flock/workflow.py`). Agents propose, humans approve: the learned workflow is a draft until a
+human approves it.
+
+```bash
+python -m playwright install chromium ffmpeg      # once (ffmpeg = the recording's video)
+export FLOCK_OFFLINE=1
+python -m flock.pipeline --reset --forget         # gives some drafted disputes to show
+
+# 1. Record: a real browser opens the localhost portal with a panel showing the finding to file. File it as you
+#    normally would. Recording stops when the SBX- reference appears.
+python -m flock.agents.clicky record              # -> data/demos/<id>/ demo.json, step-NN.png, video.webm, trace.zip
+# 2. Learn happens right after recording (or: python -m flock.agents.clicky learn [--demo <id>]).
+python -m flock.agents.clicky show                # steps in plain English, which finding field feeds each
+# 3. A human approves it once (or the dashboard's "Clicky" tab). Logged by the gatekeeper with the workflow's hash.
+python -m flock.agents.clicky --approve --actor preet
+# 4. Replay: Clicky fills the form for every approved finding from the learned steps
+FLOCK_CLICKY_MODE=browser FLOCK_CLICKY_HEADED=1 python -m flock.pipeline --reset --demo-approve
+# 5. The platform redesigns its form: renamed and reordered fields. Clicky checks every field before typing,
+#    can't find "Sales channel", files nothing, marks the workflow STALE; the dashboard asks for one new demonstration
+FLOCK_PORTAL_LAYOUT=v2 FLOCK_CLICKY_MODE=browser python -m flock.pipeline --reset --demo-approve
+FLOCK_PORTAL_LAYOUT=v2 python -m flock.agents.clicky record     # show it once, the new way -> WF-file_dispute-v2
+python -m flock.agents.clicky --approve --actor preet
+FLOCK_PORTAL_LAYOUT=v2 FLOCK_CLICKY_HEADED=1 python -m flock.agents.clicky file   # files the approved ones left, v2 steps
+```
+
+- **What is learned:** every fill, select and click, with a locator built from what a person sees (label, then role +
+  text, then the name attribute; id last), and each typed value matched back to the finding field it equals:
+  channel, order IDs, amount (always typed to the cent by code), category, finding ID, the approved dispute message.
+  A value that matches nothing stays a constant and is flagged. The password is never stored (replay reads
+  `FLOCK_PORTAL_PASS`).
+- **Rules:** a workflow that doesn't take the amount and order IDs from the finding can't be approved; steps edited
+  after learning can't be approved (hash recomputed), and steps edited after approval are refused at replay.
+  A learned workflow that is DRAFT or STALE stops browser filing (no fallback, no guessing); with none learned,
+  the hard-coded selectors still work. Filing is still `gatekeeper.transition("file")`, and each filing's audit
+  entry names the workflow and hash. The demonstration itself is a real sandbox filing: if its finding was
+  approved, the gatekeeper marks it FILED so Clicky never files it twice.
+- If Clicky isn't the one starting the portal (you ran `python -m flock.portal` yourself), the layout is whatever
+  that terminal's `FLOCK_PORTAL_LAYOUT` says; restart it with `FLOCK_PORTAL_LAYOUT=v2` for step 5.
+- Files: `data/demos/` and `data/workflows/` (gitignored; the workflow log is `data/workflows/audit_log.jsonl`,
+  which survives `--reset`). Committed examples: `fixtures/clicky_demo_v1.json`, `fixtures/file_dispute_workflow.example.json`.
+- Tests: `pytest tests/test_clicky_learn.py` (mapping, approval, replay and v2 stale detection against the real portal
+  HTML without a browser); `FLOCK_TEST_BROWSER=1` adds the full record -> learn -> approve -> replay -> v2 stale ->
+  record again -> replay run in a real browser, with a scripted person at the keyboard.
+
 ## Getting started (teammates)
 
 ```bash
@@ -332,7 +379,9 @@ flock/progress.py      progress reporter: terminal bar + data/state/progress.jso
 flock/agents_live.py   the live flock: agent status feed (spawn/working/done), tracker, pooling, /api/agents snapshot
 flock/demo.py          live seed demo: generate -> collect -> pipeline -> score, then restore
 profiles/              company profiles for the generator (default, ca_bagel_chain: simulated)
-flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into
+flock/portal.py        FAKE sandbox dispute portal (localhost) that Clicky files into (FLOCK_PORTAL_LAYOUT=v2: redesigned form)
+flock/recorder.py      records a human filing one dispute (steps, locators, screenshots, video, trace)
+flock/workflow.py      learns a parameterized workflow from a recording; human approval, stale detection
 flock/agents/          one file per agent, owner named at the top (anomaly.py: learned baselines, no deal term needed)
 fixtures/              fake findings so everyone can work in parallel (+ adversarial_findings.json for tests)
 generator/             Maja's data generator (output in generator/out/, gitignored)

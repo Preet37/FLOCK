@@ -15,7 +15,7 @@ ADVERSARIAL = json.loads((ROOT / "fixtures" / "adversarial_findings.json").read_
 @pytest.fixture(autouse=True)
 def offline_and_isolated(tmp_path, monkeypatch):
     """Every test runs offline and never touches the repo's rules.json, state dir or sandbox portal."""
-    from flock import llm
+    from flock import llm, workflow
     from flock.agents import clicky, learner
 
     monkeypatch.setenv("FLOCK_OFFLINE", "1")
@@ -31,6 +31,9 @@ def offline_and_isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(learner, "RULES", tmp_path / "iso_rules.json")
     monkeypatch.setattr(learner, "PROPOSED", tmp_path / "iso_proposed.json")
     monkeypatch.setattr(clicky, "PORTAL", tmp_path / "iso_portal.jsonl")
+    monkeypatch.setattr(workflow, "WORKFLOWS_DIR", tmp_path / "iso_workflows")
+    monkeypatch.setattr(workflow, "DEMOS_DIR", tmp_path / "iso_demos")
+    monkeypatch.delenv("FLOCK_PORTAL_LAYOUT", raising=False)
 
 
 def fake(finding_id: str) -> dict:

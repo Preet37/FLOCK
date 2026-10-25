@@ -4,6 +4,7 @@
 
 Not a real platform and not connected to one. Filings land in data/sandbox_portal/disputes.jsonl.
 Creds: FLOCK_PORTAL_USER / FLOCK_PORTAL_PASS. Port: FLOCK_PORTAL_PORT.
+FLOCK_PORTAL_LAYOUT=v2 serves a redesigned dispute form (renamed, reordered fields): the Clicky relearn demo.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ CATEGORIES = {
 }
 
 LAYOUT = """<!doctype html>
-<html><head><meta charset="utf-8"><title>{{ title }} - Sandbox Merchant Portal</title>
+<html><head><meta charset="utf-8"><meta name="portal-layout" content="{{ layout_id }}"><title>{{ title }} - Sandbox Merchant Portal</title>
 <style>
  body{font-family:system-ui,sans-serif;margin:0;background:#f4f5f7;color:#1f2328}
  .banner{background:#b42318;color:#fff;text-align:center;padding:6px;font-weight:600;letter-spacing:.03em}
@@ -64,18 +65,45 @@ LOGIN = """<h2>Sign in</h2>
 <button id="login-btn" type="submit">Sign in</button></form>
 <p class="muted">Sandbox credentials only. Default: sandbox / sandbox.</p>"""
 
+# Form layouts. Each field: (key the portal stores, input name/id, label, kind). The stored row is the same either way.
+# v2 (FLOCK_PORTAL_LAYOUT=v2) is the "the platform redesigned its form" moment: every label, name and id is
+# renamed and the order changes, so a learned workflow can no longer find its fields and Clicky must stop.
+LAYOUTS: dict[str, dict[str, Any]] = {
+    "v1": {"submit": ("submit-btn", "Submit dispute"), "fields": [
+        ("channel", "channel", "Sales channel", "channel"),
+        ("order_ids", "order_ids", "Order ID(s), comma separated", "text"),
+        ("amount", "amount", "Amount disputed (USD)", "money"),
+        ("category", "category", "Category", "category"),
+        ("merchant_ref", "merchant_ref", "Your internal reference (optional)", "text"),
+        ("message", "message", "Message and evidence", "textarea"),
+    ]},
+    "v2": {"submit": ("send-btn", "Send to platform"), "fields": [
+        ("category", "reason_code", "Reason for dispute", "category"),
+        ("amount", "claim_amount", "Disputed amount ($)", "money"),
+        ("channel", "platform", "Delivery platform", "channel"),
+        ("order_ids", "order_refs", "Affected order numbers", "text"),
+        ("message", "case_details", "Explain the issue", "textarea"),
+        ("merchant_ref", "case_id", "Merchant case ID (optional)", "text"),
+    ]},
+}
+
 FORM = """<h2>File a dispute</h2>
 {% if error %}<p class="err" id="form-error">{{ error }}</p>{% endif %}
 <form method="post" action="{{ url_for('new_dispute') }}">
-<label for="channel">Sales channel</label>
-<select id="channel" name="channel">{% for c in channels %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select>
-<label for="order_ids">Order ID(s), comma separated</label><input id="order_ids" name="order_ids">
-<label for="amount">Amount disputed (USD)</label><input id="amount" name="amount" inputmode="decimal">
-<label for="category">Category</label>
-<select id="category" name="category">{% for k, v in categories.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
-<label for="merchant_ref">Your internal reference (optional)</label><input id="merchant_ref" name="merchant_ref">
-<label for="message">Message and evidence</label><textarea id="message" name="message"></textarea>
-<button id="submit-btn" type="submit">Submit dispute</button></form>"""
+{% for key, name, label, kind in layout.fields %}<label for="{{ name }}">{{ label }}</label>
+{% if kind == 'channel' %}<select id="{{ name }}" name="{{ name }}">{% for c in channels %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select>
+{% elif kind == 'category' %}<select id="{{ name }}" name="{{ name }}">{% for k, v in categories.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+{% elif kind == 'textarea' %}<textarea id="{{ name }}" name="{{ name }}"></textarea>
+{% else %}<input id="{{ name }}" name="{{ name }}"{% if kind == 'money' %} inputmode="decimal"{% endif %}>{% endif %}
+{% endfor %}<button id="{{ layout.submit[0] }}" type="submit">{{ layout.submit[1] }}</button></form>"""
+
+
+def layout_name(name: str | None = None) -> str:
+    name = (name or os.environ.get("FLOCK_PORTAL_LAYOUT") or "v1").strip().lower()
+    if name not in LAYOUTS:
+        raise ValueError(f"FLOCK_PORTAL_LAYOUT={name!r} is not a layout; pick one of: {', '.join(LAYOUTS)}")
+    return name
+
 
 CONFIRM = """<h2>Dispute received</h2>
 <p>Your reference number:</p><p class="ref" id="portal-ref">{{ d.portal_ref }}</p>
@@ -115,16 +143,20 @@ def read_filings(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def create_app(data_dir: Path | None = None) -> Flask:
+def create_app(data_dir: Path | None = None, layout: str | None = None) -> Flask:
+    """layout: 'v1' (default) or 'v2'; None reads FLOCK_PORTAL_LAYOUT."""
     app = Flask(__name__)
+    layout_id = layout_name(layout)
+    spec = LAYOUTS[layout_id]
     app.secret_key = os.environ.get("FLOCK_PORTAL_SECRET") or secrets.token_hex(16)
     filings = Path(data_dir or DATA_DIR) / "disputes.jsonl"
     user = os.environ.get("FLOCK_PORTAL_USER", "sandbox")
     password = os.environ.get("FLOCK_PORTAL_PASS", "sandbox")
 
     def page(title: str, body: str, **ctx: Any) -> str:
-        ctx.update(channels=CHANNELS, categories=CATEGORIES)
-        return render_template_string(LAYOUT, title=title, body=render_template_string(body, **ctx))
+        ctx.update(channels=CHANNELS, categories=CATEGORIES, layout=spec)
+        return render_template_string(LAYOUT, title=title, layout_id=layout_id,
+                                      body=render_template_string(body, **ctx))
 
     @app.before_request
     def require_login():
@@ -155,7 +187,7 @@ def create_app(data_dir: Path | None = None) -> Flask:
     def new_dispute():
         if request.method == "GET":
             return page("File a dispute", FORM, error=None)
-        form = request.form
+        form = {key: request.form.get(name, "") for key, name, _, _ in spec["fields"]}
         order_ids = [o.strip() for o in form.get("order_ids", "").split(",") if o.strip()]
         try:
             amount = money(form.get("amount", "").replace("$", ""))
@@ -196,5 +228,5 @@ def create_app(data_dir: Path | None = None) -> Flask:
 
 
 if __name__ == "__main__":
-    print(f"Sandbox portal (FAKE, localhost only): http://{HOST}:{PORT}")
+    print(f"Sandbox portal (FAKE, localhost only): http://{HOST}:{PORT}  form layout {layout_name()}")
     create_app().run(host=HOST, port=PORT, debug=False)
