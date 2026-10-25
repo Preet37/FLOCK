@@ -320,3 +320,100 @@ def test_the_verdict_is_found_in_the_harness_narration(creao):
     text, _ = llm.complete("SYS", "u", 10, ("creao", "a-strict"))
     assert json.loads(text) == VOTE, "without a marker: skip the echo and the summary, take the real object"
     assert llm._creao_answer(["plain words only"], None) == "plain words only"
+
+
+# --- an agent built on agent.creao.ai, through its app-scoped API Trigger -------------------------------------------
+
+@pytest.fixture
+def creaoapp(creao, monkeypatch, tmp_path):
+    monkeypatch.setenv("CREAO_APP_KEY", "capi_test")
+    monkeypatch.setattr(llm, "CREAOAPP_POLL_SECONDS", 0.0)
+    llm._app_times.clear()
+    monkeypatch.setenv("FLOCK_CREAOAPP_URL", "https://developer.test")   # the fake answers any host
+    agents = tmp_path / "creao_agents.json"
+    agents.write_text(json.dumps({"agents": {}, "apps": {"judge.strict": {"app_id": "app-judge"}, "judge.operator": "app-judge",
+                                                          "judge.skeptic": "app-judge"}}))
+    monkeypatch.setenv("FLOCK_CREAO_AGENTS", str(agents))
+    return creao
+
+
+def test_app_agent_routes_runs_and_polls(creaoapp, monkeypatch):
+    monkeypatch.setenv("FLOCK_JUDGE_PROVIDERS", "creaoapp")
+    assert llm.route("judge", 0) == ("creaoapp", "app-judge") and llm.available(llm.route("judge", 0))
+    polls = {"n": 0}
+
+    def status(call):
+        polls["n"] += 1
+        if polls["n"] < 2:
+            return json.dumps({"id": "run1", "status": "running"}).encode()
+        return json.dumps({"id": "run1", "status": "completed", "appName": "Flock Judge",
+                           "result": {"text": "Working... FLOCK_ANSWER: " + json.dumps(VOTE) + "\n"}}).encode()
+
+    f = creaoapp({("POST", "/api/v1/apps/app-judge/runs"): json.dumps({"id": "run1", "status": "pending", "appId": "app-judge"}).encode(),
+                  ("GET", "/api/v1/apps/app-judge/runs/run1"): status})
+    text, served = llm.complete("SYS", "u", 10, ("creaoapp", "app-judge"))
+    assert json.loads(text) == VOTE and served == "creaoapp:Flock Judge"
+    first = f.calls[0]
+    assert first["headers"]["authorization"] == "Bearer capi_test"
+    assert set(first["body"]["inputs"]) == {"instructions", "request"} and first["body"]["inputs"]["instructions"].startswith("SYS")
+    assert [c["path"] for c in f.calls] == ["/api/v1/apps/app-judge/runs", "/api/v1/apps/app-judge/runs/run1",
+                                           "/api/v1/apps/app-judge/runs/run1"]
+    assert llm.creao_usage()["by_agent"]["app:app-judge"]["calls"] == 1
+
+
+def test_app_agent_without_its_key_is_offline_with_a_reason(creaoapp, monkeypatch):
+    monkeypatch.delenv("CREAO_APP_KEY")
+    assert not llm.available(("creaoapp", "app-judge"))
+    assert "CREAO_APP_KEY" in llm.offline_reason(("creaoapp", "app-judge"))
+
+
+def test_app_agent_failed_run_raises(creaoapp):
+    creaoapp({("POST", "/api/v1/apps/app-judge/runs"): json.dumps({"id": "r2", "status": "pending"}).encode(),
+              ("GET", "/api/v1/apps/app-judge/runs/r2"): json.dumps({"id": "r2", "status": "failed", "errorCode": "INSUFFICIENT_CREDITS"}).encode()})
+    with pytest.raises(RuntimeError, match="INSUFFICIENT_CREDITS"):
+        llm.complete("s", "u", 10, ("creaoapp", "app-judge"))
+
+
+def test_the_panel_judges_on_an_agent_built_in_agent_creao_ai(creaoapp, monkeypatch):
+    monkeypatch.setenv("FLOCK_JUDGE_PROVIDERS", "creaoapp")
+    monkeypatch.setenv("FLOCK_REVIEWER_PROVIDER", "offline")
+    n = {"i": 0}
+
+    def start(call):
+        n["i"] += 1
+        return json.dumps({"id": f"r{n['i']}", "status": "pending"}).encode()
+
+    def status(call):
+        return json.dumps({"id": call["path"].rsplit("/", 1)[1], "status": "completed",
+                           "result": {"text": "FLOCK_ANSWER: " + json.dumps(VOTE)}}).encode()
+
+    creaoapp({("POST", "/api/v1/apps/app-judge/runs"): start, ("GET", "*"): status})
+    d = panel.decide(fake("F-0001"), rules=[])
+    assert d["outcome"] == "recoverable" and {v["model"] for v in d["votes"]} == {"creaoapp/app-judge"}
+
+
+def test_app_answer_merged_with_the_echoed_inputs_is_stripped(creaoapp):
+    merged = {"instructions": "long prompt", "request": "{...}", **VOTE}
+    creaoapp({("POST", "/api/v1/apps/app-judge/runs"): json.dumps({"id": "r3", "status": "pending"}).encode(),
+              ("GET", "/api/v1/apps/app-judge/runs/r3"): json.dumps({"id": "r3", "status": "completed",
+                                                                     "result": {"text": json.dumps(merged)}}).encode()})
+    text, _ = llm.complete("s", "u", 10, ("creaoapp", "app-judge"))
+    assert json.loads(text) == VOTE, "the chat product merges inputs and answer into one object; keep only the answer"
+
+
+def test_app_polls_survive_a_rate_limit_and_count_against_the_budget(creaoapp, monkeypatch):
+    waits = []
+    monkeypatch.setattr(llm, "_sleep", lambda s: waits.append(s))
+    hits = {"n": 0}
+
+    def status(call):
+        hits["n"] += 1
+        if hits["n"] == 1:
+            return urllib.error.HTTPError("u", 429, "x", {"Retry-After": "3"}, io.BytesIO(b'{"error":"RATE_LIMITED"}'))
+        return json.dumps({"id": "r4", "status": "completed", "result": {"text": "FLOCK_ANSWER: " + json.dumps(VOTE)}}).encode()
+
+    f = creaoapp({("POST", "/api/v1/apps/app-judge/runs"): json.dumps({"id": "r4", "status": "pending"}).encode(),
+                  ("GET", "/api/v1/apps/app-judge/runs/r4"): status})
+    text, _ = llm.complete("s", "u", 10, ("creaoapp", "app-judge"))
+    assert json.loads(text) == VOTE and 3.0 in waits, "a 429 on a poll waits Retry-After and polls again"
+    assert len(llm._app_times) == len(f.calls), "every create and poll was counted against the per-key budget"
