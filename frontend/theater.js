@@ -516,12 +516,11 @@
 
     // ---- run a new month live, and follow any running job ----------------------------------------------------
     async function runLive() {
-        const tk = token();
-        if (!tk) { $('tokenBox').classList.remove('hidden'); $('tokenInput').focus(); return; }
+        const tk = token();   // optional: a demo backend (FLOCK_DEMO_USER) runs without one; a 401 asks for it
         $('liveBtn').disabled = true;
         try {
             const r = await fetch(`${S.api}/api/run?wait=0`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tk}` },
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...(tk ? { Authorization: `Bearer ${tk}` } : {}) },
                 body: JSON.stringify({ dataset: 'live', actor: store('flock.actor') || 'Preet' }),
             });
             const body = await r.json().catch(() => ({}));
