@@ -291,6 +291,28 @@ def _record(store: Store, f: dict[str, Any], ref: str, how: str, url: str | None
     transition(store, f["finding_id"], "file", GATEKEEPER, patch={"portal_ref": ref},
                reason=f"Filed in sandbox portal as {ref} (via Clicky, {how}{learned})",
                evidence=list(f.get("evidence", [])) + [receipt])
+    _notify_filed(store, f, ref)
+
+
+def _notify_filed(store: Store, f: dict[str, Any], ref: str) -> None:
+    """Email the owner that Clicky filed a claim (FLOCK_FILING_NOTIFY_TO). Sent by flock/mailer.py: SMTP or Resend
+    when configured, else the outbox. Best effort: a mail problem never undoes a filing."""
+    to = os.environ.get("FLOCK_FILING_NOTIFY_TO", "").strip()
+    if not to or not ref or ref == "NOT-FILED":
+        return
+    try:
+        from flock import mailer
+        amount = abs(float(f.get("gap") or 0))
+        channel = str(f.get("channel") or "platform").replace("_", " ").title()
+        body = (f"Clicky filed a claim in the {channel} sandbox portal.\n\n"
+                f"Claim reference: {ref}\nAmount: ${amount:,.2f}\nCheck: {f.get('check_type') or f.get('trap_type') or '-'}\n"
+                f"Finding: {f['finding_id']}\nPayout: {f.get('payout_id') or '-'}\n\n"
+                f"A person approved this claim before it was filed; every step is in the audit log.\n"
+                f"Simulated data (Ringtide Bagels demo).")
+        mailer.send(to, f"Claim filed: ${amount:,.2f} {channel} ({ref})", body, state_dir=store.dir,
+                    meta={"finding_id": f["finding_id"], "claim_ref": ref, "kind": "filing_notice"})
+    except Exception:
+        pass
 
 
 def _screen_page(store: Store, f: dict[str, Any], ref: str) -> str | None:
