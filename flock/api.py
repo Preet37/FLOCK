@@ -869,7 +869,8 @@ def headline(doc: dict[str, Any], harness: dict[str, Any] | None) -> dict[str, A
                            "accuracy": fr.get("accuracy") if fr.get("accuracy") is not None else
                            round(fr["caught"] / fr["total"], 4),
                            "false_alarms": fr.get("false_alarms"), "p50_s": fr.get("p50_s"),
-                           "usd_per_1000": fr.get("cost_per_1000"), "seeds": fr.get("seeds"), "run": fr.get("run_id")}
+                           "usd_per_1000": fr.get("cost_per_1000"), "seeds": fr.get("seeds"), "run": fr.get("run_id"),
+                           "note": fr.get("note")}
     else:
         out["frontier"] = {"name": "Claude via CREAO", "status": "not run on the held-out seeds yet",
                            "note": "Sonnet/Opus not run: no Anthropic key"}
