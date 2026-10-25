@@ -104,6 +104,12 @@ def run_month(ws: Path, month: str, scenario: str, plan: int | None, seed: int, 
     world = generator.generate(seed, stores, out=out, scenario=scenario, month=month, plan=plan)
     sc = world["scenario"]
     collector.collect(out, raw)
+    if scenario == "demo_month" and os.environ.get("FLOCK_EMAIL_SIM", "1") != "0":
+        try:   # the month's simulated inbox (flock/email_sim.py) lands in raw/emails before the pipeline reads it
+            from flock import email_sim
+            email_sim.inject(world, out, raw, Path(getattr(store, "dir", STATE_DIR)), seed)
+        except Exception as e:  # never let the inbox stop a month
+            print(f"[showtime] email simulator skipped: {type(e).__name__}: {e}", file=sys.stderr)
     label = f"showtime {month} ({scenario}), seed {seed}"
     source = f"generated: {generator.SCENARIO_PROFILE} {month_name(month)} ({scenario}) seed {seed}, " \
              f"{sc['stores']} stores x {world['days']} days"
