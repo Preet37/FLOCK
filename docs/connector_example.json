@@ -1,0 +1,33 @@
+{
+  "flock_connector": "1",
+  "source": "slack",
+  "connector": "creao:slack-watcher",
+  "simulated": true,
+  "items": [
+    {
+      "channel": "ubereats-partnership",
+      "shared": true,
+      "user": {"id": "U0SIM00004", "name": "sam.takahashi", "real_name": "Sam Takahashi (simulated)",
+               "email": "sam.takahashi@ubereats.example", "title": "Senior Account Executive"},
+      "ts": "1768907280.000011",
+      "text": "Heads up: we'll waive the Marketing Fee ($0.75/order) for Ringtide Bagels Temescal (S06) on Saturday, January 24 while the street is closed."
+    },
+    {
+      "channel": "ubereats-partnership",
+      "shared": true,
+      "user": {"id": "U0SIM00004", "name": "sam.takahashi", "real_name": "Sam Takahashi (simulated)",
+               "email": "sam.takahashi@ubereats.example"},
+      "ts": "1768909380.000012",
+      "thread_ts": "1768907280.000011",
+      "text": "Correction: we'll waive the Marketing Fee ($0.75/order) for Ringtide Bagels Temescal (S06) on Sunday, January 25, not Saturday. Saturday is billed as normal.",
+      "reactions": [{"name": "+1", "users": ["U0SIM00002"], "count": 1}]
+    },
+    {
+      "channel": "ops-promos",
+      "user": {"id": "U0SIM00001", "name": "avery.quinn", "real_name": "Avery Quinn",
+               "email": "avery.quinn@ringtide-bagels.example"},
+      "ts": "1768910000.000013",
+      "text": "Who can cover the Saturday open?"
+    }
+  ]
+}

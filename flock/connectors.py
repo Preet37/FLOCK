@@ -218,6 +218,73 @@ def ingest(drop: Path | None = None, raw: Path | None = None) -> dict[str, Any]:
     return {"processed": done, "rejected": rejected, "copied": copied}
 
 
+RECEIVED = "connectors_received.jsonl"   # in the store's state dir (a Railway volume when hosted)
+
+
+def contracts_dir() -> Path | None:
+    """Where the current contracts live, so a received message's sender is judged against the authorized contacts:
+    FLOCK_CONTRACTS_DIR, else the newest showtime month's raw/contracts, else data/raw/contracts."""
+    import os
+    env = os.environ.get("FLOCK_CONTRACTS_DIR")
+    if env and Path(env).is_dir():
+        return Path(env)
+    months = sorted((ROOT / "data" / "showtime").glob("*/raw/contracts"), key=lambda d: d.stat().st_mtime)
+    if months:
+        return months[-1]
+    default = Path(collector.RAW) / "contracts"
+    return default if default.is_dir() else None
+
+
+def receive(payload: Any, state_dir: Path, contracts: Path | None = None, raw: Path | None = None) -> dict[str, Any]:
+    """One connector batch over HTTP (POST /api/connectors): validate, keep it (append-only, in the state dir), read it
+    with the Deal Keeper next to the current contracts, and return what Flock understood: every deal claim with its
+    exact quote, who sent it and whether that sender may change the deal. Raises PayloadError listing every problem.
+    The messages also land in data/raw/ through the Collector, so the next pipeline run uses them."""
+    from flock.agents import deal_keeper
+    problems = validate(payload)
+    if problems:
+        raise PayloadError(problems)
+    contracts = contracts if contracts is not None else contracts_dir()
+    with tempfile.TemporaryDirectory(prefix="flock_receive_") as tmp:
+        stage = Path(tmp)
+        _render(payload, stage)
+        if contracts and Path(contracts).is_dir():
+            shutil.copytree(contracts, stage / "contracts")
+        got = deal_keeper.read_sources(stage / "contracts", stage / "emails", stage / "slack", stage / "notes")
+        mine = [c for c in got["claims"] if not str(c.get("source_file", "")).startswith(str(stage / "contracts"))
+                and "/contracts/" not in str(c.get("source_file", ""))]
+        keep = ("term_type", "channel", "store_id", "value", "effective_from", "effective_to", "authority",
+                "authority_basis", "sender", "quote", "medium", "locator")
+        claims = [{k: c.get(k) for k in keep if c.get(k) is not None} for c in mine]
+        for c in claims:
+            c["binding"] = c.get("authority") in deal_keeper.BINDING
+        copied = write_payload(payload, raw)
+    rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "connector": payload["connector"],
+           "source": payload["source"], "items": len(payload["items"]), "simulated": bool(payload.get("simulated")),
+           "claims": claims, "superseded": len(got.get("superseded") or []), "ignored": got.get("ignored"),
+           "unread": [str(u) for u in got.get("unread") or []], "contracts_from": str(contracts) if contracts else None,
+           "copied": [str(c) for c in copied]}
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / RECEIVED).open("a") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    return rec
+
+
+def received(state_dir: Path, limit: int = 50) -> list[dict[str, Any]]:
+    """The last connector batches received over HTTP, newest first (skips a half-written last line)."""
+    path = Path(state_dir) / RECEIVED
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out[::-1][:limit]
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Validate connector payloads and write them into data/raw/.")
     sub = ap.add_subparsers(dest="cmd", required=True)

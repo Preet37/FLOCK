@@ -68,6 +68,41 @@ message, plus where it came from (`source_file` and a locator: the Slack `ts`, o
 message the rules can't read is listed as unread, never guessed. In a Slack thread, the latest message from an
 authorized contact about the same term replaces the earlier ones (a correction wins).
 
+## Over HTTP: `POST /api/connectors` (the live API)
+
+A CREAO agent in the cloud can't write into a folder on our server, so it posts the same payload to the API:
+
+```bash
+curl -X POST https://web-production-812b4.up.railway.app/api/connectors \
+     -H "Authorization: Bearer $FLOCK_API_TOKEN" -H "Content-Type: application/json" \
+     -d @payload.json
+```
+
+- Validated exactly like a drop-folder file; a bad payload gets **400** with every problem listed.
+- Kept append-only in the state dir (`connectors_received.jsonl`, on the Railway volume) and copied into `data/raw/`
+  through the Collector, so the next pipeline run uses it.
+- Read immediately by the Deal Keeper next to the current contracts. The **response** is what Flock understood:
+  `claims[]` with `term_type`, `store_id`, `value`, dates, the exact `quote`, `sender`, `authority`
+  (`auth_email` | `unauth_email` | none = unknown), `authority_basis`, `binding`, `medium`, `locator`; plus
+  `superseded` (thread corrections), `ignored` (no deal content), `unread` (needs the reader model).
+- `GET /api/connectors` lists the last batches received (newest first) with their claims. Each batch also appears
+  in the live agent feed as a `connector` agent.
+
+## Plan for the live Slack demo (Thabhelo: CREAO side)
+
+1. Create a demo Slack workspace (or a channel in ours) named like `#doordash-partnership` / `#ubereats-partnership`.
+   Members: a "platform rep" account whose email/handle is on that platform's contract `authorized_contacts`
+   (e.g. `sam.takahashi@ubereats.example` / `@sam.takahashi` for Uber Eats), and one that isn't.
+2. A CREAO agent with the Slack integration watches those channels. For each new message (or every N minutes),
+   it builds the payload below (`flock_connector: "1"`, `source: "slack"`, `connector: "creao:slack-watcher"`,
+   one item per message with channel, user {id, name, email}, ts, text, thread_ts) and POSTs it to
+   `/api/connectors` with the bearer token (stored as a CREAO secret, never in the repo).
+3. Optional: the same for a Gmail inbox (`source: "email"`, items {from, to, date, subject, body}).
+4. Demo moment: the rep posts "we'll waive the Marketing Fee ($0.75/order) for <store> on <day>"; seconds later
+   `GET /api/connectors` (and the UI) shows the claim, the quote, and **auth_email / binding**. Then the unlisted
+   account posts a similar promise: **unauth_email / not binding** — it would go to a human.
+5. Test without Slack first: `curl -d @docs/connector_example.json ...` (the example below) and check the response.
+
 ## Example payload (SIMULATED)
 
 A CREAO Slack watcher's batch from a shared channel: an authorized rep waives a fee, then corrects the day in the

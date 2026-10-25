@@ -471,6 +471,19 @@ class Api:
         showtime.prepare(months=p["months"], seed=p["seed"], stores=p["stores"], store=self.store, portal=self.portal)
         return {"params": p, "showtime": self.showtime_sheet().get("json"), "findings": len(self.store.all())}
 
+    def connector(self, body: Any) -> dict[str, Any]:
+        """POST /api/connectors: one connector batch (a CREAO agent watching Slack/Gmail). BadRequest on a bad payload."""
+        from flock import agents_live, connectors
+        try:
+            rec = connectors.receive(body, self.dir)
+        except connectors.PayloadError as e:
+            raise BadRequest("; ".join(e.problems))
+        agents_live.emit(self.store, {"event": "done", "agent_id": f"connector:{rec['connector']}",
+                                      "role": "connector", "subject": rec["source"], "at": rec["at"],
+                                      "summary": f"{rec['items']} {rec['source']} item(s) from {rec['connector']}: "
+                                                 f"{len(rec['claims'])} deal claim(s)"})
+        return rec
+
     def showtime_sheet(self) -> dict[str, Any]:
         """The last showtime cheat sheet in this server's state (json + markdown), or an empty note."""
         from flock import showtime
@@ -593,6 +606,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, a.health())
             if parts == ["api", "showtime"]:
                 return self._send(200, a.showtime_sheet())
+            if parts == ["api", "connectors"]:
+                from flock import connectors
+                return self._send(200, {"received": connectors.received(a.dir)})
             if parts == ["api", "agents"]:
                 return self._send(200, a.agents())
             if len(parts) == 3 and parts[:2] == ["api", "agents"]:
@@ -712,6 +728,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(401, {"error": "This backend needs a token. Add it in the dashboard (Authorization: Bearer ...)."})
         try:
             body = self._body()
+            if parts == ["api", "connectors"]:
+                with a.write_lock:
+                    return self._send(200, a.connector(body))
             if len(parts) == 4 and parts[:2] == ["api", "findings"] and parts[3] in ("approve", "reject"):
                 return self._send(200, a.decide(parts[2], parts[3], body))
             if len(parts) in (4, 5) and parts[:2] == ["api", "findings"] and parts[3] == "follow_up":

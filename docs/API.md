@@ -737,3 +737,16 @@ plus read-time `status` and `flags`.
 And on a finding, read-time `risk` (0-100), `risk_label`, `risk_factors`.
 A lump sum (`transactions.json` "payouts", `flock/payouts.py` on read): the fields of `GET /api/payouts` above.
 A theater event (`flock/theater.py`): `cursor, at, type, lane, actor, text` + the per-type fields above.
+
+
+## Connectors (CREAO Slack/Gmail watcher)
+
+- `POST /api/connectors` (token): one connector batch. Response: what Flock understood (claims with quote, sender,
+  authority, binding). 400 with every problem on a bad payload. Details and the payload contract: `docs/connectors.md`.
+- `GET /api/connectors`: the last batches received, newest first.
+
+## Showtime on the hosted box
+
+- `POST /api/run {"dataset": "showtime", "months": 4, "seed": 2025}` (token): a background job running
+  `flock.showtime prepare` into the hosted state (prior months + the demo month, stopped before the headline approval).
+- `GET /api/showtime`: the cheat sheet (`json` + `markdown`).
