@@ -3,6 +3,9 @@ a human approves, then Clicky files it. This is the "five seconds on top", not t
 
 Every draft, from Claude or the template, cites every evidence item and has no em dashes.
 If Claude's draft leaves a source out, the full evidence list is appended.
+No dollar figure in a draft comes from a model: if a model's draft states a $ amount that isn't one of the finding's
+code-computed numbers (expected, actual, gap) or a number quoted in its evidence, the draft is thrown away and the
+template (numbers straight from code) is used instead.
 The finding's `reason` is NOT used: after judging it holds the panel's internal deliberation
 ("All 3 judges agree ..."), which must never be sent to a platform.
 """
@@ -10,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +50,30 @@ def _cites_all(text: str, f: dict[str, Any]) -> bool:
     return True
 
 
+DOLLARS = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
+NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _cents(text: str) -> int | None:
+    try:
+        return round(float(text.replace(",", "")) * 100)
+    except ValueError:
+        return None
+
+
+def foreign_amounts(text: str, f: dict[str, Any]) -> list[str]:
+    """$ amounts in `text` that are not the finding's own numbers (expected, actual, |gap|) or numbers in its evidence.
+    Empty list = every dollar figure traces back to code or a source."""
+    known = {_cents(str(abs(float(f.get(k) or 0)))) for k in ("expected", "actual", "gap")}
+    for e in f.get("evidence", []):
+        for v in e.values():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                known.add(_cents(str(abs(v))))
+            elif isinstance(v, str):
+                known.update(_cents(m) for m in NUMBER.findall(v))
+    return [m for m in DOLLARS.findall(text) if _cents(m) not in known]
+
+
 def draft(f: dict[str, Any]) -> str:
     text = llm.ask_text(
         "Write a short, polite, factual dispute to a delivery platform's merchant support on behalf of a restaurant. "
@@ -53,6 +81,10 @@ def draft(f: dict[str, Any]) -> str:
         json.dumps({k: f[k] for k in ("channel", "check_type", "order_ids", "expected", "actual", "gap", "evidence")}),
         r=llm.route("writer"),
     )
+    if text and (bad := foreign_amounts(text, f)):
+        print(f"[dispute_writer] {f.get('finding_id')}: model draft states ${', $'.join(bad)}, which no code or "
+              "source computed; using the template", file=sys.stderr)
+        text = None
     if text:
         if not _cites_all(text, f):
             text += "\n\n" + _evidence_block(f)

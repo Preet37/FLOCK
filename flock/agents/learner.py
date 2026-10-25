@@ -128,6 +128,9 @@ if __name__ == "__main__":
     ap.add_argument("--approve")
     a = ap.parse_args()
     if a.approve:
-        print("approved:", json.dumps(approve(a.approve, CLI_HUMAN, store=get_store()), indent=2))
+        try:
+            print("approved:", json.dumps(approve(a.approve, CLI_HUMAN, store=get_store()), indent=2))
+        except KeyError as e:  # a typo'd rule id on stage: say so plainly, no traceback
+            raise SystemExit(f"learner: {e.args[0]}") from None
     else:
         print(json.dumps(_read(PROPOSED), indent=2) if _read(PROPOSED) else "no proposed rules")

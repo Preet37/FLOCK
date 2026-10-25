@@ -8,6 +8,22 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: release-QA scenarios that take tens of seconds; run with FLOCK_SLOW=1")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Slow tests are skipped unless FLOCK_SLOW=1 (or selected explicitly with -m slow), so `pytest` stays fast."""
+    import os
+
+    if os.environ.get("FLOCK_SLOW") == "1" or "slow" in (config.getoption("markexpr") or ""):
+        return
+    skip = pytest.mark.skip(reason="slow release-QA scenario: FLOCK_SLOW=1 pytest tests/test_release.py")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip)
+
+
 FAKE = json.loads((ROOT / "fixtures" / "fake_findings.json").read_text())
 ADVERSARIAL = json.loads((ROOT / "fixtures" / "adversarial_findings.json").read_text())
 

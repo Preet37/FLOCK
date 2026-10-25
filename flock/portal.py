@@ -138,9 +138,12 @@ def append_filing(path: Path, row: dict[str, Any]) -> None:
 
 
 def read_filings(path: Path) -> list[dict[str, Any]]:
+    """Every complete filing. A last line without its newline is one Clicky is still appending (another process):
+    it's left for the next read instead of crashing the page that polls this file."""
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    lines = path.read_text().split("\n")
+    return [json.loads(line) for line in lines[:-1] if line.strip()]
 
 
 def create_app(data_dir: Path | None = None, layout: str | None = None) -> Flask:

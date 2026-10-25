@@ -130,7 +130,7 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     store = store or get_store()
     rules_path = Path(rules_path or learner.RULES)
     portal = Path(portal or clicky.PORTAL)
-    runs_path = Path(runs_path or RUNS)
+    runs_path = Path(runs_path or runs_default(store))
     if progress is None:
         progress = Progress(progress_path(store), run=label or "pipeline")
     jstore = get_journal_store(store)
@@ -288,7 +288,7 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
     teacher = flock.spawn("learner", subject="rules", agent_id="learner").working("reading human decisions")
     proposed = learner.propose(store, rules_path)
     teacher.done(f"proposed {len(proposed)} rule(s)", proposed=len(proposed))
-    record_run(store, source, runs_path)
+    record_run(store, source, runs_path, rules_path)
     summary(store, proposed)
     market_summary(store)
     print("flock: " + ", ".join(f"{n} {role}{'s' if n != 1 else ''}" for role, n in flock.counts.items())
@@ -335,8 +335,18 @@ def market_summary(store: Store) -> None:
               + (f", {len(a['deferred'])} deferred: {', '.join(d['finding_id'] for d in a['deferred'])}" if a["deferred"] else ""))
 
 
-def record_run(store: Store, source: str, runs_path: Path | None = None) -> dict:
-    """One line per run so the scoreboard can show week 1 vs week 2 human hand-offs."""
+def runs_default(store: Store) -> Path:
+    """Where a run's week-by-week history goes: next to the store's findings. The repo store keeps RUNS
+    (data/state/runs.jsonl); a temp store (tests, sandboxes) must never append to the repo's history."""
+    d = getattr(store, "dir", None)
+    if d is None or Path(d).resolve() == STATE_DIR.resolve():
+        return RUNS
+    return Path(d) / "runs.jsonl"
+
+
+def record_run(store: Store, source: str, runs_path: Path | None = None, rules_path: Path | None = None) -> dict:
+    """One line per run so the scoreboard can show week 1 vs week 2 human hand-offs.
+    learned_rules counts the rules this run used (rules_path), not the repo's rules.json."""
     rows = store.all()
     rec = [f for f in rows if f.get("outcome") == "recoverable"]
     entry = {
@@ -347,9 +357,9 @@ def record_run(store: Store, source: str, runs_path: Path | None = None) -> dict
         "dollars": round(sum(abs(f["gap"]) for f in rec), 2),
         "to_human": sum(1 for f in rows if f.get("outcome") == "conflict"),
         "by_rule": sum(1 for f in rows if f.get("reason", "").startswith("Applied approved rule")),
-        "learned_rules": len(learner.approved_rules()),
+        "learned_rules": len(learner.approved_rules(rules_path)),
     }
-    runs_path = Path(runs_path or RUNS)
+    runs_path = Path(runs_path or runs_default(store))
     runs_path.parent.mkdir(parents=True, exist_ok=True)
     with runs_path.open("a") as fh:
         fh.write(json.dumps(entry) + "\n")

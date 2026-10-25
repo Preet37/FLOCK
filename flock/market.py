@@ -323,7 +323,12 @@ if __name__ == "__main__":
     a = ap.parse_args()
     st = get_store()
     if a.recover:
-        from flock.gatekeeper import transition  # the market never moves a finding itself
-        transition(st, a.recover, "recover", CLI_HUMAN, reason="Platform paid the dispute (marked by a human)")
+        from flock.gatekeeper import Denied, transition  # the market never moves a finding itself
+        try:
+            transition(st, a.recover, "recover", CLI_HUMAN, reason="Platform paid the dispute (marked by a human)")
+        except Denied as e:  # logged by the gatekeeper; on stage, a plain sentence instead of a traceback
+            raise SystemExit(f"market: {e} (only a FILED dispute can be marked recovered)") from None
+        except KeyError:
+            raise SystemExit(f"market: no finding {a.recover}") from None
         print(f"{a.recover} RECOVERED")
     _print(st)

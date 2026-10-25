@@ -46,9 +46,18 @@ def history(path: Path = RUNS) -> list[dict]:
     return [{**r, "label": f"Week {i}"} for i, r in enumerate(rows, 1)]
 
 
-def score(store: Store | None = None, verbose: bool = True, runs_path: Path = RUNS,
+def runs_for(store: Store | None = None) -> Path:
+    """The run history next to the store's findings (data/state/runs.jsonl for the repo store)."""
+    d = getattr(store, "dir", None)
+    if d is None or Path(d).resolve() == STATE_DIR.resolve():
+        return RUNS
+    return Path(d) / "runs.jsonl"
+
+
+def score(store: Store | None = None, verbose: bool = True, runs_path: Path | None = None,
           answer_key: Path | None = None) -> dict:
     store = store or get_store()
+    runs_path = Path(runs_path or runs_for(store))
     key_path = Path(answer_key or answer_key_for(store))
     with key_path.open(newline="") as fh:
         key = list(csv.DictReader(fh))
