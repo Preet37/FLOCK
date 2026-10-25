@@ -153,3 +153,34 @@ def test_evidence_hooks(server):  # noqa: F811
     assert code == 200
     code, out = client.get("/api/evidence?ref=../../etc/passwd:1")
     assert code == 400 and "error" in out
+
+
+def test_reads_serve_the_last_completed_run_while_a_job_runs(server):  # noqa: F811
+    client, a = server
+    assert client.post("/api/run", {"reset": True, "demo_approve": False})[0] == 200
+    code, before = client.get("/api/approvals")
+    a.snapshot, a.running = a.take_snapshot(), "JOB-test"
+    try:
+        a.store.reset()                                   # what a new run does first
+        code, during = client.get("/api/approvals")
+        assert during["count"] == before["count"] > 0 and during["running_job"] == "JOB-test"
+        assert during["stale_while_running"] is True
+        code, m = client.get("/api/metrics")
+        assert m["running_job"] == "JOB-test" and m["cards"]
+        code, rows = client.get("/api/findings")
+        assert len(rows) == len(a.snapshot["findings"]) > 0
+    finally:
+        a.running = a.snapshot = None
+    code, after = client.get("/api/approvals")
+    assert after["count"] == 0 and after["running_job"] is None
+
+
+def test_live_panels_finish_after_the_fast_ones(monkeypatch):
+    from flock import pipeline
+    from flock.agents import panel
+    todo = [{"finding_id": f"F-{i}", "gap": 1.0} for i in range(5)]
+    monkeypatch.setattr(panel, "decide", lambda f, rules=None, weights=None, live=True: {"reason": f["finding_id"],
+                                                                                          "live": live})
+    plan = {"live": True, "chosen": {"F-0", "F-3"}, "rule_ids": set(), "concurrency": 3}
+    got = [f["finding_id"] for f, _ in pipeline.judge_all(todo, [], {}, plan)]
+    assert got[:3] == ["F-1", "F-2", "F-4"] and set(got[3:]) == {"F-0", "F-3"}

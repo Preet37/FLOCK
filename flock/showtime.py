@@ -409,6 +409,26 @@ def keep_contracts(state_dir: Path, raw: Path) -> None:
         shutil.copytree(src, dest)
 
 
+def refresh(store: Store, info: dict[str, Any]) -> dict[str, Any]:
+    """The sheet with its headline and lump sum read from the findings as they stand now (after approvals, filings,
+    a newer run), never a stale copy: the recorded headline if it is still in the store, else the current pick."""
+    h = info.get("headline") or {}
+    f = store.get(h["finding_id"]) if h.get("finding_id") else None
+    if f is None:
+        f = pick_headline(store) or max((x for x in store.all() if x.get("outcome") == "recoverable"),
+                                        key=lambda x: abs(x["gap"]), default=None)
+    if f is None:
+        return {**info, "headline": None, "lump_sum": None}
+    head = {k: f.get(k) for k in ("finding_id", "channel", "check_type", "expected", "actual", "gap", "reason")}
+    head.update(orders=len(f.get("order_ids") or []), stores=(f.get("rollup") or {}).get("stores"), state=f["state"])
+    old = info.get("lump_sum") or {}
+    new = lump_sum(store, info.get("scenario") or {}, f)
+    if new and not new.get("answer_key") and old.get("payout_id") == new["payout_id"]:
+        new["answer_key"] = old.get("answer_key")
+    return {**info, "headline": head, "lump_sum": new or (old if old.get("payout_id") == (f.get("rollup") or {})
+                                                          .get("payout_id") else None)}
+
+
 def keep_raw(state_dir: Path, raw: Path) -> Path | None:
     """The month on stage's raw files next to the state (a volume when hosted), at the same relative path the
     findings' evidence names (data/showtime/<month>/raw/...), so the evidence viewer (flock/evidence.py, which looks

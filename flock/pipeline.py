@@ -35,7 +35,7 @@ import argparse
 import json
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -339,6 +339,7 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
               + (f" (FLOCK_LIVE_JUDGE_BUDGET={plan['budget']}; {plan['outside']} on offline rules)"
                  if plan["budget"] is not None else "")
               + f", {plan['concurrency']} at a time")
+    decisions = {f["finding_id"]: decisions[f["finding_id"]] for f in todo}   # back in todo order: same log as sequential
     escalations = [{**store.get(fid), **d} for fid, d in decisions.items() if d["outcome"] == "conflict"]
     attention = market.allocate_attention(escalations, attention_budget, weights)
     for fid, d in decisions.items():
@@ -494,8 +495,21 @@ def judge_all(todo: list[dict], rules: list[dict], weights: dict, plan: dict):
         for f in todo:
             yield f, one(f)
         return
+    # offline / rule-settled findings first (milliseconds each), then the live panels as each one finishes, so the
+    # progress bar and the theater move while the slow model calls are out. The caller applies results in todo order.
+    slow = [f for f in todo if plan["live"] and f["finding_id"] in plan["chosen"]]
+    if not slow or len(slow) == len(todo):   # nothing fast to put first: todo order, all at once
+        with ThreadPoolExecutor(max_workers=plan["concurrency"]) as pool:
+            yield from zip(todo, pool.map(one, todo))
+        return
+    slow_ids = {f["finding_id"] for f in slow}
     with ThreadPoolExecutor(max_workers=plan["concurrency"]) as pool:
-        yield from zip(todo, pool.map(one, todo))
+        futs = {pool.submit(one, f): f for f in slow}
+        for f in todo:
+            if f["finding_id"] not in slow_ids:
+                yield f, one(f)
+        for fut in as_completed(futs):
+            yield futs[fut], fut.result()
 
 
 def save_transactions(store: Store, context: dict, findings: list[dict], source: str) -> dict | None:
