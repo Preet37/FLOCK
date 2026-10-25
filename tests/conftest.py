@@ -36,6 +36,10 @@ def offline_and_isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(clicky, "PORTAL", tmp_path / "iso_portal.jsonl")
     monkeypatch.setattr(workflow, "WORKFLOWS_DIR", tmp_path / "iso_workflows")
     monkeypatch.setattr(workflow, "DEMOS_DIR", tmp_path / "iso_demos")
+    monkeypatch.setattr(clicky, "SCREENS_DIR", tmp_path / "iso_screens")
+    from flock import frontend
+    monkeypatch.setattr(frontend, "SCREENS_DIR", tmp_path / "iso_screens")
+    monkeypatch.setattr(frontend, "RESULTS_JSON", tmp_path / "iso_results.json")
     monkeypatch.delenv("FLOCK_PORTAL_LAYOUT", raising=False)
 
 

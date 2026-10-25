@@ -104,6 +104,17 @@ _usage: dict[str, Counter] = {}  # CREAO agent id -> Counter(input_tokens, outpu
 _run_times: list[float] = []     # monotonic times of recent run creates, for pacing
 _app_times: list[float] = []     # monotonic times of recent app-scoped requests (POST + GET), for pacing
 _sleep = __import__("time").sleep
+_providers: Counter = Counter()  # provider -> model calls made (attempted) by this process
+_tokens: dict[str, list[int]] = {}   # model id -> [input tokens, output tokens, calls with usage], as the server reported
+
+# USD per 1M tokens (input, output), list prices for the hosted models Flock can call. Local models and NVIDIA
+# build.nvidia.com are free to call (the GX10's power is not metered). scripts/benchmark.py and GET /api/metrics use it.
+LIST_PRICES: dict[str, tuple[float, float]] = {
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "llama-3.3-70b-versatile": (0.59, 0.79),
+}
 
 ANTHROPIC_URL = "https://api.anthropic.com"
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")  # CGNAT range Tailscale hands out (100.x.y.z)
@@ -376,6 +387,31 @@ def offline_reason(r: tuple[str, str]) -> str | None:
 def _count(provider: str) -> None:
     with _stats_lock:
         _calls[host(provider) or provider] += 1
+        _providers[provider] += 1
+
+
+def _note_tokens(model_id: str, tokens_in: Any, tokens_out: Any) -> None:
+    """Token usage the server reported for one call (never estimated here)."""
+    try:
+        i, o = int(tokens_in or 0), int(tokens_out or 0)
+    except (TypeError, ValueError):
+        return
+    if i or o:
+        with _stats_lock:
+            t = _tokens.setdefault(model_id, [0, 0, 0])
+            t[0] += i
+            t[1] += o
+            t[2] += 1
+
+
+def call_stats() -> dict[str, Any]:
+    """This process's model calls since reset_calls(): by host, by provider, reported tokens per model, CREAO credits.
+    The pipeline saves it per run (last_run.json) for GET /api/metrics."""
+    with _stats_lock:
+        by_host, by_provider = dict(_calls), dict(_providers)
+        tokens = {m: {"input": t[0], "output": t[1], "calls": t[2]} for m, t in _tokens.items()}
+    return {"calls": sum(by_host.values()), "by_host": by_host, "by_provider": by_provider, "tokens": tokens,
+            "creao": creao_usage()}
 
 
 def reset_calls() -> None:
@@ -385,6 +421,8 @@ def reset_calls() -> None:
         _refused.clear()
         _credits.clear()
         _usage.clear()
+        _providers.clear()
+        _tokens.clear()
 
 
 def creao_usage() -> dict[str, Any]:
@@ -464,6 +502,8 @@ def _openai_chat(provider: str, model_id: str, system: str, user: str, max_token
         detail = e.read().decode(errors="replace")[:120] if e.fp else ""
         raise RuntimeError(f"HTTP {e.code} from {provider}: {detail}") from None
     msg = (data.get("choices") or [{}])[0].get("message") or {}
+    usage = data.get("usage") or {}
+    _note_tokens(str(data.get("model") or model_id), usage.get("prompt_tokens"), usage.get("completion_tokens"))
     return (msg.get("content") or "").strip(), str(data.get("model") or model_id)
 
 
@@ -775,6 +815,9 @@ def complete(system: str, user: str, max_tokens: int, r: tuple[str, str] | None 
         messages=[{"role": "user", "content": user}],
     )
     text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+    usage = getattr(msg, "usage", None)
+    _note_tokens(str(getattr(msg, "model", None) or model_id), getattr(usage, "input_tokens", 0),
+                 getattr(usage, "output_tokens", 0))
     return text, str(getattr(msg, "model", None) or model_id)
 
 

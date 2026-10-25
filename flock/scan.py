@@ -62,7 +62,7 @@ def detect(tables: dict[str, Any], terms: list[dict[str, Any]], progress: Progre
     size = count_rows(paths.get("orders")) + count_rows(paths.get("payout_lines"))
     if size < split_rows or len(paths) < len(tables):
         return _detect_small(tables, terms, progress, context, agents)
-    return _detect_split(paths, terms, progress, workers or workers_default(), agents)
+    return _detect_split(paths, terms, progress, workers or workers_default(), agents, context)
 
 
 def _store_index(t: dict[str, list[dict]]) -> dict[str, str]:
@@ -180,7 +180,9 @@ def _run_store(task: tuple) -> tuple[str, list[dict[str, Any]], int]:
 
 
 def _detect_split(paths: dict[str, Path], terms: list[dict[str, Any]], progress: Progress,
-                  workers: int, agents: agents_live.Tracker | None = None) -> list[dict[str, Any]]:
+                  workers: int, agents: agents_live.Tracker | None = None,
+                  context: dict | None = None) -> list[dict[str, Any]]:
+    """context gets deposit_stories (payout -> bank deposit links, no lines) for flock/transactions.py."""
     agents = agents_live.ensure(agents)
     tmp = Path(tempfile.mkdtemp(prefix="flock_scan_"))
     try:
@@ -190,6 +192,8 @@ def _detect_split(paths: dict[str, Path], terms: list[dict[str, Any]], progress:
             f"reconciling {len(groups):,} payouts with {len(deposits):,} bank deposits")
         deposit_stories = matcher.reconcile_deposits([], deposits, groups=groups)
         deposit_of = {(ds["channel"], pid): ds["deposit_id"] for ds in deposit_stories for pid in ds["payout_ids"]}
+        if context is not None:
+            context["deposit_stories"] = deposit_stories
         found = [f.to_dict() for f in checkers.run_all(deposit_stories, lambda s: {})]
         for f in found:
             agents.owner[f["finding_id"]] = checker.id

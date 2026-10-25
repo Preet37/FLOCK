@@ -27,7 +27,7 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, request, send_from_directory
 
-from flock import agents_live, llm, market, portal, workflow
+from flock import agents_live, frontend, llm, market, portal, transactions, workflow
 from flock.agents import clicky, journal, learner, panel
 from flock.gatekeeper import Denied, transition
 from flock.models import JE_TRANSITIONS, JOURNAL, TRANSITIONS, Actor
@@ -96,7 +96,7 @@ def detail(store: Store, finding_id: str) -> dict[str, Any]:
     rule_id = f["reason"].split()[3].rstrip(":") if f.get("reason", "").startswith("Applied approved rule") else None
     rule = next((r for r in learner.approved_rules() if r["rule_id"] == rule_id), None) if rule_id else None
     return {
-        "finding": f,
+        "finding": frontend.with_risk(f),
         "log": log,
         "decision": decided[-1] if decided else None,
         "denied": [e for e in log if not e["allowed"]],
@@ -213,7 +213,7 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
     @app.get("/api/findings")
     def api_findings():
         rows = sorted(st().all(), key=lambda f: f["finding_id"])
-        return jsonify([{**f, "needs_human": needs_human(f)} for f in rows])
+        return jsonify([{**frontend.with_risk(f), "needs_human": needs_human(f)} for f in rows])
 
     @app.get("/api/queue")
     def api_queue():
@@ -342,6 +342,39 @@ def create_app(store: Store | None = None, runs_path: Path | None = None, journa
         except ValueError:
             return jsonify(error="since must be a number"), 400
         return jsonify(agents_live.snapshot(st(), since))
+
+    # frontend read models (same as flock/api.py; see docs/API.md) ---------------------------------------
+    @app.get("/api/transactions")
+    def api_transactions():
+        """One row per payout per store from the last real-data run (transactions.json), paged."""
+        a = request.args
+        try:
+            limit, offset = int(a.get("limit") or 50), int(a.get("offset") or 0)
+        except ValueError:
+            return jsonify(error="limit and offset must be whole numbers"), 400
+        return jsonify(transactions.query(transactions.load(frontend.state_dir(st())), st().all(),
+                                          channel=a.get("channel") or None, store=a.get("store") or None,
+                                          status=a.get("status") or None, limit=limit, offset=offset))
+
+    @app.get("/api/metrics")
+    def api_metrics():
+        """Agent vs human hours, accuracy, cost, money saved: each with value, formula, inputs, sources."""
+        return jsonify(frontend.metrics(st(), js()))
+
+    @app.get("/api/agents/<agent_id>")
+    def api_agent(agent_id: str):
+        try:
+            return jsonify(frontend.agent_detail(st(), agent_id))
+        except KeyError:
+            abort(404, f"no agent {agent_id}")
+
+    @app.get("/api/screens/<path:rest>")
+    def api_screen(rest: str):
+        """Clicky's screenshots only (data/screens, data/demos/<id>/<file>); traversal refused."""
+        path = frontend.screen_file([p for p in rest.split("/") if p])
+        if path is None:
+            abort(404, "no such screenshot")
+        return send_from_directory(path.parent, path.name)
 
     @app.get("/api/meta")
     def api_meta():

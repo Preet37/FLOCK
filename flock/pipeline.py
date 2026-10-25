@@ -24,6 +24,10 @@ The live flock (flock/agents_live.py): every agent with a job writes spawn / wor
 agent feed (worker per store, deposit checker, judge per finding, writer per draft, Clicky, the journal drafter,
 the learner). An unexplained finding also gets an investigator sub-agent (flock/agents/investigator.py) that attaches
 a case file through the gatekeeper; it never changes an outcome or a dollar. The dashboard's Flock view shows them.
+
+For the frontend API (flock/api.py): a real-data run saves transactions.json (one row per payout per store, see
+flock/transactions.py) next to the findings, and every run saves last_run.json: measured wall time, the data's volume
+(stores, store-weeks) and this run's model calls / tokens / CREAO credits (llm.call_stats), for GET /api/metrics.
 """
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flock import agents_live, llm, market, scan
+from flock import agents_live, llm, market, scan, transactions
 from flock.agents import (clicky, deal_keeper, dispute_writer, formatter, investigator, journal, learner, panel,
                           ranker)
 from flock.gatekeeper import transition
@@ -48,6 +52,7 @@ CHECKER = Actor(id="checkers", role="agent")
 DEMO_HUMAN = Actor(id="demo-controller", role="human")
 SHOW_FINDINGS = 40
 AIRGAP_NAME = "airgap.json"  # where this run's model calls went (llm.airgap_report), for GET /api/airgap
+LAST_RUN = "last_run.json"  # wall time, data volume and model calls of the latest run, for GET /api/metrics
 LIVE_KEY = "answer_key.csv"  # flock.demo --keep leaves its generated key here (scripts/score.py reads it)  # summary lines printed; a year of data has thousands of findings
 
 
@@ -143,31 +148,50 @@ def run(reset: bool = False, demo_approve: bool = False, forget: bool = False, p
     if data or confirm or interactive:
         data.update(confirm=confirm, interactive=interactive)
     llm.reset_calls()  # the air-gap report counts this run's model calls only
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    t0 = time.monotonic()
     try:
         with batched(store):
-            _run(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path,
-                 jstore, attention_budget)
+            info = _run(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path,
+                        jstore, attention_budget)
     except BaseException:
         progress.finish("failed")
         raise
     progress.finish()
+    write_last_run(store, {**info, "label": label or "pipeline", "started_at": started_at,
+                           "seconds": round(time.monotonic() - t0, 3), "pace": pace})
     return store
 
 
+def write_last_run(store: Store, info: dict) -> dict:
+    """last_run.json next to the findings: what GET /api/metrics measures from. Never breaks a run."""
+    rec = {**info, "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "findings": len(store.all()), "llm": llm.call_stats()}
+    try:
+        path = Path(getattr(store, "dir", None) or STATE_DIR) / LAST_RUN
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(rec, indent=1))
+        tmp.replace(path)
+    except OSError:
+        pass
+    return rec
+
+
 def _run(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
-         pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None) -> None:
+         pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None) -> dict:
     run_id = "RUN-" + uuid.uuid4().hex[:8]
     flock = agents_live.Tracker(store, run_id)
     try:
-        _stages(store, rules_path, portal, fixtures, data, demo_approve, pace, progress, runs_path, jstore,
-                attention_budget, run_id, flock)
+        return {"run_id": run_id, **_stages(store, rules_path, portal, fixtures, data, demo_approve, pace, progress,
+                                            runs_path, jstore, attention_budget, run_id, flock)}
     finally:
         flock.close()
 
 
 def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None, data: dict, demo_approve: bool,
             pace: float, progress: Progress, runs_path: Path, jstore: Store, attention_budget: int | None,
-            run_id: str, flock: agents_live.Tracker) -> None:
+            run_id: str, flock: agents_live.Tracker) -> dict:
     def move(finding_id: str, action: str, actor: Actor, **kw) -> None:
         transition(store, finding_id, action, actor, **kw)
         if pace:
@@ -177,6 +201,7 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
     context: dict = {}
     findings, source = detect(fixtures, progress, context, agents=flock, **data)
     print(f"\n== Flock run on {source}: {len(findings)} findings ==")
+    volume = save_transactions(store, context, findings, source)
 
     progress.stage("log findings", total=len(findings), unit="findings")
     for i, f in enumerate(findings, 1):
@@ -269,6 +294,26 @@ def _stages(store: Store, rules_path: Path, portal: Path, fixtures: Path | None,
     print("flock: " + ", ".join(f"{n} {role}{'s' if n != 1 else ''}" for role, n in flock.counts.items())
           + f" ({flock.total()} agents)")
     airgap_summary(store)
+    return {"source": source, "data": volume, "demo_approve": demo_approve}
+
+
+def save_transactions(store: Store, context: dict, findings: list[dict], source: str) -> dict | None:
+    """transactions.json for GET /api/transactions (one row per payout per store). Returns the data's volume."""
+    state_dir = Path(getattr(store, "dir", None) or STATE_DIR)
+    tables = context.get("tables") or {}
+    try:
+        if source.startswith("real data") and tables.get("payout_lines"):
+            deposits = context.get("deposit_stories") or [s for s in context.get("stories", [])
+                                                          if s.get("kind") == "deposit"]
+            doc = transactions.build(tables, deposits, findings, source)
+        else:
+            doc = transactions.empty(source, f"this run read {source}: hand-made findings with no payout tables, "
+                                             "so there are no transactions (POST /api/run with dataset=demo)")
+        transactions.save(doc, state_dir)
+        return doc.get("data")
+    except OSError as e:  # the API's table is a view; it must never stop a run
+        print(f"[pipeline] could not save transactions: {e}")
+        return None
 
 
 def airgap_summary(store: Store) -> dict:

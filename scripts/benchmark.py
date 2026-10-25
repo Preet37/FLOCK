@@ -59,14 +59,8 @@ DEFAULT_SEEDS = "101-110"
 DEFAULT_PROFILE = "ca_bagel_chain"
 CHARS_PER_TOKEN = 4  # estimate; the OpenAI-compatible providers don't all report usage
 
-# USD per 1M tokens (input, output), list prices. Local and NVIDIA build.nvidia.com are free to call; the GX10's power is not
-# metered here. Override any model with --price model=in,out.
-PRICES: dict[str, tuple[float, float]] = {
-    "claude-opus-5-5": (4.0, 20.0),
-    "claude-sonnet-5-5": (2.0, 10.0),
-    "claude-haiku-5-5": (0.10, 0.50),
-    "llama-3.3-70b-versatile": (0.59, 0.79),
-}
+# USD per 1M tokens (input, output), list prices (flock/llm.py LIST_PRICES). Override any model with --price model=in,out.
+PRICES: dict[str, tuple[float, float]] = dict(llm.LIST_PRICES)
 
 # Every FLOCK_* knob the provider layer reads. A contestant starts from a clean slate of these, so the shell's
 # FLOCK_OFFLINE=1 never leaks into a live contestant and a live key never leaks into "rules".

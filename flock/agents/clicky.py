@@ -38,6 +38,7 @@ from flock.store import ROOT, Store, get_store
 PORTAL = portal.DATA_DIR / "disputes.jsonl"
 PORTAL_URL = os.environ.get("FLOCK_PORTAL_URL", f"http://{portal.HOST}:{portal.PORT}")
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
+SCREENS_DIR = Path(os.environ.get("FLOCK_SCREENS_DIR") or ROOT / "data" / "screens")  # one screenshot per browser filing
 ACTOR = Actor(id="clicky", role="agent")
 
 
@@ -150,6 +151,22 @@ class BrowserFiler:
         p.wait_for_url("**/disputes/new")
 
     def file(self, f: dict[str, Any]) -> tuple[str, str]:
+        ref, url = self._file(f)
+        self.last_screen = self.snap(ref)
+        return ref, url
+
+    def snap(self, ref: str) -> str | None:
+        """Screenshot of the portal's confirmation page, data/screens/filing-<ref>.png (GET /api/screens/<file>).
+        Best effort: a failed screenshot never stops a filing."""
+        name = "filing-" + re.sub(r"[^A-Za-z0-9_.-]", "_", ref or "unknown") + ".png"
+        try:
+            SCREENS_DIR.mkdir(parents=True, exist_ok=True)
+            self.page.screenshot(path=str(SCREENS_DIR / name), full_page=True)
+            return name
+        except Exception:
+            return None
+
+    def _file(self, f: dict[str, Any]) -> tuple[str, str]:
         if self.wf:
             ref = self._replay([st for st in self.wf["steps"] if st["phase"] == "file"], f)
             return ref, self.page.url
@@ -259,10 +276,12 @@ class BrowserFiler:
 
 
 def _record(store: Store, f: dict[str, Any], ref: str, how: str, url: str | None = None,
-            wf: dict[str, Any] | None = None) -> None:
+            wf: dict[str, Any] | None = None, screen: str | None = None) -> None:
     receipt = {"source": "sandbox_portal", "portal_ref": ref, "via": how}
     if url:
         receipt["url"] = url
+    if screen:
+        receipt["screenshot"] = f"/api/screens/{screen}"
     learned = ""
     if wf:
         receipt.update(workflow=wf["workflow_id"], workflow_hash=wf["hash"])
@@ -318,7 +337,7 @@ def file_approved(store: Store, portal_path: Path | None = None, mode: str | Non
                 started = True
                 for f in approved:
                     ref, url = bot.file(f)
-                    _record(store, f, ref, "browser", url, wf)
+                    _record(store, f, ref, "browser", url, wf, screen=getattr(bot, "last_screen", None))
                     filed.append(ref)
             return filed
         except StaleWorkflow as e:

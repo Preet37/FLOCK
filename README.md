@@ -33,6 +33,7 @@ Flock does the boring job a restaurant pays an accountant to do by hand: it take
 | `docs/PLAN.md` | The plan: benchmark design, timeline, demo script, who's on what. |
 | `docs/connectors.md` | How Slack, Gmail and call notes get into Flock (drop-folder JSON contract for a CREAO connector). |
 | `docs/DEPLOY.md` | Hosting the API (and optionally the dashboard) on Railway. |
+| `docs/API.md` | The deployed JSON API for the frontend: every endpoint, real example responses, auth, CORS, which panel each feeds, how the metrics are computed. |
 | `docs/benchmark_schema.md` | Result file schema for the judge load test. |
 | `dashboard/README.md` | Dashboard screens and its API. |
 | `docs/hyphenate-track.md`, `docs/sponsor-tracks.md` | What the judges want; sponsor rules and the submission checklist. **Submit by Sun Oct 25, 9:00 AM.** |

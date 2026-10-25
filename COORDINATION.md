@@ -29,7 +29,7 @@ Keep each line short. Newest at the bottom. Never delete other people's lines.
 | --- | --- |
 | Live API (Railway) | https://web-production-812b4.up.railway.app — reads open, POST needs `Authorization: Bearer <FLOCK_API_TOKEN>` (ask Preet) |
 | AI roles on the live API | CREAO (7 hosted agents, Thabhelo's account) |
-| API docs for the frontend | `docs/API.md` (landing soon) |
+| API docs for the frontend | `docs/API.md` |
 | Plan, owners, timeline | `docs/PLAN.md` |
 | Contract (data shapes, state machines, rules) | `CONTRACT.md` |
 | Deploy guide | `docs/DEPLOY.md` |
@@ -60,3 +60,4 @@ Keep each line short. Newest at the bottom. Never delete other people's lines.
 - Sat 22:30 PT — Preet: Railway live with CREAO judges (verified: F-0001 judged by 3 CREAO agents, 0 fallbacks). Long `/api/run` requests hit Railway's proxy timeout (502) while the run continues server-side; fix (background jobs) coming in `preet/frontend-api`.
 - Sat 22:30 PT — Preet: COORDINATION.md created. Everyone: follow "The loop" above.
 - Sat 22:40 PT — Preet: DONE merged `preet/docs-sync` into main: CONTRACT.md rewritten to match the code (all shapes, state machines, traps 1-22, deal-term rule), README/FLOCK_CONTEXT updated (Noah's, current owners), new docs/STATUS.md. Docs only; 472 tests pass.
+- Sat 23:20 PT — Preet's agent: DONE `preet/frontend-api` (not pushed, ready to merge): flock/api.py adds GET /api/transactions (paged, one row per payout x store), risk 0-100 on findings, GET /api/metrics (4 cards, formula + sources, assumptions labelled), GET /api/agents/<id>, GET /api/screens/<file>, GET /api/health, GET /api/jobs/<id>. POST /api/run runs as a background job (dataset=demo always; fixtures with `?wait=0`), one at a time (409): the fix for the Railway 502. Docs: docs/API.md. Test: `FLOCK_OFFLINE=1 pytest -q tests/test_api.py`; `python scripts/smoke_hosted.py <url> [--token-file F --run]`. After deploy: set Railway health check to /api/health; the frontend should call `POST /api/run?wait=0`.

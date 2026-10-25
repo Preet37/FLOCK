@@ -125,10 +125,12 @@ class JsonStore:
             self._write(data)
 
     def get(self, finding_id: str) -> dict[str, Any]:
-        return self._load()[finding_id]
+        with self._lock:  # another thread (the API's background run) may be writing the batch cache
+            return self._load()[finding_id]
 
     def all(self) -> list[dict[str, Any]]:
-        return list(self._load().values())
+        with self._lock:
+            return list(self._load().values())
 
     def put_new(self, finding: dict[str, Any]) -> None:
         """Only for brand-new findings in state NEW. Everything after goes through the gatekeeper."""
@@ -162,7 +164,13 @@ class JsonStore:
         lines = self.log_path.read_text().split("\n")
         # The last piece is "" when the file ends cleanly. Anything else is a line another process
         # (the pipeline, while the dashboard reads) is still writing, so leave it until it's complete.
-        rows = [json.loads(line) for line in lines[:-1] if line.strip()]
+        rows = []
+        for line in lines[:-1]:
+            if line.strip():
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:  # a damaged line (e.g. a crash mid-write) is skipped, never fatal to a reader
+                    continue
         return [r for r in rows if subject_id is None or r["subject_id"] == subject_id]
 
     def reset(self) -> None:
