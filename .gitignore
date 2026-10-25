@@ -9,6 +9,7 @@ data/std/*
 !data/std/.gitkeep
 data/state/
 data/sandbox_portal/
+data/inbox/
 generator/out/
 rules.json
 .claude/

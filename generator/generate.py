@@ -26,6 +26,10 @@ Approach (see FLOCK_CONTEXT.md section 13):
        direct_app_orders.csv + direct_app_settlements.csv + direct_app_refund_log.csv
        bank_deposits.csv                 weekly lumps per platform, no order detail, MM/DD/YY, "1,234.56"
        contracts/*.json, emails/*.json   templated wording + machine-readable terms/claims (Deal Keeper format)
+       --sources email,slack,notes       (default for profiles with "deal_sources", e.g. ca_bagel_chain; the default
+                                         profile stays JSON-only and byte-identical) emails as .eml with a quoted reply
+                                         chain, a Slack export (slack/), meeting notes (notes/*.md), contracts list
+                                         authorized_contacts, and traps 19-22 whose claims exist only in Slack
   4. Write generator/out/answer_key.csv: order_id, trap_type, expected_outcome (correct|recoverable|conflict), amount
      Deposit-level traps (5, 6) use the payout_id as order_id; trap 4 (no POS order) uses the platform_order_id.
 
@@ -84,7 +88,14 @@ TRAPS = {
     16: ("legit_error_charge", "correct"),
     17: ("penny_rounding", "correct"),
     18: ("processing_fee_creep", "recoverable"),   # the direct app's processor quietly raises its rate for one store-week
+    # Messy deal sources (only with --sources slack; see plant_source_traps): the claim lives in a Slack export
+    19: ("slack_authorized_waiver", "recoverable"),      # authorized rep waives a fee in the shared channel
+    20: ("slack_unauthorized_promise", "conflict"),      # a rep NOT on the contract's authorized contacts promises one
+    21: ("slack_thread_correction", "recoverable"),      # 2nd message in the thread moves the waiver to this day
+    22: ("slack_thread_retracted_day", "correct"),       # ... and takes it back for the day the 1st message named
 }
+DEAL_SOURCES = ("json", "email", "slack", "notes")   # json = the original emails/*.json; email = .eml instead
+SOURCE_TRAPS = {19, 20, 21, 22}                      # planted only when "slack" is among the deal sources
 MINI_TRAPS = [3, 7, 16]
 
 
@@ -275,7 +286,7 @@ def week_index(start: date, day: date) -> int:
 
 
 def build_world(seed: int, n_stores: int, days: int, traps: list[int], profile: dict | str | None = None,
-                trap_rate: float | None = None) -> dict:
+                trap_rate: float | None = None, sources: list[str] | str | None = None) -> dict:
     profile = load_profile(profile)
     rng = random.Random(seed)
     xrng = random.Random(f"{seed}:{profile['name']}")   # profile-only extras (store size, catering)
@@ -297,8 +308,10 @@ def build_world(seed: int, n_stores: int, days: int, traps: list[int], profile: 
     world = {"seed": seed, "start": start, "days": days, "weeks": weeks, "stores": stores, "contracts": contracts,
              "orders": orders, "key": [], "emails": [], "refunds": [], "deposit_traps": {}, "dup_order_ids": [],
              "unseen_layout_week": None, "profile": profile,
-             "trap_counts": trap_counts(profile, n_stores, days, traps, trap_rate)}
+             "trap_counts": trap_counts(profile, n_stores, days, traps, trap_rate),
+             "sources": resolve_sources(profile, sources), "slack": [], "notes": []}
     plant_traps(rng, world, traps)
+    plant_source_traps(random.Random(f"{seed}:sources"), world, traps)   # own stream: the rest stays byte-identical
     if "doordash" in contracts and contracts["doordash"].get("amendment"):
         world["emails"].append(amendment_email(contracts["doordash"], profile))
     world["emails"].sort(key=lambda e: e["date"])
@@ -588,6 +601,8 @@ def contract_doc(ch: str, c: dict, profile: dict) -> dict:
            "effective_to": c["effective_to"].isoformat(), "clauses": clauses, "terms": contract_terms(ch, c, clauses)}
     if ch != "direct_app":
         doc["schedule_b_authorized_contacts"] = [{"name": n, "email": e, "title": t} for n, e, t in c["authorized_contacts"]]
+        if c.get("contacts_list"):  # messy deal sources on: who may change terms, by email and Slack handle
+            doc["authorized_contacts"] = c["contacts_list"]
     if profile.get("notice"):
         doc["notice"] = profile["notice"]
     return doc
@@ -665,6 +680,272 @@ def waiver_email(rng: random.Random, c: dict, ch: str, store_id: str, day: date,
             "slug": slug, "sender_authorized": authorized,
             "claims": [{"term_type": "fee", "store_id": store_id, "value": 0.0, "quote": body.split("\n\n")[1],
                         "effective_from": day.isoformat(), "effective_to": day.isoformat()}]}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# 4b. Messy deal sources (--sources email,slack,notes): the same kind of claims, scattered the way they really are
+#     emails/*.eml       RFC 822 mail, plain-text body, quoted reply chain (quoted lines are history, not new claims)
+#     slack/             a Slack export: channels.json, users.json, <channel>/<YYYY-MM-DD>.json; platform reps post
+#                        in shared (Slack Connect) channels, and whether they may change the deal depends on the
+#                        contract's authorized_contacts list, not on what they say
+#     notes/*.md         short meeting notes (a call note: never binding)
+#     All of it SIMULATED. Drawn from its own random stream, so turning it off gives the original bytes.
+# ---------------------------------------------------------------------------------------------------------------
+
+STAFF = [["Avery Quinn", "avery.quinn", "Ops Lead"], ["Casey Morgan", "casey.morgan", "Staff Accountant"]]
+
+
+def resolve_sources(profile: dict, sources: list[str] | str | None = None) -> list[str]:
+    """Deal-source formats to render. None = the profile's "deal_sources" (default ["json"], the original files)."""
+    got = profile.get("deal_sources", ["json"]) if sources is None else sources
+    if isinstance(got, str):
+        got = [s.strip() for s in got.split(",") if s.strip()]
+    bad = [s for s in got if s not in DEAL_SOURCES]
+    if bad:
+        raise SystemExit(f"unknown --sources {bad}; pick from {', '.join(DEAL_SOURCES)}")
+    return sorted(set(got) or {"json"}, key=DEAL_SOURCES.index)
+
+
+def handle(email: str) -> str:
+    return email.split("@")[0].lower()
+
+
+def plant_source_traps(rng: random.Random, world: dict, traps: list[int]) -> None:
+    """Contracts get an authorized_contacts list (emails + Slack handles); with slack on, traps 19-22 are planted:
+    their claims exist ONLY as Slack messages. Edits the truth like 14/15 (a waived fee the platform still charged)."""
+    if world["sources"] == ["json"]:
+        return
+    c, profile, start = world["contracts"], world["profile"], world["start"]
+    for ch, spec in c.items():
+        if spec.get("authorized_contacts"):
+            spec["contacts_list"] = [x for _, e, _ in spec["authorized_contacts"] for x in (e, "@" + handle(e))]
+    if "slack" not in world["sources"]:
+        return
+    counts = world["trap_counts"]
+    used = {r["order_id"] for r in world["key"]}
+    slots: dict[tuple, list[dict]] = {}
+    for o in world["orders"]:
+        slots.setdefault((o["channel"], o["store_id"], o["day"]), []).append(o)
+    names = {s["store_id"]: s["name"] for s in world["stores"]}
+
+    def free(k: tuple) -> bool:
+        return k in slots and not any(o["order_id"] in used or o["platform_order_id"] in used for o in slots[k])
+
+    def mark(no: int, k: tuple, waived: bool) -> None:
+        trap_type, outcome = TRAPS[no]
+        for o in slots[k]:
+            used.add(o["order_id"])
+            amount = o["actual"]["other_fees"] if waived else 0.0
+            if waived:
+                o["truth"]["other_fees"] = 0.0
+            world["key"].append({"trap_no": no, "order_id": o["order_id"], "trap_type": trap_type,
+                                 "expected_outcome": outcome, "amount": f"{money(amount):.2f}"})
+
+    def pick(ch: str, span: int = 1) -> tuple[str, date] | None:
+        ok = sorted({(s, d) for (cc, s, d) in slots if cc == ch and all(free((ch, s, d + timedelta(days=i)))
+                                                                         for i in range(span))})
+        return ok[rng.randrange(len(ok))] if ok else None
+
+    def sent(day: date) -> datetime:
+        return datetime.combine(day - timedelta(days=rng.randint(2, 4)), datetime.min.time()) + \
+            timedelta(hours=rng.randint(9, 16), minutes=rng.randint(0, 59))
+
+    def waive_text(spec: dict, sid: str, day: date) -> str:
+        return (f"we'll waive the {spec['fee_name']} (${spec['fee']:.2f}/order) for {names[sid]} ({sid}) on "
+                f"{day:%A, %B %d}")
+
+    msgs = world["slack"]
+    staff = [h for _, h, _ in STAFF]
+    ue, gh = c.get("ubereats"), c.get("grubhub")
+    if 19 in traps and ue and ue.get("fee_name") and ue["fee"] > 0:
+        rep = handle(ue["authorized_contacts"][0][1])
+        for _ in range(counts.get(19, 1)):
+            got = pick("ubereats")
+            if not got:
+                break
+            sid, day = got
+            mark(19, ("ubereats", sid, day), waived=True)
+            at = sent(day)
+            msgs.append({"channel": "ubereats-partnership", "user": rep, "at": at,
+                         "text": f"Confirmed: {waive_text(ue, sid, day)} for your local event. Nothing to do on "
+                                 "your side.", "reactions": [("white_check_mark", [staff[0]])]})
+            msgs.append({"channel": "ubereats-partnership", "user": staff[0], "at": at + timedelta(minutes=7),
+                         "text": f"Thank you <@{rep}>! Passing it to the GM.", "reply_to": at})
+    if 20 in traps and gh and gh.get("fee_name") and gh["fee"] > 0:
+        rep = handle(profile["unauthorized_rep"][1])
+        for _ in range(counts.get(20, 1)):
+            got = pick("grubhub")
+            if not got:
+                break
+            sid, day = got
+            mark(20, ("grubhub", sid, day), waived=True)
+            msgs.append({"channel": "grubhub-partnership", "user": rep, "at": sent(day), "edited": True,
+                         "text": f"Good news, I got it approved: {waive_text(gh, sid, day)}. Consider it done!"})
+    if 21 in traps and ue and ue.get("fee_name") and ue["fee"] > 0:
+        rep = handle(ue["authorized_contacts"][0][1])
+        for _ in range(max(counts.get(21, 1), counts.get(22, 1))):
+            got = pick("ubereats", span=2)
+            if not got:
+                break
+            sid, first = got
+            second = first + timedelta(days=1)
+            mark(21, ("ubereats", sid, second), waived=True)      # the correction's day: waived, still charged
+            if 22 in traps:
+                mark(22, ("ubereats", sid, first), waived=False)  # the first message's day: billed as normal
+            at = sent(first)
+            msgs.append({"channel": "ubereats-partnership", "user": rep, "at": at,
+                         "text": f"Heads up: {waive_text(ue, sid, first)} while the street is closed."})
+            msgs.append({"channel": "ubereats-partnership", "user": rep, "at": at + timedelta(minutes=35),
+                         "reply_to": at, "reactions": [("+1", [staff[1]])],
+                         "text": f"Correction: {waive_text(ue, sid, second)}, not {first:%A}. {first:%A} is billed "
+                                 "as normal."})
+    # noise: no deal content (or deal words with no numbers), the Deal Keeper must ignore all of it
+    day0 = datetime.combine(start, datetime.min.time())
+    noise = [("ops-promos", staff[0], 1, 8, f"Who can cover the Saturday open? <@{staff[1]}> are you around?"),
+             ("ops-promos", staff[1], 1, 9, "Reminder: new menu boards arrive Friday, please clear the wall."),
+             ("ops-promos", staff[0], 3, 15, "Grubhub mentioned they might revisit the commission next quarter, "
+                                             "nothing signed yet."),
+             ("ops-promos", staff[1], 4, 11, ":tada: catering orders are way up this week")]
+    for ch in ("doordash", "ubereats", "grubhub"):
+        if ch in c and c[ch].get("authorized_contacts"):
+            noise.append((f"{ch}-partnership", handle(c[ch]["authorized_contacts"][0][1]), 0, 10,
+                          "Morning! Anything you need from us this week?"))
+            noise.append((f"{ch}-partnership", staff[0], 0, 11, "All good here, thanks."))
+    if c.get("doordash", {}).get("amendment"):
+        noise.append(("doordash-partnership", handle(c["doordash"]["authorized_contacts"][0][1]), 2, 14,
+                      "Heads up: the countersigned amendment went out by email, details are there."))
+    for ch_name, user, d, h, text in noise:
+        msgs.append({"channel": ch_name, "user": user, "at": day0 + timedelta(days=d, hours=h,
+                                                                              minutes=rng.randint(0, 59)),
+                     "text": text})
+    msgs.sort(key=lambda m: (m["at"], m["channel"]))
+
+
+def slack_ts(at: datetime, seq: int) -> str:
+    return f"{int((at - datetime(1970, 1, 1)).total_seconds())}.{seq:06d}"
+
+
+def render_slack(world: dict, out: Path) -> None:
+    """The real Slack export layout: users.json, channels.json, <channel>/<YYYY-MM-DD>.json (message arrays)."""
+    c, profile = world["contracts"], world["profile"]
+    people = [(n, f"{h}@{profile['email_domain']}", t, "T0FLOCKHQ") for n, h, t in STAFF]
+    for i, ch in enumerate(("doordash", "ubereats", "grubhub")):
+        if ch in c and c[ch].get("authorized_contacts"):
+            people += [(n, e, t, f"T0EXT{i:04d}") for n, e, t in c[ch]["authorized_contacts"]]
+            if ch == "grubhub":
+                n, e, t = profile["unauthorized_rep"]
+                people.append((n, e, t, f"T0EXT{i:04d}"))
+    ids, users = {}, []
+    for i, (n, e, t, team) in enumerate(people):
+        uid = f"U0SIM{i + 1:05d}"
+        ids[handle(e)] = uid
+        users.append({"id": uid, "team_id": team, "name": handle(e), "real_name": n, "deleted": False,
+                      "is_bot": False, "profile": {"real_name": n, "display_name": handle(e), "email": e, "title": t}})
+    write_json(out / "users.json", users)
+    names = sorted({m["channel"] for m in world["slack"]})
+    channels = []
+    for i, name in enumerate(names):
+        shared = name.endswith("-partnership")
+        members = sorted({ids[m["user"]] for m in world["slack"] if m["channel"] == name})
+        purpose = (f"SIMULATED Slack Connect channel shared with {name.split('-')[0]}" if shared
+                   else "SIMULATED internal channel")
+        channels.append({"id": f"C0SIM{i + 1:05d}", "name": name, "created": 1767225600, "creator": members[0],
+                         "is_archived": False, "is_general": False, "is_ext_shared": shared, "members": members,
+                         "topic": {"value": "", "creator": "", "last_set": 0},
+                         "purpose": {"value": purpose, "creator": members[0], "last_set": 0}})
+    write_json(out / "channels.json", channels)
+    team = {u["id"]: u["team_id"] for u in users}
+    real = {u["id"]: u["real_name"] for u in users}
+    ts = {(m["channel"], m["at"]): slack_ts(m["at"], seq) for seq, m in enumerate(world["slack"], 1)}
+    author = {(m["channel"], m["at"]): ids[m["user"]] for m in world["slack"]}
+    days: dict[tuple, list[dict]] = {}
+    for m in world["slack"]:
+        me, uid = ts[(m["channel"], m["at"])], ids[m["user"]]
+        text = re.sub(r"<@([a-z0-9.]+)>", lambda x: f"<@{ids[x.group(1)]}>", m["text"])
+        msg = {"type": "message", "user": uid, "text": text, "ts": me, "team": team[uid],
+               "user_profile": {"real_name": real[uid], "name": m["user"]}}
+        if m.get("reply_to"):
+            msg["thread_ts"] = ts[(m["channel"], m["reply_to"])]
+            msg["parent_user_id"] = author[(m["channel"], m["reply_to"])]
+        replies = [r for r in world["slack"] if r["channel"] == m["channel"] and r.get("reply_to") == m["at"]]
+        if replies:
+            msg["thread_ts"] = me
+            msg["reply_count"] = len(replies)
+            msg["replies"] = [{"user": ids[r["user"]], "ts": ts[(r["channel"], r["at"])]} for r in replies]
+            msg["latest_reply"] = msg["replies"][-1]["ts"]
+        if m.get("edited"):
+            msg["edited"] = {"user": uid, "ts": slack_ts(m["at"] + timedelta(minutes=3), 0)}
+        if m.get("reactions"):
+            msg["reactions"] = [{"name": n, "users": [ids[u] for u in us], "count": len(us)} for n, us in m["reactions"]]
+        days.setdefault((m["channel"], m["at"].date()), []).append(msg)
+    for (name, day), rows in days.items():
+        write_json(out / name / f"{day.isoformat()}.json", rows)
+
+
+def eml(frm: str, to: str, at: datetime, subject: str, body: str, profile: dict, msg_id: str) -> str:
+    """One RFC 822 message, plain text, 7bit (so a quote from the body is also verbatim in the file)."""
+    from email.utils import format_datetime
+    head = [f"From: {frm}", f"To: {to}", f"Date: {format_datetime(at)}", f"Subject: {subject}",
+            f"Message-ID: <{msg_id}@mail.simulated.example>", "MIME-Version: 1.0",
+            'Content-Type: text/plain; charset="us-ascii"', "Content-Transfer-Encoding: 7bit",
+            f"X-Flock-Notice: {profile.get('notice') or 'SIMULATED DATA: generated by generator/generate.py'}"]
+    return "\n".join(head) + "\n\n" + body.rstrip("\n") + "\n"
+
+
+def addr(display: str) -> str:
+    """'Name (simulated) <a@b>' -> a properly quoted RFC 822 address."""
+    from email.utils import formataddr, parseaddr
+    name, email = parseaddr(display)
+    real = display.split("<")[0].strip() or name
+    return formataddr((real, email))
+
+
+def render_eml(world: dict, out: Path) -> None:
+    profile, c = world["profile"], world["contracts"]
+    for e in world["emails"]:
+        body, subject = e["body"], e["subject"]
+        if e["slug"] == "doordash_amendment_notice":   # a reply, with the question it answers quoted below
+            asked = e["date"] - timedelta(hours=17, minutes=32)
+            subject = f"Re: {subject}"
+            old = c["doordash"]["commission"]
+            body += (f"\n\nOn {asked:%a, %b %d, %Y at %I:%M %p}, {e['to']} wrote:\n"
+                     f"> Hi, our records show {old * 100:.0f}% commission on every order so far. Can you confirm\n"
+                     "> in writing when the new plan starts and what the rate is?\n> Thanks, Accounting")
+        text = eml(addr(e["from"]), e["to"], e["date"], subject, body, profile, f"{e['date']:%Y%m%d%H%M}.{e['slug']}")
+        (out / f"{e['date']:%Y-%m-%d}_{e['slug']}.eml").parent.mkdir(parents=True, exist_ok=True)
+        (out / f"{e['date']:%Y-%m-%d}_{e['slug']}.eml").write_text(text)
+    if "doordash" in c:   # noise: a platform newsletter with no deal terms in it
+        at = datetime.combine(world["start"], datetime.min.time()) + timedelta(hours=6)
+        body = ("Your weekly merchant insights are ready. Sales were up this week across your stores.\n\n"
+                "Log in to the merchant portal to see the full dashboard.\n\nThe DoorDash Merchant team")
+        (out / f"{at:%Y-%m-%d}_doordash_newsletter.eml").write_text(
+            eml(addr("DoorDash Merchant News <no-reply@merchants.doordash.example>"),
+                f"accounting@{profile['email_domain']}", at, "Your weekly merchant insights", body, profile,
+                f"{at:%Y%m%d}.newsletter"))
+
+
+def render_notes(world: dict, out: Path) -> None:
+    """Meeting notes as Markdown. Call notes never change the deal; this one agrees with the signed amendment."""
+    c, profile = world["contracts"], world["profile"]
+    dd = c.get("doordash")
+    if not dd or not dd.get("amendment"):
+        return
+    am = dd["amendment"]
+    rep = dd["authorized_contacts"][0][0]
+    day = am["signed"] - timedelta(days=2)
+    text = (f"# Call notes: DoorDash account check-in (SIMULATED)\n\n"
+            f"Date: {day.isoformat()}\nChannel: doordash\n"
+            f"Attendees: {rep} (DoorDash), {STAFF[0][0]} ({STAFF[0][2]}), {STAFF[1][0]} ({STAFF[1][2]})\n\n"
+            f"## Notes\n\n"
+            f"- {rep.split(' (')[0]} walked us through the {am['tier']} plan: {am['commission'] * 100:.0f}% commission "
+            f"starting {am['effective_from']:%A, %B %d}.\n"
+            f"- Tablet at the busiest store keeps rebooting; they will ship a replacement.\n"
+            f"- Asked about catering order minimums: no change.\n\n"
+            f"## Action items\n\n"
+            f"- {STAFF[1][0].split()[0]} to watch for the countersigned amendment by email.\n")
+    world["notes"].append(day)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{day.isoformat()}_doordash_account_call.md").write_text(text)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -807,7 +1088,13 @@ def render(world: dict, out: Path, progress=None) -> None:
             write_json(out / "contracts" / f"{ch}_contract.json", contract_doc(ch, c[ch], profile))
     if "doordash" in c and c["doordash"].get("amendment"):
         write_json(out / "contracts" / "doordash_amendment_1.json", amendment_doc(c["doordash"], profile))
-    for e in world["emails"]:
+    if "email" in world["sources"]:
+        render_eml(world, out / "emails")
+    if "slack" in world["sources"]:
+        render_slack(world, out / "slack")
+    if "notes" in world["sources"]:
+        render_notes(world, out / "notes")
+    for e in world["emails"] if "email" not in world["sources"] else []:
         doc = {"kind": "email", "from": e["from"], "to": e["to"], "date": e["date"].isoformat(),
                "subject": e["subject"], "sender_authorized": e["sender_authorized"], "channel": e["channel"],
                "body": e["body"], "claims": e["claims"]}
@@ -978,13 +1265,13 @@ def prepare_out(out: Path) -> None:
 
 def generate(seed: int = 42, stores: int | None = 12, days: int = 14, traps: list[int] | None = None,
              out: Path = ROOT / "generator" / "out", profile: str | dict | None = None,
-             trap_rate: float | None = None, progress=None) -> dict:
+             trap_rate: float | None = None, progress=None, sources: list[str] | str | None = None) -> dict:
     """stores=None = the profile's own store count. Returns the world (orders, key, ...)."""
     traps = sorted(TRAPS) if traps is None else traps
     prof = load_profile(profile)
     if progress:
         progress.stage("generate", total=6, unit="steps")
-    world = build_world(seed, stores or prof["default_stores"], days, traps, prof, trap_rate)
+    world = build_world(seed, stores or prof["default_stores"], days, traps, prof, trap_rate, sources)
     if progress:
         progress.advance(1)
     out = Path(out)
@@ -1004,6 +1291,9 @@ def main() -> None:
     ap.add_argument("--traps", default="all", help="comma list of trap numbers 1-18, or 'all'")
     ap.add_argument("--trap-rate", type=float, default=None,
                     help="instances of each trap per 100 store-weeks (default: the profile's, 2.0); min 1 each")
+    ap.add_argument("--sources", default=None,
+                    help="deal-source formats, comma list of json,email,slack,notes (default: the profile's "
+                         "'deal_sources'; json only for the default profile). email = .eml instead of .json")
     ap.add_argument("--mini", action="store_true", help="first milestone: 1 store x 1 day, traps 3,7,16")
     ap.add_argument("--out", default=str(ROOT / "generator" / "out"))
     ap.add_argument("--write-answer-key", action="store_true",
@@ -1017,12 +1307,15 @@ def main() -> None:
     bad = [t for t in traps if t not in TRAPS]
     if bad:
         raise SystemExit(f"unknown trap numbers: {bad}")
-    world = generate(a.seed, stores, days, traps, Path(a.out), prof, a.trap_rate)
+    world = generate(a.seed, stores, days, traps, Path(a.out), prof, a.trap_rate, sources=a.sources)
     planted = sorted({r["trap_no"] for r in world["key"]})
-    skipped = [t for t in traps if t not in planted]
+    skipped = [t for t in traps if t not in planted and (t not in SOURCE_TRAPS or "slack" in world["sources"])]
     tag = "" if a.profile == DEFAULT_PROFILE else f" [{prof['name']}, simulated]"
     print(f"seed {a.seed}: {stores} stores x {days} days from {world['start']} -> {a.out}{tag}")
     print(f"  {len(world['orders'])} orders, {len(world['deposits'])} bank deposits, {len(world['emails'])} emails")
+    if world["sources"] != ["json"]:
+        print(f"  deal sources: {', '.join(world['sources'])} ({len(world['slack'])} slack messages, "
+              f"{len(world['notes'])} call notes)")
     print(f"  traps planted: {planted} ({len(world['key'])} answer key rows)")
     if skipped:
         print(f"  traps skipped (need more stores/days, e.g. 2 and 5 need --weeks 2): {skipped}")

@@ -3,6 +3,10 @@
 IN:  an inbox folder with whatever files arrived (generator output, or in production, portal downloads)
 OUT: the same files copied untouched into data/raw/<source>/, plus data/raw/manifest.csv
      (source, file, sha256, copied_at). Running it twice copies nothing new.
+     Deal sources: contracts/, emails/ (.json, .txt, .eml), notes/ (.md meeting notes) and slack/ (a Slack export
+     folder: channels.json, users.json, <channel>/<YYYY-MM-DD>.json). Files under a source folder keep their path
+     inside it (slack/ubereats-partnership/2026-01-19.json), so a Slack export lands as the same tree.
+     A bare .eml is an email and a bare .md a note, wherever it was dropped.
 
   python -m flock.agents.collector                      # inbox defaults to generator/out
   python -m flock.agents.collector path/to/inbox
@@ -24,22 +28,36 @@ from flock.store import ROOT
 
 RAW = ROOT / "data" / "raw"
 INBOX = ROOT / "generator" / "out"
-SOURCES = ["pos", "doordash", "ubereats", "grubhub", "direct_app", "bank", "contracts", "emails"]
+SOURCES = ["pos", "doordash", "ubereats", "grubhub", "direct_app", "bank", "contracts", "emails", "slack", "notes"]
+BY_SUFFIX = {".eml": "emails", ".md": "notes"}
 SKIP = {"answer_key.csv"}
 MANIFEST_COLS = ["source", "file", "sha256", "copied_at"]
 
 
 def guess_source(path: Path) -> str | None:
-    """Folder name wins (contracts/doordash_contract.json is a contract), then the file name."""
-    for part in reversed(path.parent.parts):
+    """Folder name wins (contracts/doordash_contract.json is a contract), then the file type (.eml, .md), then the
+    file name."""
+    for part in path.parent.parts:   # outermost first: a Slack channel folder named "doordash" stays in slack/
         if part.lower() in SOURCES:
             return part.lower()
+    if path.suffix.lower() in BY_SUFFIX:
+        return BY_SUFFIX[path.suffix.lower()]
     tokens = re.split(r"[^a-z0-9]+", path.stem.lower())   # whole words: "bank_deposits" is not "pos"
     joined = "".join(tokens)
     for s in SOURCES:
         if s.replace("_", "") in tokens or ("_" in s and s.replace("_", "") in joined):
             return s
     return None
+
+
+def inside(rel: Path, source: str) -> Path:
+    """The file's path below its source folder (slack/general/2026-01-05.json -> general/2026-01-05.json);
+    just the file name when the source came from the name."""
+    parts = [p.lower() for p in rel.parent.parts]
+    if source in parts:
+        i = parts.index(source)
+        return Path(*rel.parts[i + 1:])
+    return Path(rel.name)
 
 
 def sha256(path: Path) -> str:
@@ -71,8 +89,9 @@ def collect(inbox: Path = INBOX, raw: Path = RAW) -> list[Path]:
         digest = sha256(f)
         if digest in seen:
             continue
-        src = guess_source(f.relative_to(inbox)) or "unknown"
-        dest = raw / src / f.name
+        rel = f.relative_to(inbox)
+        src = guess_source(rel) or "unknown"
+        dest = raw / src / inside(rel, src)
         if dest.exists():
             dest = dest.with_name(f"{f.stem}.{digest[:8]}{f.suffix}")
         dest.parent.mkdir(parents=True, exist_ok=True)

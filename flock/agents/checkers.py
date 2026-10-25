@@ -30,6 +30,9 @@ def _term_evidence(term: dict[str, Any]) -> list[dict[str, Any]]:
     for c in term.get("conflicts", []):
         ev.append({"source_file": c["source_file"], "quote": c["quote"], "authority": c.get("authority"),
                    "conflict": True})
+    for e, c in zip(ev, [term] + list(term.get("conflicts", []))):
+        if c.get("locator"):   # where in the file: an email line, a Slack message ts
+            e["locator"] = c["locator"]
     return ev
 
 
