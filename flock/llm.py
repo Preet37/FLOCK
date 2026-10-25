@@ -81,6 +81,7 @@ CREAO_URL = "https://developer.creao.ai"
 CREAO_AGENTS_FILE = Path(__file__).resolve().parent.parent / "creao_agents.json"   # role -> CREAO agent id
 CREAO_ROLE_KEYS = {("judge", 0): "judge.strict", ("judge", 1): "judge.operator", ("judge", 2): "judge.skeptic"}
 CREAO_POLL_SECONDS = 1.0
+CREAO_USER_AGENT = "flock/1.0 (+https://github.com/Preet37/FLOCK)"
 CREAO_RPM_DEFAULT = 28           # CREAO /v2 allows 30 run creates per account per minute; stay under it
 CREAO_RETRIES = 3                # on 429 RATE_LIMITED: wait Retry-After (or 60s) and try again, this many times
 # USD per 1M tokens (input, output) as the Developer Console dashboard lists them (2026-10-24). Unknown ids cost 0 here
@@ -434,7 +435,8 @@ class CreaoHTTPError(RuntimeError):
 
 def _creao_request(method: str, path: str, body: dict[str, Any] | None = None) -> bytes:
     """One call to developer.creao.ai with the account key. Returns the raw body; raises CreaoHTTPError on 4xx/5xx."""
-    headers = {"Authorization": f"Bearer {os.environ.get('CREAO_API_KEY', '')}", "Accept": "application/json"}
+    headers = {"Authorization": f"Bearer {os.environ.get('CREAO_API_KEY', '')}", "Accept": "application/json",
+               "User-Agent": CREAO_USER_AGENT}  # Cloudflare in front of CREAO rejects Python's default agent (error 1010)
     data = None
     if body is not None:
         headers["Content-Type"] = "application/json"

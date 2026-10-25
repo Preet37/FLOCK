@@ -1,0 +1,49 @@
+{
+  "url": "https://developer.creao.ai",
+  "api": "v2",
+  "agents": {
+    "judge.strict": {
+      "agent_id": "cd2bbb20-5f7f-4928-b2ab-cbbd879c7c55",
+      "name": "Flock Judge: Strict Auditor",
+      "created_at": "2026-10-25T01:17:00Z",
+      "creation_run": "5e3fc41c-4385-4351-a4fb-f7ca95d0b050",
+      "model": "anthropic/claude-haiku-4-5"
+    },
+    "judge.operator": {
+      "agent_id": "4f2ca337-a2f5-4893-a648-30d68315bd05",
+      "name": "Flock Judge: Operator",
+      "created_at": "2026-10-25T01:19:13.695Z",
+      "creation_run": "b4db664c-fc76-469e-8b82-09a9903a23c5"
+    },
+    "judge.skeptic": {
+      "agent_id": "afebcafb-96e1-4a08-b5f9-310117591eb6",
+      "name": "Flock Judge: Skeptic",
+      "created_at": "2026-10-25T01:19:53.738Z",
+      "creation_run": "d98b11aa-9f91-489e-94a0-c7e5b2c937e2"
+    },
+    "reviewer": {
+      "agent_id": "647ec622-7be8-45ba-b6da-f6847c2fac41",
+      "name": "Flock Reviewer",
+      "created_at": "2026-10-25T01:20:36.871Z",
+      "creation_run": "466001d3-de54-4dec-b34b-c1cbbe56afa5"
+    },
+    "writer": {
+      "agent_id": "849ad6cf-b0d0-44b3-a9a6-0eee04712f87",
+      "name": "Flock Dispute Writer",
+      "created_at": "2026-10-25T01:21:18.167Z",
+      "creation_run": "f0806aef-d6af-4503-83df-177e034391e5"
+    },
+    "mapper": {
+      "agent_id": "f3abb1a3-8bc0-40db-9c06-7fbedd709a60",
+      "name": "Flock Column Mapper",
+      "created_at": "2026-10-25T01:21:58.234Z",
+      "creation_run": "f1ec3826-da38-4220-bad7-1b72340afcc7"
+    },
+    "reader": {
+      "agent_id": "5e3d91f3-3c9d-4a58-b59d-8fdcd2827576",
+      "name": "Flock Document Reader",
+      "created_at": "2026-10-25T01:22:44.946Z",
+      "creation_run": "4fb84389-0a64-4a4d-9441-f746b611b772"
+    }
+  }
+}
