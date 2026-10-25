@@ -333,8 +333,8 @@ As soon as `data/std/` has real tables and the matcher/checkers return findings,
 
 | Who | Now working on | Owns |
 | --- | --- | --- |
-| **Preet** | GX10 setup (vLLM, three local models), offline run, model providers, judge panel + market, merging into `main` | `flock/llm.py`, `panel.py`, `ranker.py`, `learner.py`, `dispute_writer.py`, `clicky.py`, `portal.py`, `market.py` |
-| **Thabhelo** | ML: anomaly detector, benchmark harness (`scripts/benchmark.py`), tuned local judge with held-out eval | `matcher.py`, `checkers.py`, `deal_keeper.py`, `anomaly.py`, `flock/api.py`, `scripts/benchmark.py`, new ML code |
+| **Preet** | **Hosting** (Railway: Flock's API live, tell Thabhelo the URL + token) and **all ML + benchmarking**: GX10 models, local judges, fine-tuned judge, `scripts/benchmark.py` runs (rules / local / tuned / CREAO / Claude / human), results write-up; merging into `main` | `flock/llm.py`, `panel.py`, `market.py`, `scripts/benchmark.py`, `scripts/judge_*.py`, `scripts/gx10.sh`, `scripts/train/`, `anomaly.py`, deploy config |
+| **Thabhelo** | **CREAO**: all AI roles as hosted CREAO agents (`scripts/creao_setup.py`), CREAO connectors for Slack/Gmail into Flock, CREAO on the deployed API, talk to the CREAO booth about their judging | `flock/llm.py` (creao provider), `scripts/creao_setup.py`, `flock/api.py`, `matcher.py`, `checkers.py`, `deal_keeper.py` |
 | **Himaja** | UI: the demo flow on the dashboard, including a benchmark tab | `dashboard/`; still owns `generator/`, `collector.py`, `formatter.py`, `profiles/` |
 | **Ira** | [confirm] SpacetimeDB backend, pitch, video, Figma/Notability process tracks | `flock/store.py` (SpacetimeStore), `gatekeeper.py`, `scripts/score.py` |
 
