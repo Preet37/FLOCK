@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Flock Console</title>
     <link rel="icon"
-        href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2034%2034%22%3E%3Cpath%20d%3D%22M17%200L20.8%2013.2L34%2017L20.8%2020.8L17%2034L13.2%2020.8L0%2017L13.2%2013.2L17%200Z%22%20fill%3D%22%23C4FE29%22%2F%3E%3Cpath%20d%3D%22M17%206L19.5%2014.5L28%2017L19.5%2019.5L17%2028L14.5%2019.5L6%2017L14.5%2014.5L17%206Z%22%20fill%3D%22%236B57EC%22%2F%3E%3C%2Fsvg%3E">
+        href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2034%2034%22%3E%3Cpath%20d%3D%22M17%200L20.8%2013.2L34%2017L20.8%2020.8L17%2034L13.2%2020.8L0%2017L13.2%2013.2L17%200Z%22%20fill%3D%22%2361CDFF%22%2F%3E%3Cpath%20d%3D%22M17%206L19.5%2014.5L28%2017L19.5%2019.5L17%2028L14.5%2019.5L6%2017L14.5%2014.5L17%206Z%22%20fill%3D%22%230084FF%22%2F%3E%3C%2Fsvg%3E">
     <!-- Tailwind (play build) and Lucide icons are vendored so the console works with no network (stage Wi-Fi) -->
     <script src="vendor/tailwind-3.4.16.js"></script>
     <!-- Google Fonts: Plus Jakarta Sans (falls back to the system sans offline) -->
@@ -23,14 +23,16 @@
                         sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
                     },
                     colors: {
-                        sidebar: '#161618',
-                        cardDark: '#18181A',
-                        limeAccent: '#C4FE29',
-                        limeAccentHover: '#B2EB1B',
-                        purpleAccent: '#6B57EC',
-                        purpleAccentHover: '#5945E0',
-                        bgMain: '#EBECEE',
-                        lightCardBg: '#F5F6F8',
+                        // blue palette (light #012F8A..#D2F5FF, dark navy #3E445C..#BBE2F8)
+                        sidebar: '#23263A',
+                        cardDark: '#23263A',
+                        navy: { 1: '#3E445C', 2: '#424A69', 3: '#4A628A', 4: '#5890CB', 5: '#60AAEF', 6: '#6DB4F1', 7: '#7FC4F6', 8: '#9CD5F6', 9: '#BBE2F8' },
+                        limeAccent: '#61CDFF',
+                        limeAccentHover: '#2EA7FF',
+                        purpleAccent: '#0084FF',
+                        purpleAccentHover: '#017AF0',
+                        bgMain: '#EAF1FA',
+                        lightCardBg: '#F2F7FD',
                     },
                     borderRadius: {
                         '2xl': '18px',
@@ -44,7 +46,7 @@
     <style>
         body {
             font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-            background-color: #EBECEE;
+            background-color: #EAF1FA;
             color: #111111;
             -webkit-tap-highlight-color: transparent;
         }
@@ -62,7 +64,7 @@
 
         /* Pattern for diagonal striped bars */
         .striped-bar {
-            background: repeating-linear-gradient(-45deg, #E2E4E8, #E2E4E8 5px, #F0F1F5 5px, #F0F1F5 10px);
+            background: repeating-linear-gradient(-45deg, #D2F5FF, #D2F5FF 5px, #EEF8FF 5px, #EEF8FF 10px);
         }
 
         /* Soft Card Shadows */
@@ -71,7 +73,7 @@
         .pulse-dot { animation: pulse 1.6s ease-in-out infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
         .flash { animation: flash 1.4s ease-out; }
-        @keyframes flash { from { background-color: rgba(196, 254, 41, .25); } to { background-color: transparent; } }
+        @keyframes flash { from { background-color: rgba(97, 205, 255, .3); } to { background-color: transparent; } }
         .slide-in { animation: slide .18s ease-out; }
         @keyframes slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
         .tabular-nums { font-variant-numeric: tabular-nums; }
@@ -91,8 +93,8 @@
         <a href="#/" class="cursor-pointer hover:scale-105 transition-transform" aria-label="Flock home">
             <div class="w-10 h-10 relative flex items-center justify-center">
                 <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#C4FE29" />
-                    <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#6B57EC" fill-opacity="0.85" />
+                    <path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#61CDFF" />
+                    <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#0084FF" fill-opacity="0.85" />
                 </svg>
             </div>
         </a>
@@ -104,7 +106,10 @@
             <a href="#/lumpsums" data-nav="lumpsums" title="Lump sums" aria-label="Lump sums" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
                 <i data-lucide="landmark" class="w-5 h-5 stroke-[2]"></i>
             </a>
-            <a href="#/theater" data-nav="theater" title="Agent theater" aria-label="Agent theater" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+            <a href="theater.html" title="Agent theater: agents spawning and earning" aria-label="Agent theater" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="network" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="#/theater" data-nav="theater" title="Judge theater" aria-label="Judge theater" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
                 <i data-lucide="clapperboard" class="w-5 h-5 stroke-[2]"></i>
             </a>
             <a href="#/sources" data-nav="sources" title="Sources / Inbox" aria-label="Sources" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
@@ -112,6 +117,9 @@
             </a>
             <a href="#/scoreboard" data-nav="scoreboard" title="Scoreboard + judge market" aria-label="Scoreboard" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
                 <i data-lucide="trophy" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="#/benchmarks" data-nav="benchmarks" title="Benchmarks + GX10" aria-label="Benchmarks" class="nav-btn w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="flask-conical" class="w-5 h-5 stroke-[2]"></i>
             </a>
         </nav>
 
@@ -126,9 +134,11 @@
     <nav class="lg:hidden fixed bottom-0 inset-x-0 bg-sidebar/95 backdrop-blur-md border-t border-gray-800/60 flex items-center justify-around py-3 px-4 z-40 text-gray-400">
         <a href="#/" data-nav="overview" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Overview"><i data-lucide="house" class="w-6 h-6"></i></a>
         <a href="#/lumpsums" data-nav="lumpsums" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Lump sums"><i data-lucide="landmark" class="w-6 h-6"></i></a>
-        <a href="#/theater" data-nav="theater" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Agent theater"><i data-lucide="clapperboard" class="w-6 h-6"></i></a>
+        <a href="theater.html" class="p-2 hover:text-white rounded-xl" aria-label="Agent theater"><i data-lucide="network" class="w-6 h-6"></i></a>
+        <a href="#/theater" data-nav="theater" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Judge theater"><i data-lucide="clapperboard" class="w-6 h-6"></i></a>
         <a href="#/sources" data-nav="sources" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Sources"><i data-lucide="inbox" class="w-6 h-6"></i></a>
         <a href="#/scoreboard" data-nav="scoreboard" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Scoreboard"><i data-lucide="trophy" class="w-6 h-6"></i></a>
+        <a href="#/benchmarks" data-nav="benchmarks" class="nav-btn p-2 hover:text-white rounded-xl" aria-label="Benchmarks"><i data-lucide="flask-conical" class="w-6 h-6"></i></a>
         <button data-open-settings class="p-2 hover:text-white" aria-label="Settings"><i data-lucide="settings" class="w-6 h-6"></i></button>
     </nav>
 
@@ -140,8 +150,8 @@
             <div class="flex items-center gap-3 min-w-0">
                 <div class="lg:hidden w-8 h-8 relative flex items-center justify-center shrink-0">
                     <svg width="28" height="28" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#C4FE29" />
-                        <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#6B57EC" fill-opacity="0.85" />
+                        <path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#61CDFF" />
+                        <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#0084FF" fill-opacity="0.85" />
                     </svg>
                 </div>
                 <div class="min-w-0">
@@ -154,15 +164,24 @@
                 <div id="liveStatus" class="hidden sm:flex items-center gap-2 bg-white rounded-full px-3 h-9 sm:h-10 text-xs font-bold text-gray-600 border border-gray-200/50 shadow-sm">
                     <span class="w-2 h-2 rounded-full bg-gray-300"></span> Connecting
                 </div>
-                <a href="#/?filter=review" id="queueBell" class="relative w-9 h-9 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center text-gray-700 shadow-sm hover:bg-gray-50 transition border border-gray-200/50" aria-label="Waiting for a human" title="Waiting for a human">
-                    <i data-lucide="bell" class="w-4 h-4"></i>
-                    <span id="queueCount" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-purpleAccent text-white text-[10px] font-extrabold flex items-center justify-center"></span>
-                </a>
-                <button data-open-settings id="actorBadge" class="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-white shadow-sm shrink-0 hover:ring-2 hover:ring-purpleAccent/50 transition bg-cardDark text-limeAccent text-xs font-extrabold flex items-center justify-center" aria-label="Reviewer settings" title="Reviewer settings">
+                <button data-live-run id="liveRunBtn" class="flex items-center gap-1.5 rounded-full bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-xs sm:text-sm px-3 sm:px-4 h-9 sm:h-10 shadow-sm transition" title="Generate a fresh month of data and run every agent on it, live">
+                    <i data-lucide="play" class="w-4 h-4"></i><span class="hidden md:inline">Run a new month live</span><span class="md:hidden">Run live</span>
+                </button>
+                <div class="relative">
+                    <button data-bell id="queueBell" class="relative w-9 h-9 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center text-gray-700 shadow-sm hover:bg-gray-50 transition border border-gray-200/50" aria-label="Needs your approval" title="Needs your approval">
+                        <i data-lucide="bell" class="w-4 h-4"></i>
+                        <span id="queueCount" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-purpleAccent text-white text-[10px] font-extrabold flex items-center justify-center"></span>
+                    </button>
+                    <div id="bellPanel" class="hidden absolute right-0 top-12 z-[55] w-[min(92vw,380px)] bg-white rounded-3xl shadow-2xl border border-gray-100 p-3"></div>
+                </div>
+                <button data-user-menu id="actorBadge" class="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-white shadow-sm shrink-0 hover:ring-2 hover:ring-purpleAccent/50 transition bg-purpleAccent text-white text-xs font-extrabold flex items-center justify-center" aria-label="Account" title="Account">
                     <i data-lucide="key-round" class="w-4 h-4"></i>
                 </button>
             </div>
         </header>
+
+        <!-- Live run progress (POST /api/run {"dataset":"live"} -> /api/jobs/<id>) -->
+        <div id="jobPanel" class="hidden shrink-0"></div>
 
         <!-- Showtime banner (GET /api/showtime) -->
         <div id="showtimeBanner" class="hidden shrink-0"></div>
@@ -203,12 +222,8 @@
     <!-- ================= SETTINGS ================= -->
     <div id="settingsModal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/40 backdrop-blur-[2px] p-4">
         <form id="settingsForm" class="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl">
-            <h3 class="text-lg font-bold text-gray-900 mb-1">Reviewer settings</h3>
-            <p class="text-xs text-gray-500 mb-4">Kept in this browser only (localStorage). Approve / Reject send <code>Authorization: Bearer &lt;token&gt;</code> and your name as the actor in the audit log.</p>
-            <label class="block text-xs font-bold text-gray-700 mb-1" for="actorInput">Your name (actor)</label>
-            <input id="actorInput" autocomplete="off" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purpleAccent" placeholder="e.g. maja">
-            <label class="block text-xs font-bold text-gray-700 mb-1" for="tokenInput">API token</label>
-            <input id="tokenInput" type="password" autocomplete="off" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purpleAccent" placeholder="FLOCK_API_TOKEN">
+            <h3 class="text-lg font-bold text-gray-900 mb-1">Connection</h3>
+            <p class="text-xs text-gray-500 mb-4">Which Flock API this console talks to. Kept in this browser only.</p>
             <label class="block text-xs font-bold text-gray-700 mb-1" for="apiInput">API base URL</label>
             <input id="apiInput" autocomplete="off" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-purpleAccent" placeholder="leave empty for automatic">
             <p id="apiHint" class="text-[11px] text-gray-400 mb-4"></p>
@@ -219,8 +234,61 @@
         </form>
     </div>
 
+    <!-- ================= SIGN IN (POST /api/login) ================= -->
+    <div id="loginScreen" class="fixed inset-0 z-[90] hidden items-center justify-center p-4" style="background: linear-gradient(135deg, #012F8A 0%, #0159C4 55%, #2EA7FF 100%);">
+        <form id="loginForm" class="bg-white rounded-4xl p-7 sm:p-9 w-full max-w-md shadow-2xl">
+            <div class="flex items-center gap-3 mb-6">
+                <svg width="34" height="34" viewBox="0 0 34 34" fill="none"><path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#61CDFF"/><path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#0084FF"/></svg>
+                <div><h2 class="text-2xl font-extrabold tracking-tight text-gray-900 leading-none">Sign in to Flock</h2>
+                <p class="text-sm text-gray-500 font-semibold mt-1">Noah's NY Bagels finance</p></div>
+            </div>
+            <label class="block text-xs font-bold text-gray-700 mb-1" for="loginUser">Username</label>
+            <input id="loginUser" autocomplete="username" class="w-full px-4 py-3 rounded-2xl border border-gray-200 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purpleAccent">
+            <label class="block text-xs font-bold text-gray-700 mb-1" for="loginPass">Password</label>
+            <input id="loginPass" type="password" autocomplete="current-password" class="w-full px-4 py-3 rounded-2xl border border-gray-200 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-purpleAccent">
+            <p id="loginError" class="hidden text-sm font-semibold text-red-600 mb-2"></p>
+            <button type="submit" id="loginBtn" class="mt-3 w-full rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm py-3">Sign in</button>
+            <p class="text-[11px] text-gray-400 mt-4 text-center">Simulated data. Agents propose, people approve.</p>
+        </form>
+    </div>
+
+    <!-- ================= AVATAR MENU ================= -->
+    <div id="userMenu" class="hidden fixed z-[56] right-4 sm:right-6 top-16 w-64 bg-white rounded-3xl shadow-2xl border border-gray-100 p-3">
+        <div class="px-2 py-2 border-b border-gray-100 mb-2"><p id="userName" class="font-extrabold text-gray-900"></p><p id="userOrg" class="text-xs text-gray-500 font-semibold"></p></div>
+        <button data-open-settings class="w-full text-left px-3 py-2 rounded-2xl text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"><i data-lucide="plug" class="w-4 h-4"></i> Connection</button>
+        <button data-logout class="w-full text-left px-3 py-2 rounded-2xl text-sm font-semibold text-red-600 hover:bg-red-50 flex items-center gap-2"><i data-lucide="log-out" class="w-4 h-4"></i> Sign out</button>
+    </div>
+
+    <!-- ================= PRESENTER TOKEN (asked once, on the first 401) ================= -->
+    <div id="tokenModal" class="fixed inset-0 z-[75] hidden items-center justify-center bg-black/40 backdrop-blur-[2px] p-4">
+        <form id="tokenForm" class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+            <h3 class="text-lg font-bold text-gray-900 mb-1">Presenter token</h3>
+            <p class="text-xs text-gray-500 mb-4">Asked once. Saved in this browser; your action continues right after.</p>
+            <input id="tokenOnce" type="password" autocomplete="off" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-purpleAccent" placeholder="token">
+            <div class="flex justify-end gap-2">
+                <button type="button" data-token-cancel class="px-4 py-2.5 rounded-2xl text-sm font-bold text-gray-600 hover:bg-gray-100">Cancel</button>
+                <button type="submit" class="px-5 py-2.5 rounded-2xl text-sm font-bold bg-purpleAccent hover:bg-purpleAccentHover text-white">Continue</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ================= CLICKY'S SCREEN (GET /api/filings/<id>/screen) ================= -->
+    <div id="screenModal" class="fixed inset-0 z-[65] hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="bg-white rounded-3xl w-full max-w-4xl h-[85vh] shadow-2xl flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100">
+                <h3 class="font-extrabold text-gray-900 flex items-center gap-2"><i data-lucide="mouse-pointer-click" class="w-4 h-4 text-orange-600"></i> Clicky's screen <span id="screenTitle" class="font-mono text-sm text-gray-500"></span></h3>
+                <div class="flex items-center gap-2">
+                    <a id="screenOpen" target="_blank" rel="noopener" class="text-xs font-bold text-gray-500 hover:text-gray-900">Open in a tab</a>
+                    <button data-close-screen class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:text-black" aria-label="Close"><i data-lucide="x" class="w-4 h-4"></i></button>
+                </div>
+            </div>
+            <iframe id="screenFrame" title="Clicky's filing screen" class="flex-1 w-full bg-gray-50" sandbox="allow-same-origin"></iframe>
+        </div>
+    </div>
+
     <div id="toast" role="status" class="fixed bottom-24 lg:bottom-6 left-1/2 -translate-x-1/2 z-[80] hidden rounded-2xl bg-cardDark text-white text-sm font-semibold px-4 py-3 shadow-xl max-w-[90vw]"></div>
 
+    <script src="evidence.js"></script>
     <script src="dashboard.js"></script>
 </body>
 

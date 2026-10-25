@@ -1,6 +1,6 @@
 /* ==========================================================================
    Flock console: live views over the Flock API (reads are open, POSTs need a token).
-   Routes (hash): #/ overview · #/lumpsums · #/payout/<id> · #/theater · #/sources · #/scoreboard · #/finding/<id>
+   Routes (hash): #/ overview · #/lumpsums · #/payout/<id> · #/theater · #/sources · #/scoreboard · #/benchmarks · #/finding/<id>
    API base: ?api=<url>  >  the page's own origin when it is served by a Flock API  >  saved setting  >  DEFAULT_API
    ========================================================================== */
 const DEFAULT_API = 'https://web-production-812b4.up.railway.app';
@@ -17,14 +17,15 @@ function save(key, value) {
 const params = new URLSearchParams(location.search);
 const settings = {
     api: '', apiSource: '',
-    actor: store('flock.actor'),
-    token: store('flock.token'),
+    actor: 'Preet',                 // the signed-in user's name replaces this (GET /api/me)
+    token: store('flock.token'),    // session token from POST /api/login, or the presenter token on an older backend
+    user: null, auth: null,         // auth: 'login' when the API has /api/login, 'token' when it doesn't
 };
 
 const state = {
     log: [], findings: [], agents: null, score: null, metrics: null, payouts: null, showtime: null, market: null,
     connectors: null, payout: null, findingFilter: 'all', seenLog: 0, drawer: null, online: null, refusal: null,
-    lastDecision: null, cache: {}, base: '',
+    lastDecision: null, cache: {}, base: '', approvals: null, outbox: null, job: null, benchmarks: null, safety: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -56,26 +57,48 @@ class ApiError extends Error {
 }
 
 async function get(path) {
-    const res = await fetch(state.base + path, { cache: 'no-store' });
+    const res = await fetch(state.base + path, { cache: 'no-store', headers: settings.token ? { Authorization: `Bearer ${settings.token}` } : {} });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiError(res.status, data, path);
     return data;
 }
 const tryGet = (path) => get(path).catch(() => null);
 
-async function post(path, body) {
+async function post(path, body, retried = false) {
     const headers = { 'Content-Type': 'application/json' };
     if (settings.token) headers.Authorization = `Bearer ${settings.token}`;
     const res = await fetch(state.base + path, { method: 'POST', headers, body: JSON.stringify(body || {}) });
     const data = await res.json().catch(() => ({}));
+    // First 401: ask for the presenter token once, then carry on with the same action
+    if (res.status === 401 && !retried && await askToken()) return post(path, body, true);
     if (!res.ok) throw new ApiError(res.status, data, path);
     return data;
+}
+
+let tokenWaiter = null;
+function askToken() {
+    if (tokenWaiter) return tokenWaiter.promise;
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    tokenWaiter = { promise, resolve };
+    if (settings.auth === 'login') { showLogin('Your session ended. Sign in again to continue.'); return promise; }
+    $('tokenOnce').value = '';
+    $('tokenModal').classList.replace('hidden', 'flex');
+    setTimeout(() => $('tokenOnce').focus(), 0);
+    return promise;
+}
+function finishToken(token) {
+    $('tokenModal').classList.replace('flex', 'hidden');
+    $('loginScreen').classList.replace('flex', 'hidden');
+    if (token) { settings.token = token; save('flock.token', token); renderActor(); }
+    const w = tokenWaiter; tokenWaiter = null;
+    if (w) w.resolve(!!token);
 }
 
 // One place that turns an API error into words a presenter can act on
 function explain(e) {
     if (!(e instanceof ApiError)) return `Can't reach the API (${e.message}).`;
-    if (e.status === 401) return 'This backend needs a token: add it in settings (key icon).';
+    if (e.status === 401) return 'That token was not accepted. Fix it under the key icon.';
     if (e.status === 409 && e.data.running) return `A run is in progress (${e.data.running}); try again when it finishes.`;
     if (e.status === 409 || e.status === 403) return `Refused by the gatekeeper: ${e.message}`;
     if (e.status === 404) return `Not found: ${e.message}`;
@@ -84,7 +107,6 @@ function explain(e) {
 }
 function fail(e) {
     toast(explain(e), 'error');
-    if (e instanceof ApiError && e.status === 401) openSettings();
 }
 
 // Re-render only when the payload actually changed, so polling never flickers
@@ -138,16 +160,19 @@ async function pollFast() {
 
 async function pollSlow() {
     try {
-        const [findings, metrics, score, payouts, showtime, market, connectors] = await Promise.all([
+        const [findings, metrics, score, payouts, showtime, market, connectors, approvals, outbox] = await Promise.all([
             tryGet('/api/findings'), tryGet('/api/metrics'), tryGet('/api/score'), tryGet('/api/payouts'),
-            tryGet('/api/showtime'), tryGet('/api/market'), tryGet('/api/connectors'),
+            tryGet('/api/showtime'), tryGet('/api/market'), tryGet('/api/connectors'), tryGet('/api/approvals'), tryGet('/api/outbox'),
         ]);
         const r = route();
-        if (findings && changed('findings', findings)) { state.findings = findings; renderQueueCount(); if (r.name === 'overview') renderFindings(); }
+        if (findings && changed('findings', findings)) { state.findings = findings; if (r.name === 'overview') renderFindings(); }
+        if (changed('approvals', { approvals, n: state.findings.length })) { state.approvals = approvals; renderQueueCount(); if (r.name === 'overview') renderApprovals(); }
         if (changed('metrics', { metrics, score })) { state.metrics = metrics; state.score = score; if (r.name === 'overview') { renderMetrics(); renderCurve('curve'); } if (r.name === 'scoreboard') renderScoreboard(); }
         if (payouts && changed('payouts', payouts)) { state.payouts = payouts; if (r.name === 'lumpsums') renderLumpSums(); }
         if (changed('showtime', showtime)) { state.showtime = showtime && showtime.json ? showtime.json : null; renderBanner(); }
         if (market && changed('market', market)) { state.market = market; if (r.name === 'scoreboard') renderScoreboard(); }
+        if (outbox) state.outbox = outbox.messages || [];
+        if (r.name === 'benchmarks' && !state.benchmarks) loadBenchmarks();
         if (connectors && changed('connectors', connectors)) { state.connectors = connectors; if (r.name === 'sources') renderSources(); }
         if (r.name === 'payout') loadPayout(r.id);
         if (state.drawer) refreshDrawer();
@@ -158,6 +183,23 @@ async function pollSlow() {
 }
 
 /* ---------------- shared bits (her visual language) ---------------- */
+
+// Plain words for the people in the room: what each check means, what each verdict asks of you
+const CHECK_HELP = {
+    commission: 'Commission: app charged a higher % than the contract',
+    deposit: "Deposit: payout lump sum doesn't match the orders inside it",
+    fee: "Fee: a fee the contract waived or doesn't allow",
+    promo: "Promo: the store was charged for a promotion the deal says the app pays for",
+};
+const checkHelp = (c) => CHECK_HELP[c] || CHECK_HELP[String(c || '').split('_')[0]] || CHECK_HELP[Object.keys(CHECK_HELP).find((k) => String(c || '').includes(k))] || '';
+const VERDICT = { recoverable: ['Claim it', 'money we can claim back'], conflict: ['Needs you', 'documents disagree; a human decides'] };
+const verdictText = (o) => (VERDICT[o] || [label(o)])[0];
+const CONF_TIP = "judge panel's balance-weighted confidence";
+function verdictPill(o, conf, sep = ' · ') {
+    if (!o) return '';
+    const tip = [(VERDICT[o] || [])[1], conf != null ? `${pct(conf)} sure: ${CONF_TIP}` : ''].filter(Boolean).join(' · ');
+    return `<span title="${esc(tip)}">${pill(OUTCOME[o] || 'bg-gray-100 text-gray-600', `${verdictText(o)}${conf != null ? `${sep}${pct(conf)} sure` : ''}`)}</span>`;
+}
 
 const OUTCOME = {
     recoverable: 'bg-emerald-100 text-emerald-800', conflict: 'bg-amber-100 text-amber-800',
@@ -175,7 +217,7 @@ const PAY_STATUS = {
 };
 const CHANNEL = {
     doordash: ['DoorDash', '#EB1700', 'DD'], ubereats: ['Uber Eats', '#06C167', 'UE'], grubhub: ['Grubhub', '#FF8000', 'GH'],
-    direct_app: ['Direct app', '#6B57EC', 'D'],
+    direct_app: ['Direct app', '#0084FF', 'D'],
 };
 const AUTH_PILL = (a) => /^(contract|amendment|auth_email)$/.test(a) ? 'bg-emerald-100 text-emerald-800'
     : /unauth/.test(a) ? 'bg-red-100 text-red-700' : /call/.test(a) ? 'bg-amber-100 text-amber-800' : 'bg-gray-200 text-gray-700';
@@ -230,9 +272,10 @@ const TITLES = {
     overview: ['Overview', 'What the deals say vs what was paid, live'],
     lumpsums: ['Lump sums', 'Every deposit that hit the bank, broken down line by line'],
     payout: ['Lump sum', 'Gross → each deduction (statement vs contract) → expected net → deposit → shortfall'],
-    theater: ['Agent theater', 'Judges vote, bet and debate; people decide; Clicky files'],
+    theater: ['Judge theater', 'Judges vote, bet and debate; people decide; Clicky files'],
     sources: ['Sources / Inbox', 'Slack and email batches the connectors brought in, judged against the contracts'],
     scoreboard: ['Scoreboard', 'Answer key, learning curve and the judge market'],
+    benchmarks: ['Benchmarks', 'Same findings, every contestant, scored on held-out seeds: rules, local models on the GX10, our tuned judge'],
 };
 
 let lastMain = '#/';
@@ -266,6 +309,7 @@ function renderView(r) {
     else if (r.name === 'theater') { renderTheaterShell(); theaterStart(theater.mode); }
     else if (r.name === 'sources') { v.innerHTML = '<div id="sources"></div>'; renderSources(); }
     else if (r.name === 'scoreboard') { v.innerHTML = '<div id="scoreboard"></div>'; renderScoreboard(); }
+    else if (r.name === 'benchmarks') { v.innerHTML = '<div id="benchmarks"></div>'; renderBenchmarks(); loadBenchmarks(); }
     else renderOverviewShell();
     renderBanner();
     icons();
@@ -305,6 +349,7 @@ function renderOverviewShell() {
     $('view').innerHTML = `
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 min-h-0 min-w-0">
             <div class="lg:col-span-8 flex flex-col gap-4 lg:gap-5 min-h-0 min-w-0">
+                <div id="approvals" class="shrink-0"></div>
                 <div id="metrics" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 lg:gap-4 shrink-0"></div>
                 <div class="bg-white p-4 sm:p-5 rounded-3xl card-shadow border border-gray-100 flex flex-col shrink-0">
                     <div class="flex items-center justify-between shrink-0 mb-1">
@@ -336,7 +381,7 @@ function renderOverviewShell() {
                     <div class="flex items-center justify-between mb-4 shrink-0">
                         <div><h3 class="text-lg font-bold tracking-tight">Audit Log</h3><p id="logCount" class="text-xs text-gray-400 font-medium"></p></div>
                     </div>
-                    <div class="relative w-full shrink-0 bg-neutral-900/90 border border-neutral-800 rounded-3xl p-3 sm:p-4 shadow-xl">
+                    <div class="relative w-full shrink-0 bg-[#2B3048] border border-navy-2 rounded-3xl p-3 sm:p-4 shadow-xl">
                         <div id="logList" class="flex flex-col gap-2.5 max-h-[26rem] overflow-y-auto pr-1 text-xs dark-scroll"></div>
                     </div>
                 </div>
@@ -349,10 +394,33 @@ function renderOverviewShell() {
             </div>
         </div>`;
     state.cache.agentHtml = null;
-    renderMetrics(); renderCurve('curve'); renderFindings(); renderLog(); renderAgents();
+    renderApprovals(); renderMetrics(); renderCurve('curve'); renderFindings(); renderLog(); renderAgents();
 }
 
 /* ----- metric cards (GET /api/metrics, formula + inputs + labels behind "How we got this") ----- */
+
+// Readable durations: 470 s -> "7.8 min", 280 h -> "280 h"
+function duration(seconds) {
+    const x = Number(seconds);
+    if (seconds == null || isNaN(x)) return '—';
+    if (x < 90) return `${x.toFixed(x < 10 ? 1 : 0)} s`;
+    if (x < 5400) return `${(x / 60).toFixed(1)} min`;
+    return `${(x / 3600).toLocaleString(undefined, { maximumFractionDigits: 1 })} h`;
+}
+const displayLabel = (l) => l === 'ASSUMPTION' ? 'industry estimate' : l;
+const noAssume = (t) => String(t ?? '').replace(/ASSUMPTION/g, 'industry estimate');
+
+// Claude Haiku 4.5 list price ($ per million tokens), the model inside CREAO's hosted agents.
+// Used only when the API sends tokens but no dollar figure.
+const HAIKU_45 = { in: 1.0, out: 5.0 };
+function tokenEstimate(inputs) {
+    const by = inputs?.creao_by_agent;
+    if (!by) return null;
+    let tin = 0, tout = 0;
+    Object.values(by).forEach((a) => { tin += a.input_tokens || 0; tout += a.output_tokens || 0; });
+    if (!tin && !tout) return null;
+    return { usd: (tin * HAIKU_45.in + tout * HAIKU_45.out) / 1e6, tin, tout };
+}
 
 function metricCards(m) {
     const cards = m && Array.isArray(m.cards) ? m.cards : [];
@@ -361,9 +429,11 @@ function metricCards(m) {
     const t = by.agent_time, a = by.accuracy, c = by.cost, s = by.money_saved;
     if (t) {
         const v = t.value || {}, i = t.inputs || {};
+        const agent = v.agent_display || duration(i.agent_seconds ?? (v.agent_hours != null ? v.agent_hours * 3600 : null));
+        const human = v.human_display || duration(v.human_hours != null ? v.human_hours * 3600 : null);
         out.push({ id: 'agent_time', label: 'Agent time vs a person', icon: 'timer', dark: true,
-            value: `${num(i.agent_seconds)}s <span class="text-gray-400 text-base font-bold">vs ${num(v.human_hours)} h</span>`,
-            sub: `${num(v.multiple)}× faster · human baseline is an ${i.human_baseline || 'ASSUMPTION'}` });
+            value: `${esc(agent)} <span class="text-gray-400 text-base font-bold">vs ~${esc(human)}</span>`,
+            sub: `${v.multiple ? `${num(v.multiple)}× faster · ` : ''}${num(i.store_weeks)} store-weeks${i.minutes_per_store_week ? ` at ~${num(i.minutes_per_store_week)} min each by hand` : ''}` });
     }
     if (a) {
         const v = a.value || {};
@@ -372,13 +442,17 @@ function metricCards(m) {
     }
     if (c) {
         const v = c.value || {};
-        out.push({ id: 'cost', label: 'Agent cost', icon: 'dollar-sign', value: money(v.usd),
-            sub: `${num(v.model_calls)} model calls${v.complete === false ? ' · partly unknown' : ''}` });
+        const est = v.usd != null ? null : (v.usd_estimate != null ? { usd: v.usd_estimate } : tokenEstimate(c.inputs));
+        const usd = v.usd != null ? v.usd : est?.usd;
+        const fmt = (n) => n === 0 ? '$0' : n != null && n < 1 ? `$${Number(n).toFixed(3)}` : money(n);
+        out.push({ id: 'cost', label: 'Agent cost', icon: 'dollar-sign', value: fmt(usd),
+            sub: `${num(v.model_calls)} model calls${est ? ' · estimated from tokens' : ''}${v.usd_per_1000_findings != null ? ` · ${money(v.usd_per_1000_findings)}/1k findings` : ''}` });
     }
     if (s) {
         const v = s.value || {};
-        out.push({ id: 'money_saved', label: 'Money found', icon: 'wallet', value: money(v.usd),
-            sub: `filed ${money(v.filed)} · pending ${money(v.pending)} · recovered ${money(v.recovered)}` });
+        const yr = v.annualized ?? v.annualized_projection;
+        out.push({ id: 'money_saved', label: 'Money found this month', icon: 'wallet', value: money(v.monthly ?? v.usd),
+            sub: `${yr != null ? `${money(yr)} a year at this rate · ` : ''}filed ${money(v.filed)} · waiting on you ${money(v.pending)}` });
     }
     return out;
 }
@@ -401,17 +475,20 @@ function renderMetrics() {
     icons();
 }
 
-const LABEL_PILL = { MEASURED: 'bg-emerald-100 text-emerald-800', ASSUMPTION: 'bg-amber-100 text-amber-800', SIMULATED: 'bg-sky-100 text-sky-800', PROJECTION: 'bg-purpleAccent/10 text-purpleAccent' };
+const LABEL_PILL = { MEASURED: 'bg-emerald-100 text-emerald-800', ASSUMPTION: 'bg-sky-100 text-sky-800', SIMULATED: 'bg-sky-100 text-sky-800', PROJECTION: 'bg-purpleAccent/10 text-purpleAccent' };
 
 function showHow(id) {
     const card = (state.metrics?.cards || []).find((c) => c.id === id);
     if (!card) return;
     const kv = (o) => Object.entries(o || {}).filter(([, v]) => v == null || typeof v !== 'object').map(([k, v]) => `
         <div class="flex justify-between gap-3 py-1 border-b border-gray-50"><span class="text-gray-500">${esc(label(k))}</span>
-        <span class="font-semibold text-gray-900 text-right ${v === 'ASSUMPTION' ? 'text-amber-700' : ''}">${v === 'ASSUMPTION' ? pill(LABEL_PILL.ASSUMPTION, 'ASSUMPTION') : esc(typeof v === 'number' ? num(v) : v)}</span></div>`).join('');
-    openModal(card.title, `
+        <span class="font-semibold text-gray-900 text-right">${v === 'ASSUMPTION' ? pill(LABEL_PILL.ASSUMPTION, displayLabel(v)) : esc(typeof v === 'number' ? num(v) : v)}</span></div>`).join('');
+    const est = id === 'cost' && card.value?.usd == null ? tokenEstimate(card.inputs) : null;
+    openModal(noAssume(card.title), `
         <p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Formula</p>
-        <p class="text-sm text-gray-800 leading-relaxed mb-4">${esc(card.formula)}</p>
+        <p class="text-sm text-gray-800 leading-relaxed mb-4">${esc(noAssume(card.formula))}</p>
+        ${est ? `<p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Estimate from tokens</p>
+            <p class="text-sm text-gray-800 mb-4">${num(est.tin)} input + ${num(est.tout)} output tokens × Claude Haiku 4.5 list price ($${HAIKU_45.in}/$${HAIKU_45.out} per million) = <b>$${est.usd.toFixed(4)}</b></p>` : ''}
         <p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Value</p>
         <div class="text-xs mb-4">${kv(card.value)}</div>
         <p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Inputs</p>
@@ -419,11 +496,11 @@ function showHow(id) {
         <p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Sources</p>
         <div class="space-y-2 mb-4">${(card.sources || []).map((s) => `
             <div class="rounded-2xl bg-lightCardBg p-3 text-xs">
-                <div class="flex items-center justify-between gap-2"><span class="font-bold text-gray-800">${esc(label(s.what))}</span>${pill(LABEL_PILL[s.label] || 'bg-gray-100 text-gray-600', s.label || 'source')}</div>
-                ${s.claim ? `<p class="mt-1 text-gray-700">${esc(s.claim)}</p>` : ''}
+                <div class="flex items-center justify-between gap-2"><span class="font-bold text-gray-800">${esc(label(s.what))}</span>${pill(LABEL_PILL[s.label] || 'bg-gray-100 text-gray-600', displayLabel(s.label) || 'source')}</div>
+                ${s.claim ? `<p class="mt-1 text-gray-700">${esc(noAssume(s.claim))}</p>` : ''}
                 <p class="mt-1 text-gray-500 break-words">${esc(s.source || '')}</p>
             </div>`).join('')}</div>
-        ${(card.notes || []).length ? `<p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Notes</p><ul class="list-disc pl-5 space-y-1 text-xs">${card.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}`);
+        ${(card.notes || []).length ? `<p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Notes</p><ul class="list-disc pl-5 space-y-1 text-xs">${card.notes.map((n) => `<li>${esc(noAssume(n))}</li>`).join('')}</ul>` : ''}`);
 }
 
 /* ----- learning curve (GET /api/score runs, month labels) ----- */
@@ -457,11 +534,56 @@ function shortMonth(s) {
 
 const needsHuman = (f) => f.needs_human ?? (f.state === 'JUDGED');
 
+// GET /api/approvals when the API has it; otherwise the findings waiting for a person
+function approvalItems() {
+    const a = state.approvals;
+    const list = Array.isArray(a) ? a : a && (a.items || a.approvals || a.pending);
+    if (Array.isArray(list)) return list;
+    return state.findings.filter(needsHuman).map((f) => ({ kind: 'finding', finding_id: fidOf(f), gap: f.gap, channel: f.channel,
+        check_type: f.check_type, outcome: f.outcome, orders_label: f.orders_label }));
+}
+function approvalRow(it, dark = false) {
+    const id = it.finding_id || it.id;
+    const what = it.title || (it.kind === 'follow_up' ? 'Vendor follow-up email' : `${label(it.check_type || it.kind || 'finding')} on ${chanName(it.channel)}`);
+    return `<button data-finding="${esc(id)}" class="w-full text-left flex items-center justify-between gap-3 p-3 rounded-2xl ${dark ? 'bg-white/10 hover:bg-white/20' : 'bg-lightCardBg hover:bg-gray-100'} transition">
+        <span class="flex items-center gap-2.5 min-w-0">${it.channel ? chanBadge(it.channel) : `<span class="w-6 h-6 rounded-full bg-purpleAccent text-white inline-flex items-center justify-center shrink-0"><i data-lucide="${it.kind === 'follow_up' ? 'mail' : 'scale'}" class="w-3.5 h-3.5"></i></span>`}
+            <span class="min-w-0"><span class="block text-sm font-bold truncate">${esc(what)}</span>
+            <span class="block text-[11px] ${dark ? 'text-gray-300' : 'text-gray-500'} font-mono truncate">${esc(id)}${it.orders_label ? ` · ${esc(it.orders_label)}` : ''}</span></span></span>
+        <span class="font-extrabold tabular-nums shrink-0 ${dark ? 'text-limeAccent' : 'text-red-600'}">${it.gap != null ? money(it.gap) : it.amount != null ? money(it.amount) : ''}</span></button>`;
+}
 function renderQueueCount() {
-    const n = state.findings.filter(needsHuman).length;
+    const n = approvalItems().length;
     const el = $('queueCount');
     el.textContent = n;
     el.classList.toggle('hidden', !n);
+    if (!$('bellPanel').classList.contains('hidden')) renderBell();
+}
+function renderBell() {
+    const items = approvalItems();
+    $('bellPanel').innerHTML = `<div class="flex items-center justify-between px-1 pb-2"><p class="font-extrabold text-gray-900">Needs your approval <span class="text-purpleAccent">${items.length}</span></p>
+        <span class="text-[11px] text-gray-400 font-semibold">acting as ${esc(settings.actor)}</span></div>
+        <div class="flex flex-col gap-2 max-h-[60vh] overflow-y-auto custom-scroll">${items.map((it) => approvalRow(it)).join('') || '<p class="text-sm text-gray-400 text-center py-6">Nothing waiting. The agents settled everything else.</p>'}</div>`;
+    icons();
+}
+function toggleBell(force) {
+    const p = $('bellPanel');
+    const open = force ?? p.classList.contains('hidden');
+    p.classList.toggle('hidden', !open);
+    if (open) renderBell();
+}
+function renderApprovals() {
+    const el = $('approvals');
+    if (!el) return;
+    const items = approvalItems();
+    const total = items.reduce((t, it) => t + (Number(it.gap ?? it.amount) || 0), 0);
+    const html = items.length ? `<section data-test="approvals" class="bg-purpleAccent text-white rounded-3xl p-4 sm:p-5 shadow-md">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+            <div><p class="text-[11px] font-bold uppercase tracking-wider text-limeAccent">Nothing is filed until a person says so</p>
+            <h3 class="text-lg font-extrabold">Needs your approval (${items.length}) <span class="text-white/70 font-bold">· ${money(total)}</span></h3></div>
+            <span class="text-xs text-white/70 font-semibold">Approve → Clicky files it → the vendor gets an email</span></div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">${items.slice(0, 4).map((it) => approvalRow(it, true)).join('')}</div>
+        ${items.length > 4 ? `<button data-bell class="mt-2 text-xs font-bold text-limeAccent">+${items.length - 4} more</button>` : ''}</section>` : '';
+    if (changed('approvalsHtml', html)) { el.innerHTML = html; icons(); }
 }
 
 function renderFindings() {
@@ -490,8 +612,9 @@ function renderFindings() {
                 <div class="text-[11px] text-gray-400 truncate">${esc(f.orders_label || '')}</div></div>
             </div>
             <div class="col-span-2 font-normal text-gray-500 lowercase min-w-0">
-                <div class="truncate">${esc(label(f.check_type))}</div>
-                <div class="mt-1">${f.outcome ? pill(OUTCOME[f.outcome] || 'bg-gray-100 text-gray-600', `${f.outcome} ${pct(f.confidence)}`) : ''}</div>
+                <div class="truncate" title="${esc(checkHelp(f.check_type))}">${esc(label(f.check_type))}</div>
+                ${checkHelp(f.check_type) ? `<div class="text-[10px] normal-case text-gray-400 leading-tight line-clamp-2">${esc(checkHelp(f.check_type).replace(/^[^:]+: /, ''))}</div>` : ''}
+                <div class="mt-1">${verdictPill(f.outcome, f.confidence, ' ')}</div>
             </div>
             <div class="col-span-2 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.expected)}</div>
             <div class="col-span-2 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.actual)}</div>
@@ -516,7 +639,7 @@ function logRow(e, fresh) {
     const move = e.before || e.after ? `${esc(e.before || '∅')} → ${esc(e.after || '∅')}` : '';
     const tag = refused ? ['bg-red-500/20 text-red-300', 'Refused'] : e.role === 'human' ? ['bg-limeAccent/20 text-limeAccent', 'Human'] : ['bg-purpleAccent/30 text-purple-200', label(e.role || 'agent')];
     return `
-        <button data-finding="${e.subject_type === 'finding' ? esc(e.subject_id) : ''}" class="w-full text-left flex items-start justify-between gap-3 p-3 rounded-2xl ${refused ? 'bg-red-500/10 border border-red-500/30' : 'bg-neutral-800/60 hover:bg-neutral-800'} transition ${fresh ? 'flash' : ''}">
+        <button data-finding="${e.subject_type === 'finding' ? esc(e.subject_id) : ''}" class="w-full text-left flex items-start justify-between gap-3 p-3 rounded-2xl ${refused ? 'bg-red-500/10 border border-red-500/30' : 'bg-navy-1/70 hover:bg-navy-1'} transition ${fresh ? 'flash' : ''}">
             <div class="flex items-start gap-3 min-w-0">
                 <div class="w-9 h-9 rounded-xl ${bg} shrink-0 flex items-center justify-center text-white shadow-sm"><i data-lucide="${icon}" class="w-4 h-4"></i></div>
                 <div class="flex flex-col min-w-0 gap-0.5">
@@ -555,25 +678,49 @@ const AGENT_ICON = {
 const AGENT_COLORS = ['bg-red-600', 'bg-orange-600', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-600', 'bg-emerald-600', 'bg-teal-600',
     'bg-cyan-600', 'bg-sky-600', 'bg-blue-600', 'bg-indigo-600', 'bg-purple-600', 'bg-fuchsia-600', 'bg-pink-600', 'bg-rose-600'];
 
+const STATUS_DOT = { working: 'bg-limeAccent pulse-dot', done: 'bg-emerald-400', error: 'bg-red-500', idle: 'bg-gray-500' };
+function agentStatus(ag) {
+    const st = String(ag.status || ag.state || '').toLowerCase();
+    if (['working', 'running', 'active', 'busy'].includes(st)) return 'working';
+    if (['done', 'finished', 'complete', 'completed', 'ok'].includes(st)) return 'done';
+    if (['error', 'failed'].includes(st)) return 'error';
+    if (['idle', 'waiting', 'pending', ''].includes(st) || !st) {
+        const recent = ag.last_at && (Date.now() - new Date(ag.last_at).getTime()) < 8000;
+        if (recent && state.job && !state.job.finished) return 'working';
+        if (ag.actor === 'clicky' && filedFindings().length) return 'done';
+        return ag.actions ? 'done' : 'idle';
+    }
+    return st;
+}
+function agentStatusText(ag, st) {
+    if (st === 'working') return ag.doing || ag.message || 'working…';
+    if (st === 'done') return ag.actions ? `done · ${num(ag.actions)}` : 'done';
+    if (st === 'error') return 'error';
+    return 'idle';
+}
+
 function renderAgents() {
     const el = $('agentChain');
     if (!el || !state.agents) return;
     const list = state.agents.agents || [];
-    $('agentCount').textContent = `${list.length} agents · click one for its activity`;
+    const working = list.filter((a) => agentStatus(a) === 'working').length;
+    $('agentCount').textContent = `${list.length} agents${working ? ` · ${working} working now` : ''} · click one for its activity`;
     const per = 5;
     const rows = [];
     for (let i = 0; i < list.length; i += per) rows.push(list.slice(i, i + per).map((a, j) => [a, i + j]));
     const html = rows.map((row, ri) => `
         <div class="grid grid-cols-5 gap-2 relative ${ri % 2 ? 'direction-rtl' : ''}" style="${ri % 2 ? 'direction:rtl' : ''}">
             ${row.map(([ag, i]) => {
-                const fresh = ag.last_at && (Date.now() - new Date(ag.last_at).getTime()) < 60_000;
+                const st = agentStatus(ag);
+                const working = st === 'working';
                 return `<button data-agent="${esc(ag.actor)}" style="direction:ltr" class="flex flex-col items-center gap-1 group min-w-0" title="${esc(ag.name)}: ${esc(ag.job || '')}">
-                    <div class="relative w-11 h-11 rounded-2xl ${AGENT_COLORS[i % AGENT_COLORS.length]} flex items-center justify-center text-white border-2 ${fresh ? 'border-limeAccent' : 'border-transparent'} group-hover:border-limeAccent transition shadow-sm">
+                    <div class="relative w-11 h-11 rounded-2xl ${AGENT_COLORS[i % AGENT_COLORS.length]} ${st === 'idle' ? 'opacity-50' : ''} flex items-center justify-center text-white border-2 ${working ? 'border-limeAccent' : 'border-transparent'} group-hover:border-limeAccent transition shadow-sm">
                         <i data-lucide="${AGENT_ICON[ag.actor] || 'bot'}" class="w-5 h-5"></i>
-                        ${fresh ? '<span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-limeAccent pulse-dot"></span>' : ''}
+                        <span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ${STATUS_DOT[st] || 'bg-gray-500'}"></span>
                     </div>
                     <span class="text-[10px] font-semibold text-gray-300 truncate max-w-full">${esc(ag.name)}</span>
-                    <span class="text-[9px] text-gray-500 tabular-nums">${ag.actions ? `${num(ag.actions)} acts` : 'waiting'}</span>
+                    <span class="text-[9px] ${working ? 'text-limeAccent' : 'text-gray-500'} tabular-nums truncate max-w-full">${esc(agentStatusText(ag, st))}</span>
+                    ${ag.actor === 'clicky' && filedFindings().length ? '<span class="text-[9px] font-bold text-orange-300 underline">screens</span>' : ''}
                 </button>`;
             }).join('')}
         </div>`).join('<div class="flex justify-center text-limeAccent/70"><i data-lucide="chevrons-down" class="w-4 h-4"></i></div>');
@@ -651,8 +798,8 @@ function waterfallSvg(steps) {
         let g = '';
         if (s.kind === 'deduction' || s.kind === 'adjustment' || s.kind === 'gap') {
             const ha = Math.max(2, Math.abs(y(prevA) - y(s.running))), he = Math.max(2, Math.abs(y(prevE) - y(s.running_expected)));
-            g += `<rect x="${x - bw - 2}" y="${Math.min(y(prevA), y(s.running))}" width="${bw}" height="${ha}" rx="6" fill="#6B57EC"><title>${esc(s.label)}: statement ${money(s.amount)}</title></rect>`;
-            g += `<rect x="${x + 2}" y="${Math.min(y(prevE), y(s.running_expected))}" width="${bw}" height="${he}" rx="6" fill="${s.computable === false ? '#E5E7EB' : '#C4FE29'}" stroke="#18181A" stroke-opacity=".15"><title>${esc(s.label)}: contract ${money(s.expected)}</title></rect>`;
+            g += `<rect x="${x - bw - 2}" y="${Math.min(y(prevA), y(s.running))}" width="${bw}" height="${ha}" rx="6" fill="#0084FF"><title>${esc(s.label)}: statement ${money(s.amount)}</title></rect>`;
+            g += `<rect x="${x + 2}" y="${Math.min(y(prevE), y(s.running_expected))}" width="${bw}" height="${he}" rx="6" fill="${s.computable === false ? '#E5E7EB' : '#61CDFF'}" stroke="#23263A" stroke-opacity=".15"><title>${esc(s.label)}: contract ${money(s.expected)}</title></rect>`;
             if (s.gap) g += `<text class="gap" x="${x}" y="${Math.min(y(prevA), y(prevE)) - 10}" text-anchor="middle">+${money(s.gap)}</text>`;
         } else if (s.key === 'shortfall') {
             const t = y(s.running_expected), b = y(s.running);
@@ -660,7 +807,7 @@ function waterfallSvg(steps) {
             g += `<text class="gap" x="${x}" y="${t - 10}" text-anchor="middle">${money(s.amount)}</text>`;
         } else {
             const v = s.key === 'expected_net' ? s.running_expected : s.amount;
-            const fill = s.key === 'expected_net' ? '#C4FE29' : s.key === 'deposit' ? '#6B57EC' : '#18181A';
+            const fill = s.key === 'expected_net' ? '#61CDFF' : s.key === 'deposit' ? '#0084FF' : '#23263A';
             g += `<rect x="${x - bw / 2}" y="${y(v)}" width="${bw}" height="${Math.max(2, y(0) - y(v))}" rx="8" fill="${fill}"><title>${esc(s.label)} ${money(v)}</title></rect>`;
             g += `<text class="val" x="${x}" y="${y(v) - 10}" text-anchor="middle">${money(v).replace(/\.\d\d$/, '')}</text>`;
         }
@@ -735,7 +882,7 @@ function renderPayout() {
                     <div class="col-span-3 font-mono font-bold text-gray-900">${esc(f.finding_id)}</div>
                     <div class="col-span-4 min-w-0"><div class="font-semibold">${esc(label(f.line || f.check_type))}</div><div class="text-[11px] text-gray-400 truncate">${esc(f.orders_label || f.store_id || '')}</div></div>
                     <div class="col-span-2 text-right font-mono font-bold text-red-600 tabular-nums">${money(f.gap)}</div>
-                    <div class="col-span-3 flex flex-wrap gap-1 justify-end">${pill(OUTCOME[f.outcome] || 'bg-gray-100 text-gray-600', f.outcome || '—')}${pill(STATE_PILL[f.state] || 'bg-gray-100 text-gray-600', f.state)}${f.needs_human ? pill('bg-purpleAccent text-white', 'needs you') : ''}</div>
+                    <div class="col-span-3 flex flex-wrap gap-1 justify-end">${f.outcome ? verdictPill(f.outcome) : pill('bg-gray-100 text-gray-600', '—')}${pill(STATE_PILL[f.state] || 'bg-gray-100 text-gray-600', f.state)}${f.needs_human ? pill('bg-purpleAccent text-white', 'needs you') : ''}</div>
                 </div>`).join('')}</div>` : empty('No findings in this lump sum: every line matched the deal.', 'check')}`, 'mb-4 lg:mb-5')}
         ${whiteCard(`${cardHead('By store', "Each store's part of the lump sum; stores with open gaps first")}
             <div class="overflow-x-auto max-h-96 overflow-y-auto custom-scroll"><table class="w-full text-left text-xs sm:text-sm min-w-[620px]">
@@ -817,14 +964,14 @@ function renderTheaterShell() {
     $('view').innerHTML = `<div id="theater" class="bg-cardDark text-white rounded-3xl lg:rounded-4xl p-4 sm:p-6 shadow-xl flex flex-col gap-4 min-w-0"></div>`;
 }
 
-const thCardCls = 'rounded-2xl bg-neutral-800/60 p-3';
+const thCardCls = 'rounded-2xl bg-navy-1/70 p-3';
 function thCard(e) {
     const f = e.finding_id ? `<a href="#/finding/${encodeURIComponent(e.finding_id)}" class="font-mono text-xs text-gray-400 hover:text-white">${esc(e.finding_id)}</a>` : '';
     if (e.type === 'vote' || e.type === 'revision' || e.type === 'second_opinion') {
         const out = e.type === 'revision' ? `${e.from} → ${e.to}` : (e.outcome || '');
         return `<div class="${thCardCls} ${e.type === 'revision' ? 'ring-1 ring-amber-400/60' : ''}">
             <div class="flex items-center justify-between gap-2">${pill(OUTCOME[e.to || e.outcome] || 'bg-gray-100 text-gray-700', out)}<span class="text-lg font-extrabold tabular-nums">${pct(e.confidence)}</span></div>
-            <div class="h-1.5 rounded-full bg-neutral-700 mt-2"><div class="h-1.5 rounded-full bg-limeAccent" style="width:${Math.round((e.confidence || 0) * 100)}%"></div></div>
+            <div class="h-1.5 rounded-full bg-navy-2 mt-2"><div class="h-1.5 rounded-full bg-limeAccent" style="width:${Math.round((e.confidence || 0) * 100)}%"></div></div>
             <div class="flex items-center justify-between mt-1.5 text-[11px] text-gray-400">${f}<span>${e.type === 'revision' ? 'changed after debate' : e.round ? `round ${esc(e.round)}` : esc(e.model || '')}</span></div></div>`;
     }
     if (e.type === 'bet_staked')
@@ -841,7 +988,7 @@ function drawTheater() {
     const bal = (j) => {
         const b = theater.balances[j], p = theater.prevBal[j];
         const d = b != null && p != null ? b - p : 0;
-        return `<div class="rounded-3xl bg-neutral-900/90 border ${d > 0 ? 'border-limeAccent/60' : d < 0 ? 'border-red-500/60' : 'border-neutral-800'} p-4">
+        return `<div class="rounded-3xl bg-[#2B3048] border ${d > 0 ? 'border-limeAccent/60' : d < 0 ? 'border-red-500/60' : 'border-navy-2'} p-4">
             <p class="text-xs font-bold uppercase tracking-wider text-gray-400">${esc(j)} judge</p>
             <p class="text-3xl font-extrabold tabular-nums mt-1">${b == null ? '–' : Number(b).toFixed(1)}</p>
             <p class="text-xs font-bold tabular-nums ${d > 0 ? 'text-limeAccent' : d < 0 ? 'text-red-400' : 'text-gray-500'}">${d ? `${d > 0 ? '+' : ''}${d.toFixed(1)}` : 'balance'}</p></div>`;
@@ -863,15 +1010,15 @@ function drawTheater() {
         ${theater.banner ? `<div class="rounded-2xl bg-limeAccent text-black px-4 py-3 text-sm sm:text-base font-bold flex items-center gap-2"><i data-lucide="graduation-cap" class="w-5 h-5 shrink-0"></i>
             <span>${theater.banner.type === 'rule_applied' ? 'Rule applied' : theater.banner.type === 'rule_approved' ? 'Rule approved' : 'Rule learned'}: <span class="font-semibold">${esc(theater.banner.text)}</span></span></div>` : ''}
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">${TH_JUDGES.map(bal).join('')}
-            <div class="rounded-3xl bg-neutral-900/90 border border-neutral-800 p-4 min-w-0">${v ? `<p class="text-xs font-bold uppercase tracking-wider text-gray-400">Latest verdict</p>
-                <div class="flex items-center gap-2 mt-2 flex-wrap">${pill(OUTCOME[v.outcome] || 'bg-gray-100 text-gray-700', v.outcome)} <a href="#/finding/${encodeURIComponent(v.finding_id)}" class="font-mono text-sm hover:underline">${esc(v.finding_id)}</a> <span class="font-bold tabular-nums">${v.gap != null ? money(v.gap) : ''}</span></div>
+            <div class="rounded-3xl bg-[#2B3048] border border-navy-2 p-4 min-w-0">${v ? `<p class="text-xs font-bold uppercase tracking-wider text-gray-400">Latest verdict</p>
+                <div class="flex items-center gap-2 mt-2 flex-wrap">${verdictPill(v.outcome)} <a href="#/finding/${encodeURIComponent(v.finding_id)}" class="font-mono text-sm hover:underline">${esc(v.finding_id)}</a> <span class="font-bold tabular-nums">${v.gap != null ? money(v.gap) : ''}</span></div>
                 <p class="text-xs text-gray-400 mt-2 line-clamp-3">${esc(v.text)}</p>` : '<p class="text-gray-500 text-sm">Waiting for the panel…</p>'}</div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-            ${TH_JUDGES.map((j) => `<section class="rounded-3xl bg-neutral-900/90 border border-neutral-800 p-3 sm:p-4 min-w-0">
+            ${TH_JUDGES.map((j) => `<section class="rounded-3xl bg-[#2B3048] border border-navy-2 p-3 sm:p-4 min-w-0">
                 <h4 class="font-bold text-base mb-3 flex items-center gap-2"><i data-lucide="scale" class="w-4 h-4 text-limeAccent"></i> ${esc(j)} <span class="text-xs text-gray-500 font-semibold">votes · bets</span></h4>
                 <div class="flex flex-col gap-2 max-h-[30rem] overflow-y-auto dark-scroll pr-1">${theater.cols[j].map(thCard).join('') || '<p class="text-gray-500 text-sm py-6 text-center">No votes yet.</p>'}</div></section>`).join('')}
-            <section class="rounded-3xl bg-neutral-900/90 border border-purpleAccent/50 p-3 sm:p-4 min-w-0">
+            <section class="rounded-3xl bg-[#2B3048] border border-purpleAccent/50 p-3 sm:p-4 min-w-0">
                 <h4 class="font-bold text-base mb-3 flex items-center gap-2"><i data-lucide="user" class="w-4 h-4 text-limeAccent"></i> Human lane <span class="text-xs text-gray-500 font-semibold">escalations</span></h4>
                 <div class="flex flex-col gap-2 max-h-[30rem] overflow-y-auto dark-scroll pr-1">${humans.map((c) => `<div class="${thCardCls} ${c.decision ? 'opacity-90' : 'ring-1 ring-purpleAccent'}">
                     <div class="flex items-center justify-between gap-2">${c.rank ? `<span class="text-xs font-extrabold text-limeAccent">#${esc(c.rank)}</span>` : '<span></span>'}<span class="font-bold tabular-nums">${c.gap != null ? money(c.gap) : ''}</span></div>
@@ -879,9 +1026,9 @@ function drawTheater() {
                     <p class="text-xs mt-1 ${c.decision ? (c.decision.decision === 'approve' ? 'text-limeAccent' : 'text-red-300') : 'text-gray-400'}">${c.decision ? `${esc(c.decision.human)} ${esc(c.decision.decision)}d${c.decision.reason ? `: “${esc(c.decision.reason)}”` : ''}` : c.status === 'deferred' ? 'deferred: over the attention budget' : 'waiting for a human'}</p></div>`).join('') || '<p class="text-gray-500 text-sm py-6 text-center">Nobody escalated yet.</p>'}</div>
             </section>
         </div>
-        <section class="rounded-3xl bg-neutral-900/90 border border-neutral-800 p-3 sm:p-4">
+        <section class="rounded-3xl bg-[#2B3048] border border-navy-2 p-3 sm:p-4">
             <h4 class="font-bold text-base mb-3">The flock <span class="text-xs text-gray-500 font-semibold">agents, case files, drafts, Clicky filings, decisions</span></h4>
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">${theater.feed.map((e) => `<div class="flex items-start gap-3 p-2.5 rounded-2xl ${e.type === 'denied' ? 'bg-red-500/10 border border-red-500/30' : 'bg-neutral-800/60'}">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">${theater.feed.map((e) => `<div class="flex items-start gap-3 p-2.5 rounded-2xl ${e.type === 'denied' ? 'bg-red-500/10 border border-red-500/30' : 'bg-navy-1/70'}">
                 <div class="w-8 h-8 rounded-xl ${e.type === 'denied' ? 'bg-red-600' : e.type === 'filed' ? 'bg-orange-600' : e.type === 'human_decision' ? 'bg-limeAccent text-black' : 'bg-purpleAccent'} flex items-center justify-center shrink-0"><i data-lucide="${feedIcon(e)}" class="w-4 h-4"></i></div>
                 <p class="text-sm text-gray-200 leading-snug min-w-0">${esc(e.text)}${e.portal_ref ? ` <span class="font-mono text-limeAccent">${esc(e.portal_ref)}</span>` : ''}</p></div>`).join('') || '<p class="text-gray-500 text-sm">Quiet. Start a run, or replay the last one.</p>'}</div>
         </section>`;
@@ -925,7 +1072,7 @@ function sparkline(values, w = 160, h = 36) {
     if (!values || values.length < 2) return '';
     const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
     const pts = values.map((v, i) => `${(i / (values.length - 1)) * w},${h - ((v - min) / span) * (h - 4) - 2}`).join(' ');
-    return `<svg viewBox="0 0 ${w} ${h}" class="w-full h-9"><polyline points="${pts}" fill="none" stroke="#6B57EC" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+    return `<svg viewBox="0 0 ${w} ${h}" class="w-full h-9"><polyline points="${pts}" fill="none" stroke="#0084FF" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
 
 function renderScoreboard() {
@@ -966,7 +1113,8 @@ function renderScoreboard() {
                         <span class="min-w-0 truncate"><b>${esc(judgeKey(r.judge))}</b> ${r.kind === 'settle' ? `${esc(r.result)} on` : r.kind === 'stake' ? 'staked on' : 'void'} <a href="#/finding/${encodeURIComponent(r.finding_id)}" class="font-mono text-purpleAccent hover:underline">${esc(r.finding_id)}</a> <span class="text-gray-400">called ${esc(r.called || r.outcome || '')}${r.truth ? `, truth ${esc(r.truth)}` : ''}</span></span>
                         <span class="tabular-nums font-bold ${r.payout > 0 ? 'text-emerald-700' : r.payout < 0 ? 'text-red-600' : 'text-gray-400'}">${r.kind === 'settle' ? `${r.payout > 0 ? '+' : ''}${esc(r.payout)}` : r.stake != null ? `stake ${esc(r.stake)}` : ''}</span>
                     </div>`).join('') || '<p class="text-sm text-gray-400 py-4">No bets yet.</p>'}</div>`
-            : empty('The judge market shows up once the API serves /api/market.')}`)}`;
+            : empty('The judge market shows up once the API serves /api/market.')}`)}
+        ${safetyCard()}`;
     renderCurve('curveBig', true);
     icons();
 }
@@ -1012,6 +1160,18 @@ async function refreshDrawer() {
     }
 }
 
+// Evidence references open agent E's cell-level viewer (frontend/evidence.js) when it is loaded
+const evRef = (ev) => ev.source_file ? `${ev.source_file}${ev.row != null ? `:${ev.row}` : ''}` : '';
+function evidenceRef(ev) {
+    const ref = evRef(ev);
+    const text = `${esc(ref)}${ev.locator ? ` (${esc(ev.locator)})` : ''}`;
+    return ref ? `<button data-ev-ref="${esc(ref)}" class="truncate font-mono text-left text-purpleAccent hover:underline" title="Open the source cell">${text}</button>` : `<span class="truncate font-mono">${text}</span>`;
+}
+function openEvidence(ref) {
+    if (window.FlockEvidence && typeof window.FlockEvidence.open === 'function') window.FlockEvidence.open(ref);
+    else toast(`Source: ${ref}`, '');
+}
+
 const card = (title, body, extra = '') => `<section class="bg-white rounded-3xl p-4 sm:p-5 card-shadow border border-gray-100 ${extra}"><h4 class="font-bold text-gray-900 text-sm mb-3">${title}</h4>${body}</section>`;
 
 function parseMemo(m) {
@@ -1033,6 +1193,38 @@ function refusalCard() {
             ${e.reason ? `<div class="font-sans text-gray-600">${esc(e.reason)}</div>` : ''}</div>
             <p class="text-[11px] text-red-700/80 mt-2">Logged in the audit trail below. Only a person can approve; only the gatekeeper files.</p>` : ''}
     </section>`;
+}
+
+const filedFindings = () => state.findings.filter((f) => f.portal_ref || f.state === 'FILED' || f.state === 'RECOVERED');
+const screenUrl = (id) => `${state.base}/api/filings/${encodeURIComponent(id)}/screen`;
+
+function clickyCard(f, data) {
+    const filing = data.filing || f.filing || null;
+    if (!f.portal_ref && !filing && !['FILED', 'RECOVERED'].includes(f.state)) return '';
+    const ref = filing?.portal_ref || f.portal_ref;
+    return card('<span class="flex items-center gap-2"><i data-lucide="mouse-pointer-click" class="w-4 h-4 text-orange-600"></i> Clicky filed it</span>', `
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p class="text-sm text-gray-700">Claim ${ref ? `<span class="font-mono font-bold text-gray-900">${esc(ref)}</span>` : ''} in the ${esc(chanName(f.channel))} portal${filing?.filed_at ? ` at ${esc(clock(filing.filed_at))}` : ''}.</p>
+            <button data-screen="${esc(fidOf(f))}" class="rounded-2xl bg-cardDark hover:bg-black text-white font-bold text-xs px-4 py-2.5 flex items-center gap-1.5 shrink-0"><i data-lucide="monitor" class="w-4 h-4"></i> See Clicky's screen</button>
+        </div>`);
+}
+
+// Vendor email after filing: sent (to whom, when) or held in the outbox
+function emailCard(f, data, fu) {
+    const fid = fidOf(f);
+    const fromOutbox = (state.outbox || []).filter((m) => m.finding_id === fid || String(m.subject || '').includes(fid) || String(m.body || '').includes(fid)).slice(-1)[0];
+    const em = data.email || data.vendor_email || f.vendor_email || f.email || fu?.email || state.lastDecision?.email || fromOutbox || null;
+    if (!em) return '';
+    const sent = /sent|delivered/i.test(em.status || '') || !!em.sent_at;
+    return card('<span class="flex items-center gap-2"><i data-lucide="mail" class="w-4 h-4 text-purpleAccent"></i> Email to the vendor</span>', `
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+            ${sent ? pill('bg-emerald-100 text-emerald-800', 'sent') : pill('bg-amber-100 text-amber-800', label(em.status || 'in outbox'))}
+            <span class="text-gray-700">to <b>${esc(em.to || em.recipient || '—')}</b>${em.intended_to && em.intended_to !== em.to ? ` <span class="text-gray-400 text-xs">(demo inbox; vendor contact ${esc(em.intended_to)})</span>` : ''}</span>
+            ${em.sent_at ? `<span class="text-gray-400 text-xs">${esc(clock(em.sent_at))}</span>` : ''}
+            ${em.transport || em.via ? `<span class="text-gray-400 text-xs">via ${esc(em.transport || em.via)}</span>` : ''}
+        </div>
+        ${em.subject ? `<p class="text-xs text-gray-500 mt-2">Subject: <b class="text-gray-800">${esc(em.subject)}</b></p>` : ''}
+        ${em.note || em.error ? `<p class="text-xs text-gray-500 mt-1">${esc(em.note || em.error)}</p>` : ''}`);
 }
 
 function followUpCard(f, fu) {
@@ -1086,7 +1278,8 @@ function renderFindingDetail(data) {
             </div>`).join('')}
         </div>`,
         `<div class="flex flex-wrap items-center gap-2 text-xs">
-            ${f.outcome ? pill(OUTCOME[f.outcome] || 'bg-gray-100 text-gray-600', `${f.outcome} · ${pct(f.confidence)}`) : ''}
+            ${verdictPill(f.outcome, f.confidence)}
+            ${checkHelp(f.check_type) ? `<span class="text-gray-500 font-semibold">${esc(checkHelp(f.check_type))}</span>` : ''}
             ${pill(STATE_PILL[f.state] || 'bg-gray-100', f.state)}
             ${f.risk != null ? `<span class="text-gray-500 font-semibold">Risk</span> ${riskPill(f.risk)}` : ''}
             ${f.attention ? `<span class="text-gray-500 font-semibold">Queue rank #${esc(f.attention.rank)} · ${esc(f.attention.status)}</span>` : ''}
@@ -1097,16 +1290,16 @@ function renderFindingDetail(data) {
             ${f.rollup?.by_store ? ` · ${Object.entries(f.rollup.by_store).map(([s, v]) => `${esc(s)} ${money(v)}`).join(', ')}` : ''}</p>`,
         ld ? `<section data-test="decision-result" class="rounded-3xl p-4 bg-emerald-50 border border-emerald-200 text-sm text-emerald-900">
             <b>${esc(ld.actor)} ${ld.action === 'approve' ? 'approved' : 'rejected'} it.</b> ${ld.filed?.length ? `Clicky filed it in the sandbox portal: <span class="font-mono font-bold">${esc(ld.filed.join(', '))}</span>` : ld.action === 'approve' ? 'Nothing new to file.' : 'Closed; the charge stands.'}</section>` : '',
-        refusalCard(),
         canDecide ? card('Your call', `
-            <p class="text-xs text-gray-500 mb-3">Approving hands it to Clicky to file in the sandbox portal (the API files on approve). Rejecting closes it. Both are written to the audit log under your name.</p>
+            <p class="text-xs text-gray-500 mb-3">Approve and Clicky files the claim in the platform's portal, then the vendor gets a follow-up email. Reject and the charge stands. Either way it goes in the audit log under your name.</p>
             <textarea id="decisionReason" rows="2" class="w-full rounded-2xl border border-gray-200 px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purpleAccent/40" placeholder="Why? (recorded in the log)"></textarea>
             <div class="flex gap-2">
-                <button data-decide="approve" class="flex-1 rounded-2xl bg-limeAccent hover:bg-limeAccentHover text-black font-bold text-sm py-2.5 flex items-center justify-center gap-1.5"><i data-lucide="check" class="w-4 h-4"></i> Approve</button>
+                <button data-decide="approve" class="flex-1 rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm py-2.5 flex items-center justify-center gap-1.5"><i data-lucide="check" class="w-4 h-4"></i> Approve</button>
                 <button data-decide="reject" class="flex-1 rounded-2xl bg-cardDark hover:bg-black text-white font-bold text-sm py-2.5 flex items-center justify-center gap-1.5"><i data-lucide="x" class="w-4 h-4"></i> Reject</button>
             </div>
-            <button data-try-agent class="mt-2 w-full rounded-2xl border border-dashed border-gray-300 hover:border-red-300 hover:bg-red-50 text-gray-600 hover:text-red-700 font-bold text-xs py-2 flex items-center justify-center gap-1.5"><i data-lucide="bot" class="w-4 h-4"></i> Try to approve as an agent (the gatekeeper should refuse)</button>
-            <p class="text-[11px] text-gray-400 mt-2">${settings.token ? `Acting as <b>${esc(settings.actor || 'set your name in settings')}</b>.` : 'No token set: a token-protected backend will answer 401 until you add one in settings.'}</p>`, 'ring-2 ring-purpleAccent/30') : '',
+            <p class="text-[11px] text-gray-400 mt-2">Deciding as <b>${esc(settings.actor)}</b>.</p>`, 'ring-2 ring-purpleAccent/30') : '',
+        clickyCard(f, data),
+        emailCard(f, data, fu),
         followUpCard(f, fu),
         f.reason ? card('Panel verdict', `<p class="text-sm text-gray-700 leading-relaxed">${esc(f.reason)}</p>`) : '',
         memo && (memo.memo || memo.summary) ? card('Reviewer memo', `<p class="text-sm text-gray-700 leading-relaxed">${esc(memo.memo || memo.summary)}</p>${memo.recommendation ? `<p class="text-xs text-gray-500 mt-2">Recommendation: <b>${esc(memo.recommendation)}</b></p>` : ''}`) : '',
@@ -1118,7 +1311,7 @@ function renderFindingDetail(data) {
         card('Evidence', (f.evidence || []).map((ev) => `
             <div class="rounded-2xl bg-lightCardBg p-3 mb-2 last:mb-0" data-evidence>
                 <div class="flex items-center justify-between gap-2 text-[11px] font-semibold text-gray-500">
-                    <span class="truncate font-mono">${esc(ev.source_file)}${ev.row != null ? `:${esc(ev.row)}` : ''}${ev.locator ? ` (${esc(ev.locator)})` : ''}</span>
+                    ${evidenceRef(ev)}
                     <span class="flex gap-1 shrink-0">${ev.conflict ? pill('bg-amber-100 text-amber-800', 'conflicts') : ''}${ev.authority ? pill(AUTH_PILL(ev.authority), label(ev.authority)) : ''}</span>
                 </div>
                 <p class="text-sm text-gray-800 mt-1">${ev.quote ? `“${esc(ev.quote)}”` : esc(ev.what)}</p>
@@ -1129,7 +1322,7 @@ function renderFindingDetail(data) {
                 <div class="rounded-2xl border border-gray-100 p-3">
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-sm font-bold">${esc(judges[v.judge]?.name || judgeKey(v.judge))}${v.revised ? ' <span class="text-[11px] text-amber-600 font-semibold">changed vote</span>' : ''}${v.weight != null ? ` <span class="text-[11px] text-gray-400 font-semibold">weight ${pct(v.weight)}</span>` : ''}</span>
-                        ${pill(OUTCOME[v.outcome] || 'bg-gray-100', `${v.outcome} · ${pct(v.confidence)}`)}
+                        ${verdictPill(v.outcome, v.confidence)}
                     </div>
                     <p class="text-xs text-gray-600 mt-1 leading-snug">${esc(v.reason)}</p>
                 </div>`).join('')}</div>`).join('') || '<p class="text-sm text-gray-400">Not judged yet.</p>'),
@@ -1158,6 +1351,12 @@ function renderAgentDetail(id, { data, log }) {
     $('drawerBody').innerHTML = [
         card('What it does', `<p class="text-sm text-gray-700">${esc(ag.job || data?.job || '')}</p>
             <p class="text-xs text-gray-500 mt-2">Owner: ${esc(ag.owner || data?.owner || '—')} · ${num(ag.actions ?? entries.length)} actions · last ${esc(ago(ag.last_at))}</p>`),
+        id === 'clicky' ? card("Clicky's screens", filedFindings().length ? `<div class="flex flex-col gap-2">${filedFindings().slice(0, 20).map((f) => `
+            <div class="flex items-center justify-between gap-3 rounded-2xl bg-lightCardBg p-3 text-sm">
+                <span class="min-w-0"><span class="font-mono font-bold">${esc(fidOf(f))}</span> <span class="text-gray-500">${esc(chanName(f.channel))} · ${money(f.gap)}</span>
+                ${f.portal_ref ? `<span class="block text-[11px] font-mono text-gray-500">${esc(f.portal_ref)}</span>` : ''}</span>
+                <button data-screen="${esc(fidOf(f))}" class="rounded-xl bg-cardDark text-white text-xs font-bold px-3 py-2 shrink-0">Open screen</button></div>`).join('')}</div>`
+            : '<p class="text-sm text-gray-400">Nothing filed yet. Clicky files only after a person approves.</p>') : '',
         shots.length ? card('Screen', `<div class="grid gap-3">${shots.slice(-6).reverse().map((s) => `<img src="${esc(absUrl(s))}" alt="${esc(ag.name)} screenshot" class="w-full rounded-2xl border border-gray-100" loading="lazy">`).join('')}</div>`) : '',
         card('Activity', `<div class="bg-cardDark rounded-2xl p-2 space-y-1.5">${[...entries].slice(-100).reverse().map((e) => e.action ? logRow(e) : `<p class="text-xs text-gray-300 p-2">${esc(e.text || e.summary || JSON.stringify(e))}</p>`).join('') || '<p class="text-gray-500 text-sm p-2">No activity yet.</p>'}</div>`),
     ].join('');
@@ -1166,39 +1365,50 @@ function renderAgentDetail(id, { data, log }) {
 /* ---------------- actions ---------------- */
 
 async function decide(id, action) {
-    if (!settings.actor) { openSettings(); return toast('Add your name first so the log knows who decided.', 'error'); }
     const reason = $('decisionReason')?.value.trim() || '';
     try {
         const out = await post(`/api/findings/${encodeURIComponent(id)}/${action}`, { actor: settings.actor, reason });
         state.refusal = null;
-        state.lastDecision = { action, actor: settings.actor, filed: out.filed || [] };
+        state.lastDecision = { action, actor: settings.actor, filed: out.filed || [], email: out.email || out.vendor_email || null };
+        const em = state.lastDecision.email;
         toast(action === 'approve'
-            ? `${id} approved.${out.filed?.length ? ` Clicky filed it: ${out.filed.join(', ')}` : ''}`
+            ? `${id} approved.${out.filed?.length ? ` Clicky filed it: ${out.filed.join(', ')}.` : ''}${em ? ` Email ${/sent/i.test(em.status || '') ? 'sent' : 'queued'} to ${em.to || em.recipient}.` : ''}`
             : `${id} rejected.`, 'ok');
-        state.cache.findings = state.cache.drawer = null;
+        state.cache.findings = state.cache.drawer = state.cache.approvals = null;
         refreshDrawer();
     } catch (e) { fail(e); }
 }
 
-// "Try as an agent": the same approve route with an agent's identity. The gatekeeper refuses and logs it.
-async function tryAsAgent(id) {
+// Safety check (scoreboard): send an approve as an agent on a waiting finding. The gatekeeper refuses and logs it.
+async function tryAsAgent() {
+    const target = approvalItems()[0];
+    if (!target) return toast('Nothing is waiting for approval, so there is nothing for an agent to try.', '');
+    const id = target.finding_id || target.id;
     try {
         await post(`/api/findings/${encodeURIComponent(id)}/approve`, { actor: 'dispute_writer', role: 'agent', reason: 'an agent trying to approve its own draft' });
-        toast('The API accepted an agent approval: that should never happen.', 'error');
+        state.safety = { ok: false, id, error: 'The API accepted an agent approval. That should never happen.' };
     } catch (e) {
         if (e instanceof ApiError && (e.status === 403 || e.status === 409) && !e.data.running) {
-            state.refusal = { status: e.status, error: e.message, entry: e.data.log_entry || null };
-            toast(`Gatekeeper refused the agent (${e.status}).`, 'ok');
+            state.safety = { ok: true, id, status: e.status, error: e.message, entry: e.data.log_entry || null };
         } else return fail(e);
     }
-    state.cache.drawer = null;
-    refreshDrawer();
+    renderScoreboard();
+}
+function safetyCard() {
+    const r = state.safety;
+    return `<details class="bg-white rounded-3xl card-shadow border border-gray-100 p-5 mt-4 lg:mt-5" ${r ? 'open' : ''}>
+        <summary class="cursor-pointer font-bold text-gray-900 text-sm flex items-center gap-2"><i data-lucide="shield-check" class="w-4 h-4 text-sky-600"></i> Safety check: can an agent approve its own claim?</summary>
+        <p class="text-xs text-gray-500 mt-3 mb-3">Sends an approve on a waiting finding under an agent's name. Only a person can approve, so the gatekeeper should refuse and write the attempt to the audit log.</p>
+        <button data-try-agent class="rounded-2xl border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold text-xs px-4 py-2 flex items-center gap-1.5"><i data-lucide="bot" class="w-4 h-4"></i> Run the check</button>
+        ${r ? `<div class="mt-3 rounded-2xl p-3 text-sm ${r.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-900' : 'bg-red-50 border border-red-200 text-red-800'}">
+            <b>${r.ok ? `Refused (HTTP ${esc(r.status)})` : 'Not refused'}</b> on <span class="font-mono">${esc(r.id)}</span>: ${esc(r.error)}
+            ${r.entry ? `<div class="mt-2 text-xs font-mono text-gray-700">actor ${esc(r.entry.actor)} · role ${esc(r.entry.role)} · allowed <b>${esc(r.entry.allowed)}</b> · ${esc(clock(r.entry.at))}</div>` : ''}</div>` : ''}
+    </details>`;
 }
 
 async function followUp(id, step) {
     const body = {};
     if (step === 'approve' || step === 'reject') {
-        if (!settings.actor) { openSettings(); return toast('Add your name first so the log knows who decided.', 'error'); }
         body.actor = settings.actor;
         body.reason = step === 'approve' ? 'Follow-up approved from the console' : 'Follow-up rejected from the console';
         const text = $('fuText')?.value;
@@ -1207,22 +1417,261 @@ async function followUp(id, step) {
     try {
         const out = await post(`/api/findings/${encodeURIComponent(id)}/follow_up${step === 'draft' ? '' : `/${step}`}`, body);
         const msg = { draft: 'Follow-up drafted; it waits for a person.', approve: 'Follow-up approved.', reject: 'Follow-up rejected.',
-            send: `Clicky sent the follow-up${out.portal_ref ? `: ${out.portal_ref}` : ''}.` }[step];
+            send: `Follow-up ${out.email ? `${/sent/i.test(out.email.status || '') ? 'emailed' : 'queued in the outbox'} to ${out.email.to}` : 'sent'}${out.portal_ref ? ` · ${out.portal_ref}` : ''}.` }[step];
+        if (out.email) state.lastDecision = { ...(state.lastDecision || {}), email: out.email };
         toast(msg, 'ok');
         state.cache.drawer = null;
         refreshDrawer();
     } catch (e) { fail(e); }
 }
 
+/* ---------------- live run: a fresh month, every agent, on screen (POST /api/run {"dataset":"live"}) ---------------- */
+
+async function startLiveRun() {
+    if (state.job && !state.job.finished) return toast('A live run is already going.', '');
+    try {
+        const job = await post('/api/run?wait=0', { dataset: 'live' });
+        trackJob(job);
+        toast('New month generated. The agents are on it.', 'ok');
+    } catch (e) {
+        if (e instanceof ApiError && e.status === 409 && e.data.running) return trackJob({ job_id: e.data.running, status: 'running' });
+        if (e instanceof ApiError && e.status === 400) return toast(`This backend can't run a live month yet (${e.message}).`, 'error');
+        fail(e);
+    }
+}
+
+function trackJob(job) {
+    const id = job.job_id || job.id;
+    if (!id) return;
+    state.job = { id, status: job.status || 'running', started: Date.now(), finished: false, data: job };
+    renderJob();
+    pollJob();
+}
+
+async function pollJob() {
+    const j = state.job;
+    if (!j || j.finished) return;
+    try {
+        const d = await get(`/api/jobs/${encodeURIComponent(j.id)}`);
+        j.data = d; j.status = d.status;
+        if (d.status !== 'running') {
+            j.finished = true;
+            Object.keys(state.cache).forEach((k) => { if (k !== 'bannerHtml') state.cache[k] = null; });
+            toast(d.status === 'done' ? `Live run finished in ${duration(d.seconds)}. ${approvalItems().length ? 'Approvals are waiting.' : ''}` : `Live run ${d.status}: ${d.error || ''}`, d.status === 'done' ? 'ok' : 'error');
+            setTimeout(() => { if (state.job === j) { state.job = null; renderJob(); } }, 20000);
+        }
+    } catch (e) {
+        if (e instanceof ApiError && e.status === 404) { j.finished = true; j.status = 'lost (server restarted)'; }
+    }
+    renderJob();
+    if (!j.finished) setTimeout(pollJob, 1500);
+}
+
+function renderJob() {
+    const el = $('jobPanel');
+    const j = state.job;
+    $('liveRunBtn').classList.toggle('opacity-60', !!(j && !j.finished));
+    if (!j) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+    const d = j.data || {}, pr = d.progress || {};
+    const frac = pr.total ? Math.min(1, (pr.done || 0) / pr.total) : null;
+    const stages = pr.stages || [];
+    const tail = (d.output_tail || []).slice(-3);
+    const secs = d.seconds ?? Math.round((Date.now() - j.started) / 1000);
+    el.classList.remove('hidden');
+    el.innerHTML = `<div class="bg-cardDark text-white rounded-3xl p-4 sm:p-5 shadow-md" data-test="job-panel">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="w-10 h-10 rounded-full ${j.finished ? (j.status === 'done' ? 'bg-limeAccent text-black' : 'bg-red-600') : 'bg-purpleAccent'} flex items-center justify-center shrink-0">
+                    <i data-lucide="${j.finished ? (j.status === 'done' ? 'check' : 'triangle-alert') : 'loader'}" class="w-5 h-5 ${j.finished ? '' : 'animate-spin'}"></i></div>
+                <div class="min-w-0">
+                    <p class="text-[11px] font-bold uppercase tracking-wider text-limeAccent">Live run · <span class="font-mono">${esc(j.id)}</span> · ${esc(duration(secs))}</p>
+                    <p class="text-sm sm:text-base font-bold truncate">${j.finished ? (j.status === 'done' ? 'Done: findings, approvals and metrics are refreshed' : `Stopped: ${esc(j.status)}`)
+                        : esc(pr.stage ? `${label(pr.stage)}${pr.total ? ` · ${num(pr.done)}/${num(pr.total)} ${esc(pr.unit || '')}` : ''}` : 'Generating a new month of data…')}</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+                <a href="#/theater" data-th-live class="rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold text-sm px-4 py-2.5 flex items-center gap-1.5"><i data-lucide="clapperboard" class="w-4 h-4"></i> Watch the agents</a>
+                ${j.finished ? '<button data-job-close class="rounded-2xl bg-white/10 hover:bg-white/20 px-3 py-2.5" aria-label="Dismiss"><i data-lucide="x" class="w-4 h-4"></i></button>' : ''}
+            </div>
+        </div>
+        ${frac != null && !j.finished ? `<div class="h-1.5 rounded-full bg-white/10 mt-3"><div class="h-1.5 rounded-full bg-limeAccent transition-all" style="width:${Math.round(frac * 100)}%"></div></div>` : ''}
+        ${stages.length ? `<div class="flex flex-wrap gap-1.5 mt-3">${stages.map((st) => `<span class="text-[11px] font-semibold rounded-full bg-white/10 px-2.5 py-1">${esc(label(st.name))} ${st.total ? `${num(st.done)}/${num(st.total)}` : ''}</span>`).join('')}</div>` : ''}
+        ${tail.length ? `<div class="mt-3 font-mono text-[11px] text-gray-400 space-y-0.5">${tail.map((l) => `<div class="truncate">${esc(l)}</div>`).join('')}</div>` : ''}
+    </div>`;
+    icons();
+}
+
+/* ---------------- benchmarks (GET /api/benchmarks) ---------------- */
+
+async function loadBenchmarks() {
+    try {
+        const d = await get('/api/benchmarks');
+        if (changed('benchmarks', d)) { state.benchmarks = d; if (route().name === 'benchmarks') renderBenchmarks(); }
+    } catch (e) {
+        state.benchmarks = { error: e instanceof ApiError && e.status === 404 ? 'missing' : explain(e) };
+        if (route().name === 'benchmarks') renderBenchmarks();
+    }
+}
+
+// Accepts a list (contestants / rows) or benchmark.py's results.json ({current: {name: aggregate}})
+function benchRows(d) {
+    const list = d.contestants || d.rows || d.results;
+    const rows = Array.isArray(list) ? list : Object.entries(d.current || list || {}).map(([name, r]) => ({ name, ...r }));
+    return rows.map((r) => {
+        const total = r.total ?? r.traps;
+        const caught = r.caught;
+        return { ...r, name: r.label || r.name || r.contestant, total, caught,
+            accuracy: r.accuracy ?? (total ? caught / total : null), p50: r.p50_s ?? r.p50, cost: r.cost_per_1000 ?? r.usd_per_1000 };
+    }).filter((r) => r.name);
+}
+
+function renderBenchmarks() {
+    const el = $('benchmarks');
+    if (!el) return;
+    const d = state.benchmarks;
+    if (!d) { el.innerHTML = whiteCard(empty('Loading benchmarks…')); return icons(); }
+    if (d.error) {
+        el.innerHTML = whiteCard(`${cardHead('Benchmarks', 'GET /api/benchmarks')}${empty(d.error === 'missing' ? 'This backend does not serve /api/benchmarks yet. Results live in docs/gx10_results.md until it does.' : esc(d.error), 'flask-conical')}`);
+        return icons();
+    }
+    const rows = benchRows(d).sort((a, b) => (b.accuracy ?? -1) - (a.accuracy ?? -1));
+    const g = d.gx10 || {}, tr = d.training || {};
+    const best = rows.find((r) => /tuned|flock-judge-v1/i.test(r.name)) || rows[0];
+    const bar = (r) => {
+        const w = Math.round(100 * (r.accuracy || 0));
+        const tuned = /tuned|flock-judge-v1/i.test(r.name), rules = /^rules/i.test(r.name);
+        return `<div class="flex items-center gap-3 text-xs sm:text-sm">
+            <span class="w-40 sm:w-64 shrink-0 truncate font-semibold ${tuned ? 'text-gray-900' : 'text-gray-600'}" title="${esc(r.name)}">${esc(r.name)}</span>
+            <div class="flex-1 h-4 rounded-full bg-lightCardBg overflow-hidden"><div class="h-4 rounded-full ${tuned ? 'bg-limeAccent border border-black/10' : rules ? 'bg-cardDark' : 'bg-purpleAccent/70'}" style="width:${w}%"></div></div>
+            <span class="w-24 text-right font-mono font-bold tabular-nums">${r.caught != null && r.total != null ? `${num(r.caught)}/${num(r.total)}` : pct(r.accuracy)}</span></div>`;
+    };
+    const kv = (o) => Object.entries(o).filter(([, v]) => v != null && typeof v !== 'object').map(([k, v]) => `
+        <div class="flex justify-between gap-3 py-1.5 border-b border-white/10 text-xs"><span class="text-gray-400">${esc(label(k))}</span><span class="font-semibold text-right">${esc(typeof v === 'number' ? num(v) : v)}</span></div>`).join('');
+    el.innerHTML = `
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 lg:gap-4 mb-4 lg:mb-5">
+            ${best ? statCard({ label: 'Best model judge', value: esc(best.caught != null ? `${num(best.caught)}/${num(best.total)}` : pct(best.accuracy)), sub: esc(best.name), icon: 'trophy', dark: true }) : ''}
+            ${statCard({ label: 'Contestants', value: num(rows.length), sub: esc(d.seeds ? `held-out seeds ${d.seeds}` : 'same findings for each'), icon: 'users' })}
+            ${statCard({ label: 'False alarms (all contestants)', value: num(rows.reduce((t, r) => t + (r.false_alarms || 0), 0)), sub: 'flagged when the answer key says fine', icon: 'shield-check' })}
+            ${g.speedup || g.speedup_vs_mac ? statCard({ label: 'GX10 vs a laptop', value: `${esc(g.speedup || g.speedup_vs_mac)}×`, sub: esc(g.speedup_note || 'lower p50 per finding'), icon: 'cpu' }) : ''}
+        </div>
+        ${whiteCard(`${cardHead('Traps caught by contestant', esc(d.note || d.source || 'Answer-key traps caught on held-out seeds'))}<div class="flex flex-col gap-2.5">${rows.map(bar).join('') || empty('No results yet.')}</div>`, 'mb-4 lg:mb-5')}
+        ${whiteCard(`${cardHead('Results', 'Every contestant judged the same findings')}
+            <div class="overflow-x-auto"><table class="w-full text-left text-xs sm:text-sm min-w-[720px]">
+                <thead class="text-gray-400 text-[11px] uppercase tracking-wider"><tr class="border-b border-gray-100">
+                    <th class="py-2 pr-3">Contestant</th><th class="py-2 pr-3 text-right">Accuracy</th><th class="py-2 pr-3 text-right">Caught</th><th class="py-2 pr-3 text-right">False alarms</th>
+                    <th class="py-2 pr-3 text-right">To a human</th><th class="py-2 pr-3 text-right">p50 s/finding</th><th class="py-2 pr-3 text-right">$ / 1k findings</th><th class="py-2 text-right">Runs offline</th></tr></thead>
+                <tbody class="divide-y divide-gray-50">${rows.map((r) => `<tr class="${/tuned|flock-judge-v1/i.test(r.name) ? 'bg-limeAccent/15' : ''}">
+                    <td class="py-2 pr-3 font-bold text-gray-900">${esc(r.name)}${r.status && r.status !== 'ok' ? ` ${pill('bg-gray-100 text-gray-600', r.status)}` : ''}</td>
+                    <td class="py-2 pr-3 text-right tabular-nums">${r.accuracy != null ? `${(r.accuracy * 100).toFixed(1)}%` : '—'}</td>
+                    <td class="py-2 pr-3 text-right font-mono tabular-nums">${r.caught != null ? `${num(r.caught)}/${num(r.total)}` : '—'}</td>
+                    <td class="py-2 pr-3 text-right tabular-nums">${num(r.false_alarms)}</td>
+                    <td class="py-2 pr-3 text-right tabular-nums">${num(r.to_human)}</td>
+                    <td class="py-2 pr-3 text-right tabular-nums">${r.p50 != null ? Number(r.p50).toFixed(r.p50 < 0.01 ? 3 : 1) : '—'}</td>
+                    <td class="py-2 pr-3 text-right tabular-nums">${r.cost != null ? money(r.cost) : '—'}</td>
+                    <td class="py-2 text-right">${r.offline == null ? '—' : r.offline ? pill('bg-emerald-100 text-emerald-800', 'yes') : pill('bg-gray-100 text-gray-600', 'no')}</td></tr>`).join('')}</tbody></table></div>`, 'mb-4 lg:mb-5')}
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-5">
+            <section class="bg-cardDark text-white rounded-3xl p-5 sm:p-6 shadow-md">
+                <h3 class="font-extrabold text-lg flex items-center gap-2"><i data-lucide="cpu" class="w-5 h-5 text-limeAccent"></i> The GX10</h3>
+                <p class="text-xs text-gray-400 mt-1 mb-3">${esc(g.summary || 'NVIDIA GB10 box on the team tailnet, Ollama over an SSH tunnel: judging runs with nothing leaving the network.')}</p>
+                ${kv(g) || '<p class="text-sm text-gray-500">No GX10 details in this response.</p>'}
+            </section>
+            <section class="bg-white rounded-3xl p-5 sm:p-6 card-shadow border border-gray-100">
+                <h3 class="font-extrabold text-lg text-gray-900 flex items-center gap-2"><i data-lucide="graduation-cap" class="w-5 h-5 text-purpleAccent"></i> Fine-tuning our judge</h3>
+                <p class="text-xs text-gray-400 mt-1 mb-3">${esc(tr.summary || 'flock-judge-v1: a LoRA on Qwen2.5-7B trained on the judge’s own verdict format, served from the GX10.')}</p>
+                <div class="text-gray-900">${Object.entries(tr).filter(([k, v]) => k !== 'summary' && v != null && typeof v !== 'object').map(([k, v]) => `
+                    <div class="flex justify-between gap-3 py-1.5 border-b border-gray-100 text-xs"><span class="text-gray-500">${esc(label(k))}</span><span class="font-semibold text-right">${esc(typeof v === 'number' ? num(v) : v)}</span></div>`).join('') || '<p class="text-sm text-gray-400">No training details in this response.</p>'}</div>
+            </section>
+        </div>`;
+    icons();
+}
+
+/* ---------------- Clicky's screen ---------------- */
+
+function openScreen(id) {
+    const url = screenUrl(id);
+    $('screenTitle').textContent = id;
+    $('screenOpen').href = url;
+    $('screenFrame').src = url;
+    $('screenModal').classList.replace('hidden', 'flex');
+}
+function closeScreen() {
+    $('screenModal').classList.replace('flex', 'hidden');
+    $('screenFrame').src = 'about:blank';
+}
+
+/* ---------------- sign in (POST /api/login, GET /api/me) ---------------- */
+
+function setUser(user) {
+    settings.user = user || null;
+    settings.actor = user?.name || user?.username || 'Preet';
+    renderActor();
+}
+function showLogin(msg = '') {
+    $('loginError').textContent = msg;
+    $('loginError').classList.toggle('hidden', !msg);
+    $('loginScreen').classList.replace('hidden', 'flex');
+    setTimeout(() => ($('loginUser').value ? $('loginPass') : $('loginUser')).focus(), 0);
+}
+// 'login': show the sign-in screen until /api/me says who this is. 'token': an older API, no sign-in.
+async function checkAuth() {
+    try {
+        const me = await get('/api/me');
+        settings.auth = 'login';
+        setUser(me.user || me);
+        return true;
+    } catch (e) {
+        if (e instanceof ApiError && e.status === 404) { settings.auth = 'token'; setUser(null); return true; }
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) { settings.auth = 'login'; showLogin(); return false; }
+        settings.auth = 'token'; setUser(null); return true;   // unreachable: the console shows offline
+    }
+}
+async function login(username, password) {
+    $('loginBtn').disabled = true;
+    try {
+        const res = await fetch(state.base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 404) { settings.auth = 'token'; $('loginScreen').classList.replace('flex', 'hidden'); return finishToken(null); }
+        if (!res.ok || !data.token) return showLogin(data.error || 'That username and password did not match.');
+        settings.token = data.token;
+        save('flock.token', data.token);
+        $('loginPass').value = '';
+        setUser(data.user || { name: username });
+        finishToken(data.token);
+        state.cache = {};
+        toast(`Signed in as ${settings.actor}.`, 'ok');
+        if (state.drawer) refreshDrawer();
+    } catch (e) {
+        showLogin(`Can't reach the API (${e.message}).`);
+    } finally { $('loginBtn').disabled = false; }
+}
+function logout() {
+    $('userMenu').classList.add('hidden');
+    if (settings.token && settings.auth === 'login') fetch(state.base + '/api/logout', { method: 'POST', headers: { Authorization: `Bearer ${settings.token}` } }).catch(() => {});
+    settings.token = '';
+    save('flock.token', '');
+    setUser(null);
+    if (settings.auth === 'login') showLogin();
+    else toast('Token cleared.', '');
+}
+function toggleUserMenu(force) {
+    const m = $('userMenu');
+    const open = force ?? m.classList.contains('hidden');
+    m.classList.toggle('hidden', !open);
+    if (open) {
+        $('userName').textContent = settings.actor;
+        $('userOrg').textContent = settings.user ? [settings.user.role, settings.user.org].filter(Boolean).join(' · ') : (settings.token ? 'presenter token set' : 'not signed in');
+        icons();
+    }
+}
+
 /* ---------------- settings, modal, toast ---------------- */
 
 function openSettings() {
-    $('actorInput').value = settings.actor;
-    $('tokenInput').value = settings.token;
+    toggleUserMenu(false);
     $('apiInput').value = store('flock.api');
     $('apiHint').textContent = `Now using ${settings.api} (${settings.apiSource}). ?api=<url> in the address overrides; when this page is served by a Flock API it uses that API.`;
     $('settingsModal').classList.replace('hidden', 'flex');
-    setTimeout(() => (settings.actor ? $('tokenInput') : $('actorInput')).focus(), 0);
+    setTimeout(() => $('apiInput').focus(), 0);
 }
 function closeSettings() { $('settingsModal').classList.replace('flex', 'hidden'); }
 
@@ -1249,8 +1698,9 @@ function toast(msg, kind = '') {
 
 function renderActor() {
     const b = $('actorBadge');
-    b.innerHTML = settings.actor ? esc(settings.actor.slice(0, 2).toUpperCase()) : '<i data-lucide="key-round" class="w-4 h-4"></i>';
-    b.title = settings.actor ? `Acting as ${settings.actor}${settings.token ? '' : ' (no token)'}` : 'Reviewer settings';
+    const initials = String(settings.actor || '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+    b.innerHTML = initials ? esc(initials) : '<i data-lucide="user" class="w-4 h-4"></i>';
+    b.title = `Acting as ${settings.actor}`;
     icons();
 }
 
@@ -1258,6 +1708,20 @@ function renderActor() {
 
 document.addEventListener('click', (e) => {
     const t = e.target;
+    if (t.closest('[data-bell]')) return toggleBell();
+    if (!t.closest('#bellPanel') || t.closest('[data-finding]')) toggleBell(false);
+    if (t.closest('[data-user-menu]')) return toggleUserMenu();
+    if (t.closest('[data-logout]')) return logout();
+    if (!t.closest('#userMenu')) toggleUserMenu(false);
+    if (t.closest('[data-live-run]')) return startLiveRun();
+    if (t.closest('[data-job-close]')) { state.job = null; return renderJob(); }
+    if (t.closest('[data-th-live]')) { theater.mode = 'live'; return; }
+    if (t.closest('[data-token-cancel]')) return finishToken(null);
+    if (t.closest('[data-close-screen]') || t.id === 'screenModal') return closeScreen();
+    const evb = t.closest('[data-ev-ref]');
+    if (evb) return openEvidence(evb.dataset.evRef);
+    const scr = t.closest('[data-screen]');
+    if (scr) return openScreen(scr.dataset.screen);
     if (t.closest('[data-close-drawer]')) return closeDrawer();
     if (t.closest('[data-open-settings]')) return openSettings();
     if (t.closest('[data-close-settings]')) return closeSettings();
@@ -1268,7 +1732,7 @@ document.addEventListener('click', (e) => {
     if (ff) { state.findingFilter = ff.dataset.ffilter; return renderFindings(); }
     const dec = t.closest('[data-decide]');
     if (dec && state.drawer) return decide(state.drawer.id, dec.dataset.decide);
-    if (t.closest('[data-try-agent]') && state.drawer) return tryAsAgent(state.drawer.id);
+    if (t.closest('[data-try-agent]')) return tryAsAgent();
     const fu = t.closest('[data-fu]');
     if (fu && state.drawer) return followUp(state.drawer.id, fu.dataset.fu);
     const th = t.closest('[data-th]');
@@ -1284,17 +1748,16 @@ document.addEventListener('click', (e) => {
     const a = t.closest('[data-agent]');
     if (a) return openDrawer('agent', a.dataset.agent);
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); closeSettings(); closeModal(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeScreen(); toggleBell(false); closeDrawer(); closeSettings(); closeModal(); } });
 window.addEventListener('hashchange', onRoute);
+
+$('loginForm').onsubmit = (e) => { e.preventDefault(); login($('loginUser').value.trim(), $('loginPass').value); };
+$('tokenForm').onsubmit = (e) => { e.preventDefault(); finishToken($('tokenOnce').value.trim() || null); };
 
 $('settingsForm').onsubmit = (e) => {
     e.preventDefault();
-    settings.actor = $('actorInput').value.trim();
-    settings.token = $('tokenInput').value.trim();
     const api = $('apiInput').value.trim().replace(/\/$/, '');
     const apiChanged = api !== store('flock.api');
-    save('flock.actor', settings.actor);
-    save('flock.token', settings.token);
     save('flock.api', api);
     closeSettings();
     renderActor();
@@ -1303,11 +1766,20 @@ $('settingsForm').onsubmit = (e) => {
 };
 
 (async function init() {
+    // ?token=<t> once: keep it, then take it out of the address bar
+    if (params.get('token')) {
+        settings.token = params.get('token').trim();
+        save('flock.token', settings.token);
+        params.delete('token');
+        history.replaceState(null, '', `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash}`);
+    }
     renderActor();
     [settings.api, settings.apiSource] = await detectBase();
     state.base = settings.api;
     $('apiBase').textContent = `API: ${settings.api}`;
+    await checkAuth();
     onRoute();
     pollFast();
     pollSlow();
+    tryGet('/api/health').then((h) => { if (h?.running_job) trackJob({ job_id: h.running_job, status: 'running' }); });
 })();
