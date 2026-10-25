@@ -54,7 +54,7 @@ the OpenAI chat API over plain HTTP (no extra dependency), except Claude:
 | `groq` | Groq cloud | `GROQ_API_KEY`, `FLOCK_GROQ_MODEL` (default `llama-3.3-70b-versatile`) |
 | `nvidia` | build.nvidia.com | `NVIDIA_API_KEY`, `FLOCK_NVIDIA_MODEL` (default `meta/llama-3.3-70b-instruct`), `FLOCK_NVIDIA_URL` |
 | `anthropic` | Claude | `ANTHROPIC_API_KEY`, `FLOCK_MODEL` (default `claude-sonnet-5-5`) |
-| `creao` | CREAO Developer Platform: every AI role as a hosted CREAO agent (see below) | `CREAO_API_KEY` (`cr_sk_...`), `creao_agents.json` from `scripts/creao_setup.py --create`, optional `FLOCK_CREAO_LLM`, `FLOCK_CREAO_MODE=async` |
+| `creao` | CREAO Developer Platform /v2: every AI role as a hosted CREAO agent (see below) | `CREAO_API_KEY` (project key, USD wallet), `creao_agents.json` from `scripts/creao_setup.py --create`, optional `FLOCK_CREAO_LLM`, `FLOCK_CREAO_RPM`, `FLOCK_CREAO_MODE=async` |
 | `offline` | never call anything | |
 
 | Role | Env | Default |
@@ -125,29 +125,32 @@ address) and set `FLOCK_LOCAL_MODEL` / `FLOCK_JUDGE_MODELS` to the ids it report
 ## Run every AI role on CREAO
 
 [CREAO](https://creao.ai) hosts agents created from a plain-language description and runs them through its Developer
-Platform. `scripts/creao_setup.py` creates one CREAO agent per Flock AI role (the three judges, reviewer, dispute writer,
-column mapper, document reader) and the `creao` provider in `flock/llm.py` runs them. Flock keeps its prompts and all
-money math in its own code: each agent is created with one contract, "treat `instructions` as your system prompt, answer
-`request`, reply with only the JSON asked for", so the audit trail, the gatekeeper and the offline fallback are unchanged.
+Platform `/v2` (`developer.creao.ai`, project keys, a USD wallet). `scripts/creao_setup.py` creates one hosted CREAO
+agent per Flock AI role (the three judges, reviewer, dispute writer, column mapper, document reader) and the `creao`
+provider in `flock/llm.py` runs them. Flock keeps its prompts and all money math in its own code: each agent is created
+with one contract, "treat `instructions` as your system prompt, answer `request`, reply with only the JSON asked for",
+so the audit trail, the gatekeeper and the offline fallback are unchanged.
 
 ```bash
-export CREAO_API_KEY=cr_sk_...                      # Account API key from developer.creao.ai, server-side only
-python scripts/creao_setup.py --create              # 7 agents, async creation polled; writes creao_agents.json
-python scripts/creao_setup.py --check               # one tiny run per agent: reply + credits spent
+export CREAO_API_KEY=cr_sk_...                      # PROJECT key: Developer Console > API key. Fund the USD wallet first.
+python scripts/creao_setup.py --create              # 7 agents (NL create, polled); writes creao_agents.json
+python scripts/creao_setup.py --check               # one tiny run per agent: reply, tokens, estimated USD
 python scripts/creao_setup.py --env                 # the export lines below, filled in
 export FLOCK_JUDGE_PROVIDERS=creao FLOCK_REVIEWER_PROVIDER=creao FLOCK_WRITER_PROVIDER=creao \
        FLOCK_MAPPER_PROVIDER=creao FLOCK_READER_PROVIDER=creao
 unset FLOCK_OFFLINE
 python -m flock.pipeline --reset --forget            # the whole flock judged, drafted and read on CREAO
-python scripts/benchmark.py --contestants rules,creao   # CREAO on the proof table (credits reported per run)
+python scripts/benchmark.py --contestants rules,creao   # CREAO on the proof table, USD per 1,000 findings
 ```
 
-How a call works: `POST /v1/realtime/runs` with `{agent_id, input: {instructions, request}}`, the reply is the NDJSON
-stream's text (`run.completed.result.text`), and `usage.credits` is counted (`llm.creao_credits()`). If realtime is not
-enabled for the account the provider polls `POST /v1/runs` + `GET /v1/runs/{id}` instead (`FLOCK_CREAO_MODE=async`
-forces it). `FLOCK_CREAO_LLM` picks the model CREAO runs the agents on (default `anthropic/claude-sonnet-5-5`).
-A role whose agent is missing stays on offline rules and says why (`offline_reason`). `FLOCK_AIRGAP=1` keeps CREAO
-offline like any other internet host, so the "no internet" demo and the CREAO demo are two env blocks, not two builds.
+How a call works: `POST /v2/realtime/runs` with `{agent_id, input: {instructions, request}}`; the reply is the NDJSON
+stream's text and `usage.models` (per-model tokens) is turned into USD with the console's rates (`llm.creao_usage()`).
+If realtime is refused the provider polls `POST /v2/runs` + `GET /v2/runs/{id}` (`FLOCK_CREAO_MODE=async` forces it).
+CREAO allows 30 run creates per account per minute, so the provider paces itself to `FLOCK_CREAO_RPM` (default 28) and
+waits for `Retry-After` on a 429: a 42-finding week is about five minutes of judging. `FLOCK_CREAO_LLM` picks the
+catalog model the agents run on (default `anthropic/claude-sonnet-5-5`; `anthropic/claude-haiku-4-5` is the cheap one).
+A role whose agent is missing stays on offline rules and says why. `FLOCK_AIRGAP=1` keeps CREAO offline like any other
+internet host. `FLOCK_CREAO_API=v1` switches to the CLI routes for an account key.
 
 ## Judge market (bets that settle against reality, human attention as a budget)
 

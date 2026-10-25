@@ -12,12 +12,15 @@ Providers:
   nvidia     NVIDIA_API_KEY, FLOCK_NVIDIA_MODEL (default meta/llama-3.3-70b-instruct),
              FLOCK_NVIDIA_URL (default https://integrate.api.nvidia.com/v1, build.nvidia.com)
   anthropic  ANTHROPIC_API_KEY, FLOCK_MODEL (default claude-sonnet-5-5)
-  creao      CREAO's Developer Platform (developer.creao.ai): every Flock AI role runs as a hosted CREAO agent.
-             CREAO_API_KEY (cr_sk_...), FLOCK_CREAO_URL (default https://developer.creao.ai). The "model" slot of a
-             creao route is the CREAO agent id: by role from creao_agents.json (scripts/creao_setup.py --create writes
-             it; FLOCK_CREAO_AGENTS points elsewhere), or FLOCK_CREAO_AGENT for every role, or FLOCK_*_MODEL per role.
-             FLOCK_CREAO_LLM picks the model CREAO runs the agent on (e.g. anthropic/claude-haiku-5-5);
-             FLOCK_CREAO_MODE=async polls POST /v1/runs instead of the realtime NDJSON stream.
+  creao      CREAO's Developer Platform /v2 (developer.creao.ai): every Flock AI role runs as a hosted CREAO agent.
+             CREAO_API_KEY is a PROJECT key from the Developer Console (cr_sk_..., billed from a USD wallet);
+             FLOCK_CREAO_URL (default https://developer.creao.ai), FLOCK_CREAO_API (v2; v1 for a CLI account key).
+             The "model" slot of a creao route is the CREAO agent id: by role from creao_agents.json
+             (scripts/creao_setup.py --create writes it; FLOCK_CREAO_AGENTS points elsewhere), or FLOCK_CREAO_AGENT
+             for every role, or FLOCK_*_MODEL per role. FLOCK_CREAO_LLM picks the catalog model CREAO runs the agent
+             on (default anthropic/claude-sonnet-5-5; anthropic/claude-haiku-4-5 is the cheap one).
+             FLOCK_CREAO_MODE=async polls POST /runs instead of the realtime NDJSON stream. Run creates are paced to
+             FLOCK_CREAO_RPM per minute (default 28; CREAO allows 30 per account) and 429s wait for Retry-After.
   offline    never call anything (same as leaving a key out)
 
 Which provider each role uses:
@@ -78,7 +81,19 @@ CREAO_URL = "https://developer.creao.ai"
 CREAO_AGENTS_FILE = Path(__file__).resolve().parent.parent / "creao_agents.json"   # role -> CREAO agent id
 CREAO_ROLE_KEYS = {("judge", 0): "judge.strict", ("judge", 1): "judge.operator", ("judge", 2): "judge.skeptic"}
 CREAO_POLL_SECONDS = 1.0
-_credits: Counter = Counter()    # CREAO agent id -> credits reported by completed runs
+CREAO_RPM_DEFAULT = 28           # CREAO /v2 allows 30 run creates per account per minute; stay under it
+CREAO_RETRIES = 3                # on 429 RATE_LIMITED: wait Retry-After (or 60s) and try again, this many times
+# USD per 1M tokens (input, output) as the Developer Console dashboard lists them (2026-10-24). Unknown ids cost 0 here
+# and are flagged in creao_usage()["unpriced"]; the wallet is the truth.
+CREAO_USD_PER_M = {
+    "anthropic/claude-sonnet-5-5": (2.60, 13.00), "anthropic/claude-sonnet-5": (2.60, 13.00),
+    "anthropic/claude-opus-5-5": (5.20, 26.00), "anthropic/claude-opus-4-8": (6.50, 32.50),
+    "anthropic/claude-fable-5": (13.00, 65.00), "anthropic/claude-fable-5-1": (13.00, 65.00),
+}
+_credits: Counter = Counter()    # CREAO agent id -> credits (v1 only; /v2 bills USD, see _usage)
+_usage: dict[str, Counter] = {}  # CREAO agent id -> Counter(input_tokens, output_tokens, usd, calls, unpriced)
+_run_times: list[float] = []     # monotonic times of recent run creates, for pacing
+_sleep = __import__("time").sleep
 
 ANTHROPIC_URL = "https://api.anthropic.com"
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")  # CGNAT range Tailscale hands out (100.x.y.z)
@@ -220,6 +235,34 @@ def creao_url() -> str:
     return (os.environ.get("FLOCK_CREAO_URL") or CREAO_URL).rstrip("/")
 
 
+def creao_api() -> str:
+    """Route prefix: 'v2' (Developer Platform project keys, USD) or 'v1' (CLI account keys, credits)."""
+    return (os.environ.get("FLOCK_CREAO_API") or "v2").strip().strip("/").lower()
+
+
+def creao_rpm() -> int:
+    try:
+        return max(1, int(os.environ.get("FLOCK_CREAO_RPM") or CREAO_RPM_DEFAULT))
+    except ValueError:
+        return CREAO_RPM_DEFAULT
+
+
+def _creao_pace() -> None:
+    """Keep run creates under the per-minute budget across threads (the three judges run in parallel)."""
+    import time
+
+    while True:
+        with _stats_lock:
+            now = time.monotonic()
+            while _run_times and now - _run_times[0] > 60:
+                _run_times.pop(0)
+            if len(_run_times) < creao_rpm():
+                _run_times.append(now)
+                return
+            wait = 60 - (now - _run_times[0]) + 0.05
+        _sleep(max(wait, 0.05))
+
+
 def _private_ip(text: str) -> bool:
     try:
         ip = ipaddress.ip_address(text.split("%")[0])
@@ -297,13 +340,27 @@ def reset_calls() -> None:
         _calls.clear()
         _refused.clear()
         _credits.clear()
+        _usage.clear()
+
+
+def creao_usage() -> dict[str, Any]:
+    """What this process has spent on CREAO: tokens and estimated USD per agent (/v2), credits (/v1)."""
+    with _stats_lock:
+        by_agent = {a: dict(c) for a, c in _usage.items()}
+        credits = dict(_credits)
+    tot = Counter()
+    for c in by_agent.values():
+        tot.update(c)
+    return {"usd": round(tot.get("usd", 0.0), 6), "input_tokens": int(tot.get("input_tokens", 0)),
+            "output_tokens": int(tot.get("output_tokens", 0)), "calls": int(tot.get("calls", 0)),
+            "unpriced": int(tot.get("unpriced", 0)), "credits": round(sum(credits.values()), 4),
+            "by_agent": by_agent}
 
 
 def creao_credits() -> dict[str, Any]:
-    """CREAO credits this process has spent, in total and per agent (from each completed run's usage.credits)."""
-    with _stats_lock:
-        by_agent = dict(_credits)
-    return {"credits": round(sum(by_agent.values()), 4), "by_agent": by_agent}
+    """Kept for callers of the v1 name: {"credits", "usd", "by_agent"}."""
+    u = creao_usage()
+    return {"credits": u["credits"], "usd": u["usd"], "by_agent": u["by_agent"]}
 
 
 def airgap_report() -> dict[str, Any]:
@@ -370,9 +427,9 @@ def _openai_chat(provider: str, model_id: str, system: str, user: str, max_token
 # --- CREAO Developer Platform --------------------------------------------------------------------------------------
 
 class CreaoHTTPError(RuntimeError):
-    def __init__(self, code: int, error: str):
+    def __init__(self, code: int, error: str, retry_after: float | None = None):
         super().__init__(f"HTTP {code} from creao: {error}")
-        self.code, self.error = code, error
+        self.code, self.error, self.retry_after = code, error, retry_after
 
 
 def _creao_request(method: str, path: str, body: dict[str, Any] | None = None) -> bytes:
@@ -392,7 +449,17 @@ def _creao_request(method: str, path: str, body: dict[str, Any] | None = None) -
             code = json.loads(raw).get("error") or raw[:120]
         except ValueError:
             code = raw[:120]
-        raise CreaoHTTPError(e.code, str(code)) from None
+        retry_after = None
+        try:
+            retry_after = float((e.headers or {}).get("Retry-After")) if e.headers and e.headers.get("Retry-After") else None
+        except (TypeError, ValueError):
+            retry_after = None
+        raise CreaoHTTPError(e.code, str(code), retry_after) from None
+
+
+def creao_path(route: str) -> str:
+    """'/runs' -> '/v2/runs' (or /v1/...)."""
+    return f"/{creao_api()}/{route.lstrip('/')}"
 
 
 def _creao_text(result: Any) -> str:
@@ -402,7 +469,7 @@ def _creao_text(result: Any) -> str:
 
 def _creao_realtime(body: dict[str, Any]) -> tuple[str, str]:
     """POST /v1/realtime/runs: NDJSON, one event per line; the answer is the output_text deltas (or result.text)."""
-    raw = _creao_request("POST", "/v1/realtime/runs", body)
+    raw = _creao_request("POST", creao_path("realtime/runs"), body)
     deltas, final, served, failed = [], None, "", None
     for line in raw.decode(errors="replace").splitlines():
         line = line.strip()
@@ -419,11 +486,11 @@ def _creao_realtime(body: dict[str, Any]) -> tuple[str, str]:
             deltas.append(str(ev.get("delta") or ""))
         elif kind == "run.completed":
             final = ev.get("result")
-            _creao_note_credits(body["agent_id"], ev.get("usage"))
+            _creao_note_usage(body.get("agent_id", "general"), ev.get("usage"), served)
         elif kind in ("run.failed", "error"):
             err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
             failed = str(err.get("code") or ev.get("code") or kind)
-            _creao_note_credits(body["agent_id"], ev.get("usage"))
+            _creao_note_usage(body.get("agent_id", "general"), ev.get("usage"), served)
     if failed and final is None:
         raise RuntimeError(f"creao run failed: {failed}")
     text = "".join(deltas).strip() or _creao_text(final)
@@ -434,16 +501,16 @@ def _creao_async(body: dict[str, Any]) -> tuple[str, str]:
     """POST /v1/runs then poll GET /v1/runs/{run_id} until completed/failed/cancelled (bounded by FLOCK_LLM_TIMEOUT)."""
     import time
 
-    run = json.loads(_creao_request("POST", "/v1/runs", body) or b"{}")
+    run = json.loads(_creao_request("POST", creao_path("runs"), body) or b"{}")
     run_id = run.get("run_id")
     if not run_id:
         raise RuntimeError("creao: run was not created")
     deadline = time.monotonic() + timeout()
     while True:
-        status = json.loads(_creao_request("GET", f"/v1/runs/{run_id}") or b"{}")
+        status = json.loads(_creao_request("GET", creao_path(f"runs/{run_id}")) or b"{}")
         state = status.get("status")
         if state == "completed":
-            _creao_note_credits(body["agent_id"], status.get("usage"))
+            _creao_note_usage(body.get("agent_id", "general"), status.get("usage"), str(status.get("model") or ""))
             return _creao_text(status.get("result")), f"creao:{status.get('model') or ''}".rstrip(":")
         if state in ("failed", "cancelled"):
             err = status.get("error") if isinstance(status.get("error"), dict) else {}
@@ -453,14 +520,36 @@ def _creao_async(body: dict[str, Any]) -> tuple[str, str]:
         time.sleep(CREAO_POLL_SECONDS)
 
 
-def _creao_note_credits(agent_id: str, usage: Any) -> None:
-    try:
-        credits = float((usage or {}).get("credits") or 0)
-    except (TypeError, ValueError, AttributeError):
-        return
-    if credits:
+def _creao_note_usage(agent_id: str, usage: Any, served_model: str = "") -> None:
+    """v2: usage.models = [{model|kind|id, input_tokens, output_tokens}], billed in USD. v1: usage.credits."""
+    if not isinstance(usage, dict):
         with _stats_lock:
+            _usage.setdefault(agent_id, Counter())["calls"] += 1
+        return
+    try:
+        credits = float(usage.get("credits") or 0)
+    except (TypeError, ValueError):
+        credits = 0.0
+    with _stats_lock:
+        c = _usage.setdefault(agent_id, Counter())
+        c["calls"] += 1
+        if credits:
             _credits[agent_id] += credits
+        for m in usage.get("models") or []:
+            if not isinstance(m, dict):
+                continue
+            model_id = str(m.get("model") or m.get("kind") or m.get("id") or served_model or "")
+            try:
+                i, o = int(m.get("input_tokens") or 0), int(m.get("output_tokens") or 0)
+            except (TypeError, ValueError):
+                continue
+            c["input_tokens"] += i
+            c["output_tokens"] += o
+            price = next((p for key, p in CREAO_USD_PER_M.items() if key == model_id or key in model_id), None)
+            if price:
+                c["usd"] += (i * price[0] + o * price[1]) / 1_000_000
+            else:
+                c["unpriced"] += 1
 
 
 def _creao_run(agent_id: str, system: str, user: str, max_tokens: int) -> tuple[str, str]:
@@ -472,13 +561,23 @@ def _creao_run(agent_id: str, system: str, user: str, max_tokens: int) -> tuple[
     if os.environ.get("FLOCK_CREAO_LLM"):
         body["model"] = os.environ["FLOCK_CREAO_LLM"]
     _count("creao")
-    if (os.environ.get("FLOCK_CREAO_MODE") or "realtime").lower() != "async":
+    realtime = (os.environ.get("FLOCK_CREAO_MODE") or "realtime").lower() != "async"
+    for attempt in range(CREAO_RETRIES + 1):
+        _creao_pace()
         try:
-            return _creao_realtime(body)
+            if realtime:
+                try:
+                    return _creao_realtime(body)
+                except CreaoHTTPError as e:
+                    if e.code not in (403, 404, 405):  # realtime not enabled for this account or route: poll instead
+                        raise
+                    realtime = False
+            return _creao_async(body)
         except CreaoHTTPError as e:
-            if e.code not in (403, 404, 405):  # realtime not enabled for this account or route: poll instead
+            if e.code != 429 or attempt == CREAO_RETRIES:
                 raise
-    return _creao_async(body)
+            _sleep(e.retry_after if e.retry_after else 60.0)  # RATE_LIMITED: nothing was created; wait and retry
+    raise RuntimeError("creao: unreachable")  # pragma: no cover
 
 
 def complete(system: str, user: str, max_tokens: int, r: tuple[str, str] | None = None) -> tuple[str, str]:
