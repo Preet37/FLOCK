@@ -22,7 +22,7 @@
         params.delete('token');
         history.replaceState(null, '', location.pathname + (params.toString() ? `?${params}` : '') + location.hash);
     }
-    const CHANNEL = { doordash: 'DoorDash', ubereats: 'Uber Eats', grubhub: 'Grubhub', direct: 'Direct app', skipthedishes: 'SkipTheDishes' };
+    const CHANNEL = { doordash: 'DoorDash', ubereats: 'Uber Eats', grubhub: 'Grubhub', direct: 'Direct ordering', skipthedishes: 'SkipTheDishes' };
 
     // ---- the cast -----------------------------------------------------------------------------------------------
     const STAGES = [
@@ -118,6 +118,8 @@
     }
     function counters() {
         $('nFind').textContent = S.findings.size; $('nHuman').textContent = S.humans; $('nFiled').textContent = S.filed;
+        const bc = $('hdrBellCount');
+        if (bc) { bc.textContent = S.humans; bc.classList.toggle('hidden', !S.humans); }
     }
 
     // ---- the row of agents --------------------------------------------------------------------------------------
@@ -298,18 +300,34 @@
         b.querySelector('.done').classList.add('on');
         S.filed += ev.count || 1; counters();
         caption(`Filed ✓ ${ev.portal_ref || ''}`.trim());
-        if (ev.finding_id && S.screens !== false) {   // the real captured screen, if this server keeps them
-            const ok = await fetch(`${S.api}/api/filings/${encodeURIComponent(ev.finding_id)}/screen`, { method: 'GET', cache: 'no-store' })
-                .then((r) => r.ok).catch(() => false);
-            if (ok) { b.style.pointerEvents = 'auto'; b.style.cursor = 'pointer'; b.onclick = () => openScreen(ev.finding_id); S.screens = true; }
-            else if (S.screens === null) S.screens = false;
+        if (ev.finding_id && await screenAvailable(ev.finding_id)) {   // Clicky's live screen, or the captured one
+            S.lastFiled = ev.finding_id;
+            b.style.pointerEvents = 'auto'; b.style.cursor = 'pointer'; b.title = "Watch Clicky's screen";
+            b.onclick = () => openScreen(ev.finding_id);
+            const av = $('av-clicky'); av.style.cursor = 'pointer'; av.title = "Watch Clicky's screen";
+            av.onclick = () => S.lastFiled && openScreen(S.lastFiled);
         }
         await sleep(pace(900));
         await fly(b, to, at, pace(450), { s1: 0.2, o1: 0 });
         b.remove();
         setStage('clicky', 'done');
     }
+    async function screenAvailable(fid) {
+        if (S.agentScreen == null) {   // agent-screen.html: the live filing screen, served next to this page
+            S.agentScreen = await fetch('agent-screen.html', { method: 'HEAD', cache: 'no-store' }).then((r) => r.ok).catch(() => false);
+        }
+        if (S.agentScreen) return true;
+        if (S.screens === false) return false;
+        const ok = await fetch(`${S.api}/api/filings/${encodeURIComponent(fid)}/screen`, { cache: 'no-store' }).then((r) => r.ok).catch(() => false);
+        if (ok) S.screens = true; else if (S.screens == null) S.screens = false;
+        return ok;
+    }
     function openScreen(fid) {
+        if (S.agentScreen) {
+            const api = S.api && S.api !== location.origin ? `&api=${encodeURIComponent(S.api)}` : '';
+            window.open(`agent-screen.html?finding=${encodeURIComponent(fid)}${api}`, '_blank', 'noopener');
+            return;
+        }
         const back = document.createElement('div');
         back.style.cssText = 'position:fixed;inset:0;background:rgba(15,18,32,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
         back.innerHTML = `<div style="width:min(1300px,100%);height:min(820px,92vh);background:#fff;border-radius:22px;overflow:hidden;display:flex;flex-direction:column">
@@ -334,10 +352,10 @@
             let col = $(`wal-${n}`);
             if (!col) {
                 col = document.createElement('div'); col.id = `wal-${n}`; col.className = 'flex flex-col items-center gap-2';
-                col.innerHTML = `<div class="text-sm font-extrabold" style="color:#ffd34d" data-b></div>
+                col.innerHTML = `<div class="text-sm font-extrabold" style="color:#d97706" data-b></div>
                     <div class="stack"><div class="coins" data-c style="height:0"></div></div>
                     <div class="w-12 h-12 rounded-full grid place-items-center text-white" style="background:${JUDGE_COLOR[n] || '#0084FF'}"><i data-lucide="bot" class="w-6 h-6"></i></div>
-                    <div class="text-xs font-bold capitalize" style="color:#aab3d6">${esc(n)}</div>`;
+                    <div class="text-xs font-bold capitalize text-gray-500">${esc(n)}</div>`;
                 $('wallets').appendChild(col); icons();
             }
             const bal = S.judges[n].balance;
@@ -440,9 +458,9 @@
     }
     function setMode(m) {
         S.mode = m;
-        const map = { idle: ['IDLE', '#3E445C', '#97E2FF'], live: ['● LIVE', '#0159C4', '#fff'], replay: ['REPLAY', '#4A628A', '#D2F5FF'], running: ['● RUNNING', '#0084FF', '#fff'] };
-        const [t, bg, fg] = map[m] || map.idle;
-        const p = $('modePill'); p.textContent = t; p.style.background = bg; p.style.color = fg;
+        const map = { idle: ['Idle', '#d1d5db'], live: ['Live', '#10b981'], replay: ['Replay', '#0084FF'], running: ['Running', '#f59e0b'] };
+        const [t, dot] = map[m] || map.idle;
+        $('modePill').innerHTML = `<span class="w-2 h-2 rounded-full" style="background:${dot}"></span> ${t}`;
     }
     async function replay() {
         stopLive(); S.queue = [];
@@ -526,6 +544,19 @@
     }
 
     // ---- boot ---------------------------------------------------------------------------------------------------
+    async function whoAmI() {   // the signed-in user and their company, like the console's header
+        const tk = store('flock.token');
+        if (!tk) return;
+        try {
+            const r = await fetch(`${S.api}/api/me`, { headers: { Authorization: `Bearer ${tk}` }, cache: 'no-store' });
+            if (!r.ok) return;
+            const me = await r.json(), u = me.user || me;
+            const org = u.org || 'Ringtide Bagels', name = u.name || u.username || 'Preet';
+            $('orgName').textContent = org;
+            $('orgLogo').textContent = org.replace(/['’]s\b/g, '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+            $('actorBadge').textContent = name.slice(0, 1).toUpperCase(); $('actorBadge').title = name;
+        } catch { /* older backend: keep the defaults */ }
+    }
     async function loadMarket() {
         try {
             const m = await get('/api/market');
@@ -542,6 +573,7 @@
         $('tokenInput').onkeydown = (e) => e.key === 'Enter' && $('tokenSave').click();
         if (params.get('speed')) S.speed = Number(params.get('speed')) || S.speed;
         S.api = await detectBase();
+        whoAmI();
         await loadMarket();
         let running = null;
         try { running = (await get('/api/health')).running_job; } catch { /* offline */ }

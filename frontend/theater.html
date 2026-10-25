@@ -14,19 +14,29 @@
         rel="stylesheet">
     <script src="vendor/lucide-0.453.0.min.js"></script>
     <script>
-        tailwind.config = { theme: { extend: { fontFamily: { sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'] } } } };
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        sidebar: '#23263A', cardDark: '#23263A',
+                        limeAccent: '#61CDFF', limeAccentHover: '#2EA7FF', purpleAccent: '#0084FF', purpleAccentHover: '#017AF0',
+                        bgMain: '#EAF1FA', lightCardBg: '#F2F7FD',
+                    },
+                    borderRadius: { '2xl': '18px', '3xl': '24px', '4xl': '30px' },
+                },
+            },
+        };
     </script>
     <style>
-        :root { --navy: #23263a; --navy2: #2b2f47; --muted: #8b93b5; --b500: #0084FF; --b400: #2EA7FF; --b300: #61CDFF; --b200: #97E2FF; --b100: #D2F5FF; }
-        html, body { background: #1b1e2e; color: #eef2ff; overflow-x: hidden; }
-        .card { background: var(--navy); border: 1px solid #31364f; border-radius: 26px; }
-        .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 10px 18px; font-weight: 700; font-size: 13.5px; transition: background .2s, opacity .2s; }
-        .btn:disabled { opacity: .5; cursor: not-allowed; }
+        body { font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; background-color: #EAF1FA; color: #111111; }
+        .custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 9999px; }
 
         /* stage */
-        #stage { position: relative; height: 560px; border-radius: 30px; overflow: hidden;
-            background: radial-gradient(ellipse at 50% 60%, #27314f 0%, #222539 55%, #1d2033 100%); border: 1px solid #31364f; }
-        #row { position: absolute; left: 3%; right: 3%; top: 58%; display: flex; justify-content: space-between; align-items: flex-start; }
+        #stage { position: relative; height: 470px; overflow: hidden; border-radius: 22px;
+            background: radial-gradient(ellipse at 50% 62%, #2c3657 0%, #262a40 55%, #23263A 100%); }
+        #row { position: absolute; left: 3%; right: 3%; top: 60%; display: flex; justify-content: space-between; align-items: flex-start; }
         .av { position: relative; width: 76px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
         .av .disc { position: relative; width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center; color: #fff;
             box-shadow: 0 6px 18px rgba(0,0,0,.35); transition: transform .25s, filter .3s, opacity .3s; filter: saturate(.55) brightness(.75); }
@@ -80,8 +90,7 @@
         .cursor { position: absolute; width: 16px; height: 16px; z-index: 3; transition: left .45s ease-in-out, top .45s ease-in-out; }
 
         /* $ counter */
-        #money { font-size: clamp(44px, 7vw, 92px); font-weight: 900; letter-spacing: -.02em; line-height: 1;
-            background: linear-gradient(180deg, #ffffff, #97E2FF); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        #money { font-size: clamp(30px, 3.2vw, 44px); font-weight: 800; letter-spacing: -.02em; line-height: 1; color: #fff; }
         #caption { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); padding: 12px 22px; border-radius: 999px;
             background: rgba(1,47,138,.75); border: 1px solid #0159C4; font-weight: 700; font-size: 16px; white-space: nowrap; transition: opacity .3s; z-index: 25; }
 
@@ -90,53 +99,144 @@
         .stack .coins { width: 46px; border-radius: 12px 12px 6px 6px; transition: height .8s cubic-bezier(.2,.9,.3,1);
             background: repeating-linear-gradient(0deg, #f5b300 0 9px, #ffd34d 9px 12px); box-shadow: inset -6px 0 0 rgba(0,0,0,.12), 0 0 18px rgba(255,200,0,.18); }
         .pm { position: absolute; top: -6px; left: 50%; transform: translateX(-50%); font-weight: 900; font-size: 16px; pointer-events: none; }
-        @media (max-width: 900px) { #stage { height: 640px; } #row { flex-wrap: wrap; row-gap: 26px; top: 50%; } .av { width: 16.6%; } .wire { display: none; } }
+        @media (max-width: 900px) { #stage { height: 600px; } #row { flex-wrap: wrap; row-gap: 26px; top: 50%; } .av { width: 16.6%; } .wire { display: none; } }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
     </style>
 </head>
 
-<body class="font-sans min-h-full antialiased">
-    <div class="max-w-[1680px] mx-auto px-4 md:px-6 py-5 flex flex-col gap-4">
-        <header class="flex flex-wrap items-center gap-3">
-            <a href="./" class="flex items-center gap-3 mr-2" title="Back to the console">
-                <svg width="32" height="32" viewBox="0 0 34 34"><path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#2EA7FF"/><path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#012F8A"/></svg>
-                <span class="text-xl font-extrabold">Flock, live</span>
+<body class="h-full w-full overflow-x-hidden lg:overflow-hidden bg-bgMain flex flex-col lg:flex-row antialiased">
+
+    <!-- sidebar: the same as the console (dashboard.html) -->
+    <aside class="hidden lg:flex w-20 xl:w-24 bg-sidebar flex-col items-center justify-between py-6 z-30 shrink-0 h-full">
+        <a href="./#/" class="cursor-pointer hover:scale-105 transition-transform" aria-label="Flock home">
+            <div class="w-10 h-10 relative flex items-center justify-center">
+                <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M17 0L20.8 13.2L34 17L20.8 20.8L17 34L13.2 20.8L0 17L13.2 13.2L17 0Z" fill="#61CDFF" />
+                    <path d="M17 6L19.5 14.5L28 17L19.5 19.5L17 28L14.5 19.5L6 17L14.5 14.5L17 6Z" fill="#0084FF" fill-opacity="0.85" />
+                </svg>
+            </div>
+        </a>
+        <nav class="flex flex-col items-center gap-5">
+            <a href="./#/" title="Overview" aria-label="Overview" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="house" class="w-5 h-5 stroke-[2]"></i>
             </a>
-            <span id="modePill" class="px-3 py-1 rounded-full text-xs font-extrabold" style="background:#3E445C;color:#97E2FF">IDLE</span>
-            <div class="flex-1"></div>
-            <button id="replayBtn" class="btn text-white" style="background:#3E445C"><i data-lucide="rotate-ccw" class="w-4 h-4"></i>Replay</button>
-            <button id="liveBtn" class="btn text-white" style="background:#0084FF"><i data-lucide="play" class="w-4 h-4"></i>Run a new month live</button>
-            <a href="./" class="btn" style="border:1px solid #3E445C;color:#97E2FF"><i data-lucide="layout-dashboard" class="w-4 h-4"></i>Console</a>
+            <a href="./#/lumpsums" title="Lump sums" aria-label="Lump sums" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="landmark" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="theater.html" title="Agent theater" aria-label="Agent theater" class="w-11 h-11 rounded-2xl flex items-center justify-center bg-gray-800 text-white hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="network" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="./#/sources" title="Sources / Inbox" aria-label="Sources / Inbox" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="inbox" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="./#/scoreboard" title="Scoreboard + judge market" aria-label="Scoreboard + judge market" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="trophy" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+            <a href="./#/benchmarks" title="Benchmarks + GX10" aria-label="Benchmarks + GX10" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800">
+                <i data-lucide="flask-conical" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+        </nav>
+        <div>
+            <a href="./#/" title="Settings (in the console)" class="w-11 h-11 rounded-2xl flex items-center justify-center text-gray-400 hover:text-white transition hover:bg-gray-800" aria-label="Settings">
+                <i data-lucide="settings" class="w-5 h-5 stroke-[2]"></i>
+            </a>
+        </div>
+    </aside>
+
+    <nav class="lg:hidden fixed bottom-0 inset-x-0 bg-sidebar/95 backdrop-blur-md border-t border-gray-800/60 flex items-center justify-around py-3 px-4 z-40 text-gray-400">
+        <a href="./#/" class="p-2 hover:text-white rounded-xl" aria-label="Overview"><i data-lucide="house" class="w-6 h-6"></i></a>
+        <a href="./#/lumpsums" class="p-2 hover:text-white rounded-xl" aria-label="Lump sums"><i data-lucide="landmark" class="w-6 h-6"></i></a>
+        <a href="theater.html" class="p-2 hover:text-white rounded-xl text-white" aria-label="Agent theater"><i data-lucide="network" class="w-6 h-6"></i></a>
+        <a href="./#/sources" class="p-2 hover:text-white rounded-xl" aria-label="Sources / Inbox"><i data-lucide="inbox" class="w-6 h-6"></i></a>
+        <a href="./#/scoreboard" class="p-2 hover:text-white rounded-xl" aria-label="Scoreboard + judge market"><i data-lucide="trophy" class="w-6 h-6"></i></a>
+        <a href="./#/benchmarks" class="p-2 hover:text-white rounded-xl" aria-label="Benchmarks + GX10"><i data-lucide="flask-conical" class="w-6 h-6"></i></a>
+    </nav>
+
+    <main class="flex-1 flex flex-col h-full min-h-0 min-w-0 p-4 sm:p-5 lg:p-6 gap-4 lg:gap-5 pb-24 lg:pb-6 lg:overflow-y-auto custom-scroll">
+
+        <header class="flex items-center justify-between shrink-0 min-h-11 gap-3">
+            <div class="min-w-0">
+                <h1 class="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight text-gray-900 leading-none truncate">Agent theater</h1>
+                <p class="text-gray-500 font-semibold text-xs sm:text-sm mt-1 truncate">Watch the agents work</p>
+            </div>
+            <div class="flex items-center gap-2.5 sm:gap-3 shrink-0">
+                <span id="modePill" class="hidden sm:flex items-center gap-2 bg-white rounded-full px-3 h-9 sm:h-10 text-xs font-bold text-gray-600 border border-gray-200/50 shadow-sm">Idle</span>
+                <button id="replayBtn" class="flex items-center gap-1.5 rounded-full bg-white hover:bg-gray-50 text-gray-700 font-bold text-xs sm:text-sm px-3 sm:px-4 h-9 sm:h-10 shadow-sm border border-gray-200/50 transition">
+                    <i data-lucide="rotate-ccw" class="w-4 h-4"></i><span class="hidden md:inline">Replay last run</span>
+                </button>
+                <button id="liveBtn" class="flex items-center gap-1.5 rounded-full bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-xs sm:text-sm px-3 sm:px-4 h-9 sm:h-10 shadow-sm transition disabled:opacity-50">
+                    <i data-lucide="play" class="w-4 h-4"></i><span class="hidden md:inline">Run a new month live</span><span class="md:hidden">Run live</span>
+                </button>
+                <a href="./#/?filter=review" id="hdrBell" class="relative w-9 h-9 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center text-gray-700 shadow-sm hover:bg-gray-50 transition border border-gray-200/50" aria-label="Needs your approval" title="Needs your approval">
+                    <i data-lucide="bell" class="w-4 h-4"></i>
+                    <span id="hdrBellCount" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-purpleAccent text-white text-[10px] font-extrabold flex items-center justify-center"></span>
+                </a>
+                <div class="hidden md:flex items-center gap-2 bg-white rounded-full pl-1 pr-3.5 h-10 border border-gray-200/50 shadow-sm">
+                    <span id="orgLogo" class="w-8 h-8 rounded-full bg-cardDark text-white text-[11px] font-extrabold flex items-center justify-center">RB</span>
+                    <span id="orgName" class="text-sm font-bold text-gray-800 whitespace-nowrap">Ringtide Bagels</span>
+                </div>
+                <div id="actorBadge" class="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-white shadow-sm shrink-0 bg-purpleAccent text-white text-xs font-extrabold flex items-center justify-center" title="Signed in">P</div>
+            </div>
         </header>
 
-        <div id="tokenBox" class="card p-4 hidden flex flex-wrap items-center gap-3">
-            <i data-lucide="key-round" class="w-5 h-5" style="color:#61CDFF"></i>
-            <input id="tokenInput" type="password" placeholder="Presenter token" class="rounded-full px-4 py-2 text-sm flex-1 min-w-[200px] text-white" style="background:#2b2f47;border:1px solid #3E445C" />
-            <button id="tokenSave" class="btn text-white" style="background:#0084FF">Start</button>
+        <div id="tokenBox" class="hidden bg-white rounded-3xl p-4 shadow-sm flex flex-wrap items-center gap-3">
+            <i data-lucide="key-round" class="w-5 h-5 text-purpleAccent"></i>
+            <span class="text-sm font-semibold text-gray-700">Sign in to start a run</span>
+            <input id="tokenInput" type="password" placeholder="Presenter token" class="rounded-full px-4 py-2 text-sm flex-1 min-w-[200px] bg-lightCardBg border border-gray-200" />
+            <button id="tokenSave" class="rounded-full bg-purpleAccent text-white font-bold text-sm px-4 h-10">Start</button>
         </div>
 
-        <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-4">
-            <div id="stage">
-                <div class="absolute left-8 top-7 z-10">
-                    <div class="text-xs font-extrabold uppercase tracking-[.18em]" style="color:#61CDFF">Money found</div>
-                    <div id="money">$0</div>
+        <!-- metric cards, the dashboard's style -->
+        <section class="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-5 shrink-0">
+            <div class="col-span-2 lg:col-span-1 bg-cardDark rounded-3xl p-5 sm:p-6 text-white shadow-sm">
+                <div class="w-11 h-11 rounded-full bg-limeAccent text-sidebar flex items-center justify-center"><i data-lucide="wallet" class="w-5 h-5"></i></div>
+                <p class="text-gray-300 font-semibold text-sm mt-4">Money found</p>
+                <div id="money" class="mt-1">$0</div>
+            </div>
+            <div class="bg-white rounded-3xl p-5 sm:p-6 shadow-sm">
+                <div class="w-11 h-11 rounded-full bg-lightCardBg text-gray-800 flex items-center justify-center"><i data-lucide="search-check" class="w-5 h-5"></i></div>
+                <p class="text-gray-500 font-semibold text-sm mt-4">Findings</p>
+                <div id="nFind" class="text-3xl lg:text-4xl font-extrabold text-gray-900 mt-1">0</div>
+            </div>
+            <div class="bg-white rounded-3xl p-5 sm:p-6 shadow-sm">
+                <div class="w-11 h-11 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center"><i data-lucide="bell-ring" class="w-5 h-5"></i></div>
+                <p class="text-gray-500 font-semibold text-sm mt-4">Sent to you</p>
+                <div id="nHuman" class="text-3xl lg:text-4xl font-extrabold text-gray-900 mt-1">0</div>
+            </div>
+            <div class="bg-white rounded-3xl p-5 sm:p-6 shadow-sm">
+                <div class="w-11 h-11 rounded-full bg-lightCardBg text-purpleAccent flex items-center justify-center"><i data-lucide="send" class="w-5 h-5"></i></div>
+                <p class="text-gray-500 font-semibold text-sm mt-4">Filed by Clicky</p>
+                <div id="nFiled" class="text-3xl lg:text-4xl font-extrabold text-gray-900 mt-1">0</div>
+            </div>
+        </section>
+
+        <section class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-4 lg:gap-5 shrink-0">
+            <div class="bg-cardDark rounded-4xl p-4 sm:p-5 shadow-sm flex flex-col gap-3">
+                <div class="px-1 text-white">
+                    <h2 class="text-lg font-extrabold">The flock, live</h2>
+                    <p class="text-gray-400 text-xs font-semibold">Each finding: three judges spawn, vote, and hand off</p>
                 </div>
-                <div class="absolute right-8 top-8 z-10 flex gap-5 text-sm font-bold" style="color:#aab3d6">
-                    <span class="flex items-center gap-2" title="findings"><i data-lucide="search-check" class="w-5 h-5" style="color:#61CDFF"></i><span id="nFind">0</span></span>
-                    <span class="flex items-center gap-2" title="sent to a human"><i data-lucide="bell-ring" class="w-5 h-5" style="color:#fbbf24"></i><span id="nHuman">0</span></span>
-                    <span class="flex items-center gap-2" title="filed by Clicky"><i data-lucide="send" class="w-5 h-5" style="color:#34d399"></i><span id="nFiled">0</span></span>
+                <div id="stage">
+                    <div id="row"></div>
+                    <div id="caption" style="opacity:0"></div>
                 </div>
-                <div id="row"></div>
-                <div id="caption" style="opacity:0"></div>
+                <div class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs font-semibold text-gray-300 px-1 pb-1">
+                    <span class="flex items-center gap-1.5"><i data-lucide="calculator" class="w-3.5 h-3.5 text-limeAccent"></i>Code checks every order</span><span class="text-gray-500">·</span>
+                    <span class="flex items-center gap-1.5"><i data-lucide="scale" class="w-3.5 h-3.5 text-limeAccent"></i>Judges only see the gaps</span><span class="text-gray-500">·</span>
+                    <span class="flex items-center gap-1.5"><i data-lucide="user-check" class="w-3.5 h-3.5 text-amber-300"></i>You approve</span><span class="text-gray-500">·</span>
+                    <span class="flex items-center gap-1.5"><i data-lucide="mouse-pointer-click" class="w-3.5 h-3.5 text-limeAccent"></i>Clicky files</span>
+                </div>
             </div>
 
-            <div class="card p-5 flex flex-col">
-                <div class="flex items-center gap-2 font-extrabold"><i data-lucide="coins" class="w-5 h-5" style="color:#fbbf24"></i>Judge wallets</div>
-                <div class="text-xs mt-1" style="color:#8b93b5">Right calls earn coins. Coins = voting power.</div>
+            <div class="bg-white rounded-4xl p-5 sm:p-6 shadow-sm flex flex-col">
+                <div class="flex items-center gap-2 font-extrabold text-gray-900"><i data-lucide="coins" class="w-5 h-5 text-amber-500"></i>Judge wallets</div>
+                <div class="text-xs mt-1 text-gray-500 font-semibold">Right calls earn coins. Coins = voting power.</div>
                 <div id="wallets" class="flex-1 flex items-end justify-around gap-2 mt-6 min-h-[260px]"></div>
             </div>
-        </div>
-    </div>
+        </section>
+
+        <p class="text-[11px] text-gray-400 font-medium shrink-0">All data is simulated. Agents propose, people approve, only the gatekeeper files.</p>
+    </main>
     <script src="evidence.js"></script>
     <script src="theater.js"></script>
 </body>
