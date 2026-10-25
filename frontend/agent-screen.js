@@ -80,6 +80,7 @@
     }
     const doc = () => frame.contentDocument;
     const win = () => frame.contentWindow;
+    const fire = (name) => { const W = win(); return new W.Event(name, { bubbles: true }); };
     function center(el) {
         const r = el.getBoundingClientRect();
         return { x: r.left + Math.min(r.width / 2, 60 + r.width * 0.15), y: r.top + r.height / 2 };
@@ -107,7 +108,7 @@
     function setValue(el, v) {
         const proto = el.tagName === 'TEXTAREA' ? win().HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? win().HTMLSelectElement.prototype : win().HTMLInputElement.prototype;
         Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
-        el.dispatchEvent(new win().Event('input', { bubbles: true }));
+        el.dispatchEvent(fire('input'));
     }
     async function type(sel, text, { fast = false } = {}) {
         const el = await click(sel);
@@ -120,13 +121,13 @@
             if (el.tagName === 'TEXTAREA') el.scrollTop = el.scrollHeight;
             await sleep(i < slow ? 28 + Math.random() * 40 : 16);
         }
-        el.dispatchEvent(new win().Event('change', { bubbles: true }));
+        el.dispatchEvent(fire('change'));
         await sleep(140);
     }
     async function choose(sel, value) {
         const el = await click(sel);
         await sleep(260);
-        setValue(el, value); el.dispatchEvent(new win().Event('change', { bubbles: true }));
+        setValue(el, value); el.dispatchEvent(fire('change'));
         await sleep(240);
     }
     function load(url) {
