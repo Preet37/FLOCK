@@ -56,7 +56,7 @@ def test_bad_payload_lists_problems(tmp_path):
 def test_api_route_requires_token_and_records_agent(tmp_path, monkeypatch):
     from flock import api as flock_api
     from flock.store import JsonStore
-    monkeypatch.setattr(connectors, "contracts_dir", lambda: contract(tmp_path, ["sam.takahashi@ubereats.example"]))
+    monkeypatch.setattr(connectors, "contracts_dir", lambda *_a: contract(tmp_path, ["sam.takahashi@ubereats.example"]))
     monkeypatch.setattr(connectors.collector, "RAW", tmp_path / "raw")
     a = flock_api.Api(store=JsonStore(tmp_path / "state"))
     rec = a.connector(example_payload())
