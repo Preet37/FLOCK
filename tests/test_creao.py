@@ -24,13 +24,13 @@ def ndjson(*events) -> bytes:
     return ("\n".join(json.dumps(e) for e in events) + "\n").encode()
 
 
-def stream_reply(text: str, credits: float = 0.3, model: str = "anthropic/claude-sonnet-5-5") -> bytes:
+def stream_reply(text: str, tokens=(1000, 100), model: str = "anthropic/claude-sonnet-5-5") -> bytes:
     half = len(text) // 2
     return ndjson({"type": "run.created", "run_id": "r1", "agent_id": "a1", "model": model, "render_protocol": 1},
                   {"type": "output_text.delta", "delta": text[:half]},
                   {"type": "output_text.delta", "delta": text[half:]},
                   {"type": "run.completed", "run_id": "r1", "status": "completed", "result": {"text": text},
-                   "usage": {"credits": credits}})
+                   "usage": {"models": [{"model": model, "input_tokens": tokens[0], "output_tokens": tokens[1]}]}})
 
 
 class FakeCreao:
@@ -109,23 +109,28 @@ def test_airgap_keeps_creao_offline(creao, monkeypatch):
 # --- the call -------------------------------------------------------------------------------------------------------
 
 def test_realtime_run_sends_the_contract_and_returns_the_streamed_text(creao):
-    f = creao({("POST", "/v1/realtime/runs"): stream_reply(json.dumps(VOTE), credits=0.25)})
+    f = creao({("POST", "/v2/realtime/runs"): stream_reply(json.dumps(VOTE), tokens=(1_000_000, 100_000))})
     text, served = llm.complete("SYSTEM PROMPT", '{"gap": 2.5}', 300, ("creao", "a-strict"))
     assert json.loads(text) == VOTE and served == "creao:anthropic/claude-sonnet-5-5"
     call = f.calls[0]
     assert call["headers"]["authorization"] == "Bearer cr_sk_test"
     assert call["body"]["agent_id"] == "a-strict"
-    assert call["body"]["input"]["instructions"] == "SYSTEM PROMPT" and call["body"]["input"]["request"] == '{"gap": 2.5}'
+    assert call["body"]["input"]["instructions"].startswith("SYSTEM PROMPT") and call["body"]["input"]["request"] == '{"gap": 2.5}'
+    assert call["body"]["input"]["instructions"].endswith(llm.CREAO_ANSWER_RULE), "the marker rule rides along"
     assert "model" not in call["body"], "no FLOCK_CREAO_LLM: the agent's default model runs"
-    assert llm.creao_credits() == {"credits": 0.25, "by_agent": {"a-strict": 0.25}}
+    u = llm.creao_usage()
+    assert u["input_tokens"] == 1_000_000 and u["output_tokens"] == 100_000 and u["calls"] == 1
+    assert u["usd"] == pytest.approx(2.60 + 1.30), "Sonnet 5.5 at CREAO's $2.60 in / $13 out per 1M tokens"
+    assert set(u["by_agent"]) == {"a-strict"} and u["credits"] == 0
     assert llm.airgap_report()["by_host"] == {"developer.test": 1}
 
 
 def test_model_choice_is_passed_through(creao, monkeypatch):
-    monkeypatch.setenv("FLOCK_CREAO_LLM", "anthropic/claude-haiku-5-5")
-    f = creao({("POST", "/v1/realtime/runs"): stream_reply("{}")})
+    monkeypatch.setenv("FLOCK_CREAO_LLM", "anthropic/claude-haiku-4-5")
+    f = creao({("POST", "/v2/realtime/runs"): stream_reply("{}", model="anthropic/claude-haiku-4-5")})
     llm.complete("s", "u", 10, ("creao", "a-op"))
-    assert f.calls[0]["body"]["model"] == "anthropic/claude-haiku-5-5"
+    assert f.calls[0]["body"]["model"] == "anthropic/claude-haiku-4-5"
+    assert llm.creao_usage()["unpriced"] == 1, "a model not in the price table is counted, not priced"
 
 
 def test_falls_back_to_async_polling_when_realtime_is_not_enabled(creao):
@@ -136,26 +141,55 @@ def test_falls_back_to_async_polling_when_realtime_is_not_enabled(creao):
         if polls["n"] < 3:
             return json.dumps({"run_id": "r9", "status": "running"}).encode()
         return json.dumps({"run_id": "r9", "status": "completed", "model": "anthropic/claude-sonnet-5-5",
-                           "result": {"text": json.dumps(VOTE)}, "usage": {"credits": 1.5}}).encode()
+                           "result": {"text": json.dumps(VOTE)},
+                           "usage": {"models": [{"model": "anthropic/claude-sonnet-5-5", "input_tokens": 10, "output_tokens": 5}]}}).encode()
 
-    f = creao({("POST", "/v1/realtime/runs"): urllib.error.HTTPError("u", 403, "x", {}, io.BytesIO(b'{"error":"ACCOUNT_BLOCKED"}')),
-               ("POST", "/v1/runs"): json.dumps({"run_id": "r9", "status": "pending"}).encode(),
-               ("GET", "/v1/runs/r9"): status})
+    f = creao({("POST", "/v2/realtime/runs"): urllib.error.HTTPError("u", 403, "x", {}, io.BytesIO(b'{"error":"ACCOUNT_BLOCKED"}')),
+               ("POST", "/v2/runs"): json.dumps({"run_id": "r9", "status": "pending"}).encode(),
+               ("GET", "/v2/runs/r9"): status})
     text, served = llm.complete("s", "u", 10, ("creao", "a-skep"))
     assert json.loads(text) == VOTE and served == "creao:anthropic/claude-sonnet-5-5"
-    assert [c["path"] for c in f.calls] == ["/v1/realtime/runs", "/v1/runs", "/v1/runs/r9", "/v1/runs/r9", "/v1/runs/r9"]
-    assert llm.creao_credits()["credits"] == 1.5
+    assert [c["path"] for c in f.calls] == ["/v2/realtime/runs", "/v2/runs", "/v2/runs/r9", "/v2/runs/r9", "/v2/runs/r9"]
+    assert llm.creao_usage()["input_tokens"] == 10
 
 
 def test_failed_run_raises_with_the_stable_code(creao):
-    creao({("POST", "/v1/realtime/runs"): ndjson({"type": "run.created", "run_id": "r1"},
+    creao({("POST", "/v2/realtime/runs"): ndjson({"type": "run.created", "run_id": "r1"},
                                                  {"type": "run.failed", "run_id": "r1", "status": "failed",
                                                   "error": {"code": "INSUFFICIENT_CREDITS"}})})
     with pytest.raises(RuntimeError, match="INSUFFICIENT_CREDITS"):
         llm.complete("s", "u", 10, ("creao", "a-strict"))
-    creao({("POST", "/v1/realtime/runs"): urllib.error.HTTPError("u", 429, "x", {}, io.BytesIO(b'{"error":"RATE_LIMITED"}'))})
-    with pytest.raises(llm.CreaoHTTPError, match="RATE_LIMITED"):
+    creao({("POST", "/v2/realtime/runs"): urllib.error.HTTPError("u", 404, "x", {}, io.BytesIO(b'{"error":"AGENT_NOT_FOUND"}')),
+           ("POST", "/v2/runs"): urllib.error.HTTPError("u", 404, "x", {}, io.BytesIO(b'{"error":"AGENT_NOT_FOUND"}'))})
+    with pytest.raises(llm.CreaoHTTPError, match="AGENT_NOT_FOUND"):
         llm.complete("s", "u", 10, ("creao", "a-strict"))
+
+
+def test_rate_limited_waits_for_retry_after_then_retries(creao, monkeypatch):
+    waits = []
+    monkeypatch.setattr(llm, "_sleep", lambda s: waits.append(s))
+    hits = {"n": 0}
+
+    def limited(call):
+        hits["n"] += 1
+        if hits["n"] == 1:
+            return urllib.error.HTTPError("u", 429, "x", {"Retry-After": "7"}, io.BytesIO(b'{"error":"RATE_LIMITED"}'))
+        return stream_reply(json.dumps(VOTE))
+
+    creao({("POST", "/v2/realtime/runs"): limited})
+    text, _ = llm.complete("s", "u", 10, ("creao", "a-strict"))
+    assert json.loads(text) == VOTE and hits["n"] == 2 and waits == [7.0]
+
+
+def test_run_creates_are_paced_under_the_per_minute_budget(creao, monkeypatch):
+    monkeypatch.setenv("FLOCK_CREAO_RPM", "2")
+    waits = []
+    monkeypatch.setattr(llm, "_sleep", lambda s: (waits.append(s), llm._run_times.clear()))
+    llm._run_times.clear()
+    creao({("POST", "/v2/realtime/runs"): stream_reply("{}")})
+    for _ in range(3):
+        llm.complete("s", "u", 10, ("creao", "a-strict"))
+    assert len(waits) == 1 and 0 < waits[0] <= 60.1, "the third create in the same minute waited"
 
 
 # --- the roles, end to end ------------------------------------------------------------------------------------------
@@ -163,19 +197,19 @@ def test_failed_run_raises_with_the_stable_code(creao):
 def test_the_panel_judges_on_creao(creao, monkeypatch):
     monkeypatch.setenv("FLOCK_JUDGE_PROVIDERS", "creao")
     monkeypatch.setenv("FLOCK_REVIEWER_PROVIDER", "offline")
-    f = creao({("POST", "/v1/realtime/runs"): lambda call: stream_reply(json.dumps(VOTE), credits=0.1)})
+    f = creao({("POST", "/v2/realtime/runs"): lambda call: stream_reply(json.dumps(VOTE))})
     d = panel.decide(fake("F-0001"), rules=[])
     assert d["outcome"] == "recoverable"
     assert [v["model"] for v in d["votes"]] == ["creao/a-strict", "creao/a-op", "creao/a-skep"]
     assert {c["body"]["agent_id"] for c in f.calls} == {"a-strict", "a-op", "a-skep"}
     assert all(panel.SYSTEM in c["body"]["input"]["instructions"] for c in f.calls), "Flock's own prompt is the instructions"
-    assert llm.creao_credits()["credits"] == pytest.approx(0.3)
+    assert llm.creao_usage()["calls"] == 3
 
 
 def test_a_judge_that_fails_falls_back_to_the_rules_and_says_so(creao, monkeypatch):
     monkeypatch.setenv("FLOCK_JUDGE_PROVIDERS", "creao")
     monkeypatch.setenv("FLOCK_REVIEWER_PROVIDER", "offline")
-    creao({("POST", "/v1/realtime/runs"): urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b'{"error":"SERVICE_UNAVAILABLE"}'))})
+    creao({("POST", "/v2/realtime/runs"): urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b'{"error":"SERVICE_UNAVAILABLE"}'))})
     d = panel.decide(fake("F-0001"), rules=[])
     assert all(v.get("fallback") for v in d["votes"]) and "offline rules" in d["reason"]
 
@@ -187,7 +221,7 @@ def test_the_document_reader_turns_free_text_into_claims(creao, monkeypatch, tmp
                          "quote": "We will waive the Delivery Network Fee for August.", "authority": "auth_email"},
                         {"channel": "grubhub", "term_type": "nonsense", "value": 1},
                         {"channel": "grubhub", "term_type": "commission", "value": 0.2, "quote": "x", "authority": "unknown"}]}
-    f = creao({("POST", "/v1/realtime/runs"): stream_reply(json.dumps(reply))})
+    f = creao({("POST", "/v2/realtime/runs"): stream_reply(json.dumps(reply))})
     doc = tmp_path / "grubhub_waiver.txt"
     doc.write_text("Hi, we will waive the Delivery Network Fee for August. Dana, Director of Restaurant Partnerships")
     got = deal_keeper.read_with_local_model(doc, doc.read_text())
@@ -219,23 +253,35 @@ def test_setup_creates_one_agent_per_role_and_writes_the_file(creao, monkeypatch
     out = tmp_path / "fresh_agents.json"   # not the fixture's file: this test starts with no agents
     monkeypatch.setattr(setup, "AGENTS_FILE", out)
     monkeypatch.setenv("FLOCK_CREAO_AGENTS", str(out))
-    n = {"i": 0}
+    monkeypatch.setattr(setup.time, "sleep", lambda s: None)
+    state = {"n": 0, "agents": [], "polls": {}}
 
     def create(call):
-        n["i"] += 1
-        return json.dumps({"run_id": f"cr{n['i']}", "status": "pending", "agent_id": None}).encode()
+        state["n"] += 1
+        rid = f"cr{state['n']}"
+        state["agents"].append({"agent_id": f"agent-{rid}", "name": f"n{rid}", "created_at": f"2026-10-24T20:0{state['n']}:00Z"})
+        return json.dumps({"run_id": rid, "status": "pending", "agent_id": None}).encode()   # v2: id not known yet
 
-    def status(call):
-        rid = call["path"].rsplit("/", 1)[1]
-        return json.dumps({"run_id": rid, "status": "completed", "agent_id": f"agent-{rid}",
-                           "result": {"agent_id": f"agent-{rid}"}, "completed_at": "2026-10-24T20:00:00Z"}).encode()
+    def router(call):
+        path = call["path"]
+        if path.startswith("/v2/agents?"):
+            return json.dumps({"agents": state["agents"], "limit": 100, "offset": 0, "has_more": False}).encode()
+        if "/edits/" in path:
+            agent_id, rid = path.split("/v2/agents/")[1].split("/edits/")
+            state["polls"][rid] = state["polls"].get(rid, 0) + 1
+            status = "running" if state["polls"][rid] == 1 else "succeeded"
+            return json.dumps({"run_id": rid, "agent_id": agent_id, "status": status,
+                               "completed_at": "2026-10-24T20:05:00Z"}).encode()
+        raise AssertionError(path)
 
-    f = creao({("POST", "/v1/agents"): create, ("GET", "*"): status})
-    data = setup.create(list(setup.ROLES), model="anthropic/claude-haiku-5-5")
-    assert set(data["agents"]) == set(setup.ROLES) and len(set(a["agent_id"] for a in data["agents"].values())) == 7
-    creates = [c for c in f.calls if c["path"] == "/v1/agents"]
-    assert len(creates) == 7 and all(c["body"]["model"] == "anthropic/claude-haiku-5-5" for c in creates)
+    f = creao({("POST", "/v2/agents"): create, ("GET", "*"): router})
+    data = setup.create(list(setup.ROLES), model="anthropic/claude-haiku-4-5")
+    assert set(data["agents"]) == set(setup.ROLES)
+    assert len({a["agent_id"] for a in data["agents"].values()}) == 7, "each role got its own agent id from the list diff"
+    creates = [c for c in f.calls if c["path"] == "/v2/agents"]
+    assert len(creates) == 7 and all(c["body"]["model"] == "anthropic/claude-haiku-4-5" for c in creates)
     assert all("`instructions`" in c["body"]["input"] and "only the single JSON object" in c["body"]["input"] for c in creates)
+    assert all(p == 2 for p in state["polls"].values()), "each creation run was polled on the edits route until succeeded"
     assert llm.creao_agents()["judge.operator"] == data["agents"]["judge.operator"]["agent_id"]
     env = setup.env_block()
     assert "FLOCK_JUDGE_PROVIDERS=creao" in env and "FLOCK_READER_PROVIDER=creao" in env
@@ -244,9 +290,10 @@ def test_setup_creates_one_agent_per_role_and_writes_the_file(creao, monkeypatch
 
 def test_setup_check_reports_usable_agents(creao, monkeypatch, capsys):
     setup = _setup()
-    creao({("POST", "/v1/realtime/runs"): lambda call: stream_reply(json.dumps({"ok": True, "role": "x"}), credits=0.05)})
+    creao({("POST", "/v2/realtime/runs"): lambda call: stream_reply(json.dumps({"ok": True, "role": "x"}), tokens=(500, 20))})
     assert setup.check(["judge.strict", "reader"]) == 2
-    assert "0.05 credits" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "500 in / 20 out tokens" in out and "$" in out
 
 
 def test_benchmark_has_a_creao_contestant():
@@ -255,3 +302,21 @@ def test_benchmark_has_a_creao_contestant():
     spec.loader.exec_module(bm)
     assert bm.CONTESTANTS["creao"]["env"]["FLOCK_JUDGE_PROVIDERS"] == "creao"
     assert bm.CONTESTANTS["creao"]["offline"] is False
+
+
+def test_the_verdict_is_found_in_the_harness_narration(creao):
+    marked = ('I\'ll run the agent. Inputs: {"instructions": "x", "request": "y", "max_tokens": 10}. '
+              'The case is {"check_type": "commission", "gap": 2.5}. Done.\n'
+              'FLOCK_ANSWER: {"outcome": "recoverable", "confidence": 0.9, "reason": "Contract says 20%."}\n'
+              '{"status": "success", "summary": "Flock Judge executed successfully"}')
+    f = creao({("POST", "/v2/realtime/runs"): stream_reply(marked)})
+    text, _ = llm.complete("SYS", "u", 10, ("creao", "a-strict"))
+    assert json.loads(text) == VOTE, "the marked object wins over echoes and the session summary"
+    assert f.calls[0]["body"]["input"]["instructions"].endswith(llm.CREAO_ANSWER_RULE)
+    unmarked = ('Let me validate {"instructions": "x", "request": "y"} first. '
+                '{"outcome": "recoverable", "confidence": 0.9, "reason": "Contract says 20%."} '
+                '{"status": "success", "summary": "done"}')
+    creao({("POST", "/v2/realtime/runs"): stream_reply(unmarked)})
+    text, _ = llm.complete("SYS", "u", 10, ("creao", "a-strict"))
+    assert json.loads(text) == VOTE, "without a marker: skip the echo and the summary, take the real object"
+    assert llm._creao_answer(["plain words only"], None) == "plain words only"
