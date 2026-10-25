@@ -42,6 +42,10 @@ Which provider each role uses:
 Other env:
   FLOCK_LLM_TIMEOUT  seconds per request before we give up and fall back (default 30)
   FLOCK_OFFLINE=1    never call any provider, even with keys
+  FLOCK_LOCAL_REASONING  reasoning_effort sent to the local server (Ollama). Unset = not sent. "auto" = "low" for
+                     gpt-oss (it can't switch reasoning off) and "none" for other models (Qwen3 stops thinking; models
+                     that never think ignore it). Reasoning tokens count against max_tokens, so a thinking model can
+                     otherwise spend the whole budget thinking and return an empty answer.
   FLOCK_AIRGAP=1     only call providers whose URL host is on this network: loopback, private (10/8, 172.16/12,
                      192.168/16), link-local, Tailscale (100.64.0.0/10, *.ts.net, or a one-word MagicDNS name such
                      as "gx10" that resolves there). Anything else (anthropic, groq, nvidia by default) is offline
@@ -483,13 +487,27 @@ def read_airgap_report(path: Path | str) -> dict[str, Any] | None:
         return None
 
 
+def reasoning_effort(provider: str, model_id: str) -> str | None:
+    """FLOCK_LOCAL_REASONING for the local provider ("auto" picks per model); None = don't send the field."""
+    want = (os.environ.get("FLOCK_LOCAL_REASONING") or "").strip().lower()
+    if provider != "local" or not want:
+        return None
+    if want == "auto":
+        return "low" if "gpt-oss" in model_id.lower() else "none"
+    return want
+
+
 def _openai_chat(provider: str, model_id: str, system: str, user: str, max_tokens: int) -> tuple[str, str]:
     """POST {base}/chat/completions with plain urllib. Works for vLLM, Ollama, Groq and build.nvidia.com."""
     key_env = OPENAI_COMPATIBLE[provider][2]
-    body = json.dumps({
+    payload: dict[str, Any] = {
         "model": model_id, "max_tokens": max_tokens, "temperature": 0,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-    }).encode()
+    }
+    effort = reasoning_effort(provider, model_id)
+    if effort:
+        payload["reasoning_effort"] = effort
+    body = json.dumps(payload).encode()
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if os.environ.get(key_env):
         headers["Authorization"] = f"Bearer {os.environ[key_env]}"

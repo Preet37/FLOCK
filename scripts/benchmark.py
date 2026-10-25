@@ -5,6 +5,7 @@
   python scripts/benchmark.py --seeds 101-103 --stores 8 --weeks 1   # smaller and faster
   python scripts/benchmark.py --contestants local-tuned --tuned-model flock-judge-v1
   python scripts/benchmark.py --human sheets/ira_s07_w1.csv --human-scope 101:S07:1 --human-minutes 95
+  python scripts/benchmark.py --contestants "local:gpt-oss:20b+qwen3:30b+gemma3:27b,local:qwen3:30b"   # GX10 panels
   python scripts/benchmark.py --list                                 # contestants and what each one needs
 
 How it works
@@ -93,6 +94,18 @@ CONTESTANTS: dict[str, dict[str, Any]] = {
                "env": {"FLOCK_JUDGE_PROVIDERS": "nvidia", "FLOCK_REVIEWER_PROVIDER": "offline",
                        "FLOCK_WRITER_PROVIDER": "offline", "FLOCK_MAPPER_PROVIDER": "offline"}},
 }
+
+
+def contestant(name: str) -> dict[str, Any]:
+    """CONTESTANTS[name], plus ad-hoc local panels: "local:<model>" puts one local model on all three judges,
+    "local:<m1>+<m2>+<m3>" one model per judge (e.g. local:gpt-oss:20b+qwen3:30b+gemma3:27b on the GX10)."""
+    if name in CONTESTANTS:
+        return CONTESTANTS[name]
+    if name.startswith("local:") and name[6:].strip("+"):
+        models = [m for m in name[6:].split("+") if m]
+        return {"label": "Local (GX10): " + " + ".join(models), "offline": True, "needs": "FLOCK_LOCAL_URL reachable",
+                "env": {**CONTESTANTS["local"]["env"], "FLOCK_JUDGE_MODELS": ",".join(models)}}
+    raise KeyError(name)
 
 
 def _load(name: str, path: Path):
@@ -242,7 +255,7 @@ def contestant_env(env: dict[str, str]):
 
 
 def resolve_env(name: str, tuned_model: str | None) -> dict[str, str]:
-    env = dict(CONTESTANTS[name]["env"])
+    env = dict(contestant(name)["env"])
     for k, v in env.items():
         if v == "${TUNED}":
             env[k] = tuned_model or os.environ.get("FLOCK_TUNED_MODEL", "")
@@ -284,8 +297,8 @@ class _Memory:
 def judge(name: str, prepared: dict[str, Any], env: dict[str, str], prices: dict[str, tuple[float, float]],
           workers: int = 1, quiet: bool = False) -> dict[str, Any]:
     findings = prepared["findings"]
-    row: dict[str, Any] = {"contestant": name, "label": CONTESTANTS[name]["label"], "seed": prepared["seed"],
-                           "findings": len(findings), "offline": CONTESTANTS[name]["offline"], "status": "ok"}
+    row: dict[str, Any] = {"contestant": name, "label": contestant(name)["label"], "seed": prepared["seed"],
+                           "findings": len(findings), "offline": contestant(name)["offline"], "status": "ok"}
     with contestant_env(env):
         why = unavailable_reason(name)
         if why:
@@ -496,7 +509,7 @@ def run_benchmark(seeds: list[int], contestants: list[str], profile: str = DEFAU
                   force: bool = False, quiet: bool = True, write: bool = True) -> dict[str, Any]:
     prices = {**PRICES, **(prices or {})}
     days = days or weeks * 7
-    unknown = [c for c in contestants if c not in CONTESTANTS]
+    unknown = [c for c in contestants if c not in CONTESTANTS and not c.startswith("local:")]
     if unknown:
         raise SystemExit(f"unknown contestant(s): {', '.join(unknown)}. Known: {', '.join(CONTESTANTS)}")
     prepared = []
@@ -509,7 +522,7 @@ def run_benchmark(seeds: list[int], contestants: list[str], profile: str = DEFAU
     labels: dict[str, str] = {}
     for name in contestants:
         env = resolve_env(name, tuned_model)
-        labels[name] = CONTESTANTS[name]["label"]
+        labels[name] = contestant(name)["label"]
         rows = []
         for p in prepared:
             r = judge(name, p, env, prices, workers=workers, quiet=quiet)
@@ -542,7 +555,8 @@ def run_benchmark(seeds: list[int], contestants: list[str], profile: str = DEFAU
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Flock benchmark: the same findings for every contestant, held-out seeds.")
     ap.add_argument("--seeds", default=DEFAULT_SEEDS, help="e.g. 101-110 or 101,105,200")
-    ap.add_argument("--contestants", default="rules", help=f"comma list of: {', '.join(CONTESTANTS)}")
+    ap.add_argument("--contestants", default="rules",
+                    help=f"comma list of: {', '.join(CONTESTANTS)}, or local:<model> / local:<m1>+<m2>+<m3>")
     ap.add_argument("--profile", default=DEFAULT_PROFILE, help=f"company profile: {', '.join(generator.list_profiles())}")
     ap.add_argument("--stores", type=int, default=None, help="default: the profile's store count")
     ap.add_argument("--weeks", type=int, default=2)

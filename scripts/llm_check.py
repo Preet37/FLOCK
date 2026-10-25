@@ -60,7 +60,7 @@ def check(r: tuple[str, str]) -> dict:
         return {"status": "OFFLINE", "detail": f"{why}: this role uses offline rules"}
     start = time.perf_counter()
     try:
-        text, answered_by = llm.complete(SYSTEM, PROMPT, 20, r)
+        text, answered_by = llm.complete(SYSTEM, PROMPT, 200, r)  # room for a reasoning model's preamble
     except Exception as e:
         return {"status": "FAIL", "seconds": time.perf_counter() - start, "detail": f"{type(e).__name__}: {e}"[:200]}
     ok = llm.parse_json_object(text) is not None

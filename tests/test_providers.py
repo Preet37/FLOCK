@@ -274,3 +274,18 @@ def test_live_audit_reviewer_disagreement_sends_to_a_human(http, monkeypatch):
     assert d["reason"].startswith("Audit sample: the reviewer (nvidia/meta/llama-3.3-70b-instruct) disagrees")
     assert "Sending to a human" in d["reason"]
     assert d["votes"][-1]["judge"] == "reviewer" and d["votes"][-1]["round"] == "audit"
+
+
+def test_local_reasoning_effort_is_opt_in_and_auto_picks_per_model(http, monkeypatch):
+    calls = http(VOTE)
+    monkeypatch.delenv("FLOCK_LOCAL_REASONING", raising=False)
+    llm.complete("s", "u", 50, ("local", "qwen3:8b"))
+    assert "reasoning_effort" not in calls.calls[-1]["body"]          # unset: request unchanged
+    monkeypatch.setenv("FLOCK_LOCAL_REASONING", "auto")
+    llm.complete("s", "u", 50, ("local", "qwen3:8b"))
+    assert calls.calls[-1]["body"]["reasoning_effort"] == "none"      # Qwen3: thinking off
+    llm.complete("s", "u", 50, ("local", "gpt-oss-20b-8k"))
+    assert calls.calls[-1]["body"]["reasoning_effort"] == "low"       # gpt-oss can't switch it off
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    llm.complete("s", "u", 50, ("groq", "llama-3.3-70b-versatile"))
+    assert "reasoning_effort" not in calls.calls[-1]["body"]          # only ever sent to the local server

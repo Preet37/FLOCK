@@ -20,6 +20,7 @@
 #   GX10_REMOTE_PORT [11434]  Ollama's port on the GX10    GX10_RETRY [3]     seconds between reconnects
 #   GX10_JUDGE_MODELS [gpt-oss:20b,qwen3:30b,gemma3:27b]  one per judge (strict, operator, skeptic)
 #   GX10_MODEL [first judge model]  writer / mapper (and reviewer with --airgap)
+#   FLOCK_LOCAL_REASONING [auto]  env sets it: gpt-oss reasons "low", Qwen3 thinking off (see flock/llm.py)
 #
 # Needs: ssh, curl, python3 (for pretty status output). Plain bash, no other dependencies.
 set -u
@@ -94,6 +95,7 @@ export FLOCK_JUDGE_MODELS=${JUDGE_MODELS}
 export FLOCK_WRITER_PROVIDER=local
 export FLOCK_MAPPER_PROVIDER=local
 export FLOCK_LLM_TIMEOUT=\${FLOCK_LLM_TIMEOUT:-120}
+export FLOCK_LOCAL_REASONING=\${FLOCK_LOCAL_REASONING:-auto}
 unset FLOCK_OFFLINE
 EOF
     if [ "${1:-}" = "--airgap" ]; then

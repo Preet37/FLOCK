@@ -160,3 +160,14 @@ def test_cost_estimate_uses_list_prices(bench):
     m.calls, m.in_chars, m.out_chars, m.models = 10, 4_000_000, 400_000, {"claude-sonnet-5-5": 10}
     # 1M input tokens at $2 + 100k output tokens at $10 = $3.00
     assert m.cost_usd(bench.PRICES) == pytest.approx(3.0)
+
+
+def test_adhoc_local_panels():
+    bm = _load()
+    one = bm.contestant("local:qwen3:8b")
+    assert one["env"]["FLOCK_JUDGE_MODELS"] == "qwen3:8b" and one["env"]["FLOCK_JUDGE_PROVIDERS"] == "local"
+    three = bm.resolve_env("local:gpt-oss:20b+qwen3:30b+gemma3:27b", None)
+    assert three["FLOCK_JUDGE_MODELS"] == "gpt-oss:20b,qwen3:30b,gemma3:27b"
+    assert three["FLOCK_REVIEWER_PROVIDER"] == "offline"
+    with pytest.raises(KeyError):
+        bm.contestant("nope")
