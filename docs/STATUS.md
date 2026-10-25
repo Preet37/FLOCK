@@ -27,6 +27,7 @@ API key unless it says otherwise.
 | GX10 tooling: SSH tunnel, model pulls, status; judge load test | `scripts/gx10.sh status`, `python scripts/judge_load.py` |
 | Benchmark harness on held-out seeds 101-110 | `python scripts/benchmark.py` |
 | Tuned-judge training set (held-out seeds locked out) | `python scripts/judge_dataset.py` |
+| SpacetimeDB store (`FLOCK_STORE=spacetime`): 3 tables, 4 reducers, gatekeeper transactions | `spacetime start`, `spacetime publish flock --server local --module-path spacetimedb --yes`, then the Quickstart |
 | Dashboard (Flask, one page) and JSON API (stdlib, Railway `Procfile`) | `python -m dashboard.app` (:5050), `python -m flock.api` (:8787) |
 
 ## What's measured
@@ -62,7 +63,7 @@ with its own count in the scoreboard's "by trap" line.
 - **GX10 numbers:** judge load and an air-gapped run with three local models on the GX10 are not recorded in the repo yet (only the laptop run above).
 - **Benchmark contestants beyond rules:** Claude, local, local-tuned, CREAO and the human contestant have no recorded results yet.
 - **Tuned judge:** step 1 (training set) is done; LoRA training, serving and scoring are not (`scripts/train/` named in `docs/PLAN.md` does not exist).
-- **SpacetimeDB:** `FLOCK_STORE=spacetime` is a stub that raises. Owner unconfirmed.
+- **SpacetimeDB:** done on `thabhelo/spacetime`: module in `spacetimedb/`, `SpacetimeStore` over the HTTP API, the Quickstart prints 6/6 then 2 -> 0 with `FLOCK_STORE=spacetime` (local server). Maincloud publish and moving the sidecar files (market ledger, runs, journal) into tables are open.
 - **Frontend:** Himaja's frontend folder is not merged; `dashboard/` is the UI that runs today.
 - **Hosting:** Railway config is ready (`Procfile`, `docs/DEPLOY.md`); no public URL is recorded in the repo.
 - **Journal entries at year scale:** skipped (split detection keeps no order stories); run a week at a time.

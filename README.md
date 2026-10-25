@@ -142,6 +142,31 @@ A laptop serializes the requests; the GX10 numbers go next to it.
 Serving with vLLM instead (OpenAI-compatible on `:8000`): point `FLOCK_LOCAL_URL` at it (tunnel or the Tailscale
 address) and set `FLOCK_LOCAL_MODEL` / `FLOCK_JUDGE_MODELS` to the ids it reports.
 
+## SpacetimeDB as the store
+
+`FLOCK_STORE=spacetime` swaps the JSON files for SpacetimeDB with no other change: findings, the append-only audit log
+and the live agent feed become three public tables in `spacetimedb/src/lib.rs`, and every write is a reducer call,
+so a finding change and its audit entry land in one transaction (`commit`). Reads are SQL over SpacetimeDB's HTTP
+API; nothing else in Flock touches storage. Sidecar files (market ledger, run history, journal entries) stay on disk
+under `data/state/spacetime/` for now.
+
+```bash
+curl -sSf https://install.spacetimedb.com | sh                       # once
+spacetime start                                                      # local server, leave it running
+spacetime publish flock --server local --module-path spacetimedb --yes
+export FLOCK_STORE=spacetime FLOCK_OFFLINE=1
+python -m flock.pipeline --reset --forget --demo-approve && python scripts/score.py   # 6/6, 2 to a human
+python -m flock.agents.learner --approve R-001
+python -m flock.pipeline --reset --demo-approve && python scripts/score.py            # 6/6, 0 to a human
+python -m dashboard.app                                              # same dashboard, reading SpacetimeDB
+spacetime sql flock "SELECT finding_id, state FROM finding" --server local
+```
+
+Maincloud: `spacetime login`, `spacetime publish flock --yes`, then `SPACETIME_URL=https://maincloud.spacetimedb.com`
+and `SPACETIME_TOKEN=$(spacetime login show --token)`. Tests: `tests/test_spacetime.py` runs against an in-process
+fake; `FLOCK_SPACETIME_LIVE=1` runs the same checks against the real server. JSON stays the default, so the hosted
+site is unaffected until someone flips the variable there.
+
 ## CREAO track: the agent built on agent.creao.ai
 
 The track's one requirement: at least one CREAO agent built on agent.creao.ai does the core work of the project, its

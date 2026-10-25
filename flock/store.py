@@ -3,7 +3,7 @@
 Everything else depends on the `Store` protocol below, never on a concrete class.
 Pick the backend with env FLOCK_STORE:
   json       (default) JSON files in data/state/ so everyone can run locally with zero setup
-  spacetime  SpacetimeDB (stub for now, see SpacetimeStore)
+  spacetime  SpacetimeDB over its HTTP API (see SpacetimeStore and spacetimedb/README.md)
 
   from flock.store import get_store
   store = get_store()
@@ -194,39 +194,139 @@ class JsonStore:
 
 
 class SpacetimeStore:
-    """SpacetimeDB backend (owner: Ira). NOT built yet: selecting it raises NotImplementedError.
+    """SpacetimeDB backend: the same six methods plus the live agent feed, over SpacetimeDB's HTTP API.
 
-    Plan (same six methods as Store, so nothing else changes):
-      Tables
-        findings      finding_id (pk), state, channel, check_type, gap, outcome, ... plus the full row as JSON
-        audit_log     id (auto-inc pk), at, actor, role, action, subject_id, allowed, before, after, diff,
-                      reason, evidence. Insert-only: no reducer updates or deletes rows here.
-        agent_status  seq (auto-inc pk), at, run, event (spawn|working|done|failed), agent_id, role, parent_id,
-                      subject, started, ended, summary (+ pooled, count, done, failed). Insert-only, written through
-                      agent_event(); agents(since) reads seq >= since. flock/agents_live.py folds it into the tree.
-      Reducers
-        put_new(finding)               insert into findings; state must be NEW
-        agent_event(event)             insert into agent_status (the live Flock view)
-        commit(finding | null, entry)  upsert the finding (if allowed) and insert the log entry in ONE reducer
-                                       call, so the change and its audit row land in the same transaction
-        reset()                        demo only; clears findings + audit_log
-        Later: move the role/state check from flock.gatekeeper into a `transition` reducer so the database
-        itself refuses an agent approving, not just the Python client.
-      Python side
-        get/all/log read from subscribed tables (findings, audit_log WHERE subject_id = ?);
-        put_new/commit/reset call the reducers. Connection from env SPACETIME_URI + SPACETIME_DB.
-      Dashboard
-        subscribes to findings + audit_log + agent_status and re-renders on row events instead of polling
-        /api/summary. Approve / reject still go through the Flask endpoint -> gatekeeper.transition().
+    The module (spacetimedb/src/lib.rs) keeps three public tables: finding (finding_id pk, state, row JSON),
+    audit_log (id auto-inc, subject_id, entry JSON; insert-only) and agent_status (seq auto-inc, event JSON).
+    Writes are reducer calls, so a finding change and its audit entry land in ONE transaction (`commit`); reads are
+    SQL. Env: SPACETIME_URL (default http://127.0.0.1:3000), SPACETIME_DB (default flock), SPACETIME_TOKEN (optional,
+    needed on Maincloud). Sidecar files other parts of the pipeline keep next to the store (market ledger, run history,
+    progress, journal entries) live in `self.dir`, data/state/spacetime by default.
+
+      spacetime start && spacetime publish flock --server local --module-path spacetimedb --yes
+      FLOCK_STORE=spacetime python -m flock.pipeline --reset --forget --demo-approve
     """
 
-    def __init__(self, *args: Any, **kwargs: Any):
-        raise NotImplementedError(
-            "FLOCK_STORE=spacetime is not implemented yet; use FLOCK_STORE=json (the default). "
-            "Plan (see SpacetimeStore in flock/store.py): tables findings, audit_log, agent_status; "
-            "reducers put_new / commit / reset, where commit writes the finding and its log entry in one "
-            "transaction; the dashboard subscribes to the tables for live updates."
-        )
+    def __init__(self, url: str | None = None, database: str | None = None, token: str | None = None,
+                 state_dir: Path | None = None):
+        import urllib.request  # noqa: F401  (kept local: the JSON backend must not need the network stack)
+
+        self.url = (url or os.environ.get("SPACETIME_URL") or "http://127.0.0.1:3000").rstrip("/")
+        self.database = database or os.environ.get("SPACETIME_DB") or "flock"
+        self.token = token if token is not None else os.environ.get("SPACETIME_TOKEN", "")
+        self.dir = Path(state_dir or os.environ.get("SPACETIME_STATE_DIR") or STATE_DIR / "spacetime")
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    # --- HTTP -------------------------------------------------------------------------------------------------
+    def _request(self, method: str, path: str, body: bytes | None, content_type: str) -> bytes:
+        import urllib.error
+        import urllib.request
+
+        headers = {"Content-Type": content_type, "Accept": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        req = urllib.request.Request(f"{self.url}/v1/database/{self.database}{path}", data=body, headers=headers,
+                                     method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:300] if e.fp else ""
+            raise RuntimeError(f"SpacetimeDB {method} {path} -> HTTP {e.code}: {detail}") from None
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"SpacetimeDB unreachable at {self.url} ({e.reason}). "
+                               "Run `spacetime start` and publish the module (spacetimedb/README.md).") from None
+
+    def call(self, reducer: str, *args: Any) -> None:
+        """One reducer call = one transaction."""
+        self._request("POST", f"/call/{reducer}", json.dumps(list(args)).encode(), "application/json")
+
+    def sql(self, query: str) -> list[dict[str, Any]]:
+        """Rows of the first statement as dicts, column names taken from the returned schema."""
+        raw = self._request("POST", "/sql", query.encode(), "text/plain")
+        results = json.loads(raw or b"[]")
+        if not results:
+            return []
+        first = results[0]
+        names = [_column_name(el, i) for i, el in enumerate((first.get("schema") or {}).get("elements", []))]
+        out = []
+        for row in first.get("rows", []):
+            values = row if isinstance(row, list) else [row]
+            out.append({names[i] if i < len(names) else f"c{i}": _plain(v) for i, v in enumerate(values)})
+        return out
+
+    # --- findings ---------------------------------------------------------------------------------------------
+    @staticmethod
+    def _q(text: str) -> str:
+        return "'" + str(text).replace("'", "''") + "'"
+
+    def get(self, finding_id: str) -> dict[str, Any]:
+        rows = self.sql(f"SELECT * FROM finding WHERE finding_id = {self._q(finding_id)}")
+        if not rows:
+            raise KeyError(finding_id)
+        return json.loads(rows[0]["row"])
+
+    def all(self) -> list[dict[str, Any]]:
+        return [json.loads(r["row"]) for r in self.sql("SELECT * FROM finding")]
+
+    def put_new(self, finding: dict[str, Any]) -> None:
+        assert finding["state"] == "NEW", "put_new only accepts NEW findings"
+        with self._lock:
+            self.call("put_new", finding["finding_id"], finding["state"], json.dumps(finding))
+
+    def commit(self, finding: dict[str, Any] | None, log_entry: dict[str, Any]) -> None:
+        """The finding change (or none, for a denied attempt) and its log entry in one reducer call."""
+        with self._lock:
+            if finding is not None:
+                self.call("commit", finding["finding_id"], finding["state"], json.dumps(finding),
+                          str(log_entry.get("subject_id", "")), json.dumps(log_entry))
+            else:
+                self.call("commit", "", "", "", str(log_entry.get("subject_id", "")), json.dumps(log_entry))
+
+    def log(self, subject_id: str | None = None) -> list[dict[str, Any]]:
+        where = f" WHERE subject_id = {self._q(subject_id)}" if subject_id is not None else ""
+        rows = self.sql(f"SELECT * FROM audit_log{where}")
+        rows.sort(key=lambda r: int(r.get("id", 0)))
+        return [json.loads(r["entry"]) for r in rows]
+
+    def reset(self) -> None:
+        with self._lock:
+            self.call("reset")
+
+    # --- live agent feed ---------------------------------------------------------------------------------------
+    def agent_event(self, event: dict[str, Any]) -> None:
+        self.call("agent_event", json.dumps(event))
+
+    def agents(self, since: int | None = None) -> list[dict[str, Any]]:
+        rows = self.sql("SELECT * FROM agent_status")
+        rows.sort(key=lambda r: int(r.get("seq", 0)))
+        events = []
+        for i, r in enumerate(rows):
+            ev = json.loads(r["event"])
+            events.append({"seq": i, **{k: v for k, v in ev.items() if k != "seq"}})
+        return events[since:] if since else events
+
+    def flush_agents(self) -> None:
+        return None  # every event is already in the database
+
+
+def _column_name(element: Any, index: int) -> str:
+    """SpacetimeDB encodes an optional name as {"some": "x"} (or a plain string in older servers)."""
+    name = element.get("name") if isinstance(element, dict) else None
+    if isinstance(name, dict):
+        name = name.get("some")
+    return str(name) if name else f"c{index}"
+
+
+def _plain(value: Any) -> Any:
+    """SATS JSON wraps some scalars (e.g. u64 as a string, options as {"some": x} / {"none": []})."""
+    if isinstance(value, dict) and len(value) == 1:
+        if "some" in value:
+            return _plain(value["some"])
+        if "none" in value:
+            return None
+    return value
 
 
 class JournalStore:
