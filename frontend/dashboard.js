@@ -33,6 +33,7 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const money = (n) => (n == null || isNaN(n)) ? '—' : `${Number(n) < 0 ? '−' : ''}$${Math.abs(Number(n)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 // Cards: no cents once it's in the thousands ($41,233); tables keep cents
 const moneyCard = (n) => (n == null || isNaN(n)) ? '—' : Math.abs(Number(n)) >= 1000 ? money(Math.round(Number(n))).replace(/\.00$/, '') : money(n);
+const dollars = (n) => (n == null || isNaN(n)) ? '—' : `${Number(n) < 0 ? '−' : ''}$${Math.round(Math.abs(Number(n))).toLocaleString()}`;
 const num = (n) => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString();
 // Accuracy never rounds up: 1,944/1,945 is 99.9%, not 100%
 const accPct = (n) => (n == null || isNaN(n)) ? '—' : `${(Math.floor(Number(n) * 1000) / 10).toFixed(Number(n) >= 1 ? 0 : 1)}%`;
@@ -169,13 +170,14 @@ async function pollSlow() {
         renderRunPill(running);
         if (running) { state.running = running; return; }
         if (state.running) { state.running = null; state.cache = {}; toast('New month finished. The dashboard is up to date.', 'ok'); }
-        const [findings, metrics, score, payouts, showtime, market, connectors, approvals, outbox] = await Promise.all([
+        const [findings, metrics, score, payouts, showtime, market, connectors, approvals, outbox, policy] = await Promise.all([
             tryGet('/api/findings'), tryGet('/api/metrics'), tryGet('/api/score'), tryGet('/api/payouts'),
-            tryGet('/api/showtime'), tryGet('/api/market'), tryGet('/api/connectors'), tryGet('/api/approvals'), tryGet('/api/outbox'),
+            tryGet('/api/showtime'), tryGet('/api/market'), tryGet('/api/connectors'), tryGet('/api/approvals'), tryGet('/api/outbox'), tryGet('/api/policy'),
         ]);
         const r = route();
-        if (findings && changed('findings', findings)) { state.findings = findings; if (r.name === 'overview') renderFindings(); }
-        if (changed('approvals', { approvals, n: state.findings.length })) { state.approvals = approvals; renderQueueCount(); if (r.name === 'overview') renderApprovals(); }
+        if (findings && changed('findings', findings)) { state.findings = findings; if (r.name === 'overview') { renderFindings(); renderLog(); } }
+        state.policy = policy ? (policy.policy || policy) : null;
+        if (changed('approvals', { approvals, n: state.findings.length, policy })) { state.approvals = approvals; renderQueueCount(); if (r.name === 'overview') renderApprovals(); }
         if (metrics && score) save('flock.lastGood', JSON.stringify({ metrics, score }));
         if (changed('metrics', { metrics, score })) { state.metrics = metrics ?? state.metrics; state.score = score ?? state.score; if (r.name === 'overview') { renderMetrics(); renderHours(); } if (r.name === 'scoreboard') renderScoreboard(); if (r.name === 'learns') renderLearns(); }
         if (payouts && changed('payouts', payouts)) { state.payouts = payouts; if (r.name === 'lumpsums') renderLumpSums(); }
@@ -230,6 +232,7 @@ const CHANNEL = {
     doordash: ['DoorDash', '#EB1700', 'DD'], ubereats: ['Uber Eats', '#06C167', 'UE'], grubhub: ['Grubhub', '#FF8000', 'GH'],
     direct_app: ['Your website', '#0084FF', 'W'],
 };
+const NEEDS_LABEL = 'waiting for your OK';
 const AUTH_PILL = (a) => /^(contract|amendment|auth_email)$/.test(a) ? 'bg-emerald-100 text-emerald-800'
     : /unauth/.test(a) ? 'bg-red-100 text-red-700' : /call/.test(a) ? 'bg-amber-100 text-amber-800' : 'bg-gray-200 text-gray-700';
 
@@ -259,7 +262,7 @@ function statCard({ label: l, labelHtml, value, sub, icon, dark, how, cls = '' }
         </div>
         <div class="min-w-0">
             <p class="${dark ? 'text-gray-400' : 'text-gray-500'} text-xs font-medium mb-0.5">${labelHtml || esc(l)}</p>
-            <h2 class="text-xl sm:text-2xl xl:text-3xl font-extrabold tracking-tight tabular-nums truncate">${value}</h2>
+            <h2 class="text-2xl sm:text-3xl xl:text-[2.5rem] xl:leading-none font-extrabold tracking-tight tabular-nums truncate">${value}</h2>
             ${sub ? `<p class="${dark ? 'text-limeAccent' : 'text-gray-500'} text-xs font-semibold mt-1">${sub}</p>` : ''}
         </div></div>`;
 }
@@ -317,6 +320,12 @@ function renderView(r) {
     if (r.name !== 'theater') theaterStop();
     if (r.name === 'overview' && r.query.get('filter')) state.findingFilter = r.query.get('filter');
     const v = $('view');
+    const fit = r.name === 'overview';
+    v.classList.toggle('shrink-0', !fit);
+    v.classList.toggle('lg:flex-1', fit);
+    v.classList.toggle('lg:min-h-0', fit);
+    document.querySelector('main').classList.toggle('lg:overflow-y-auto', !fit);
+    document.querySelector('main').classList.toggle('lg:overflow-hidden', fit);
     if (r.name === 'lumpsums') { v.innerHTML = '<div id="lumpsums"></div>'; renderLumpSums(); }
     else if (r.name === 'payout') { state.payout = null; state.cache.payout = null; v.innerHTML = `<div id="payout">${whiteCard(empty('Loading the lump sum…'))}</div>`; loadPayout(r.id); }
     else if (r.name === 'theater') { renderTheaterShell(); theaterStart(theater.mode); }
@@ -356,12 +365,11 @@ function renderBanner() {
 
 function renderOverviewShell() {
     $('view').innerHTML = `
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 min-h-0 min-w-0">
-            <div class="lg:col-span-8 flex flex-col gap-4 lg:gap-5 min-h-0 min-w-0">
-                <div id="approvals" class="shrink-0"></div>
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 min-w-0 lg:h-full lg:min-h-0">
+            <div class="lg:col-span-8 flex flex-col gap-4 lg:gap-5 min-w-0 lg:min-h-0">
                 <div id="metrics" class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 lg:gap-4 shrink-0"></div>
                 <div class="bg-white p-4 sm:p-5 rounded-3xl card-shadow border border-gray-100 flex flex-col shrink-0">
-                    <div class="flex items-center justify-between shrink-0 mb-1 gap-3">
+                    <div class="flex items-center justify-between shrink-0 gap-3">
                         <h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">Hours</h3>
                         <div class="flex items-center gap-3">
                             <span class="hidden sm:flex items-center gap-1.5 text-[11px] font-semibold text-gray-500"><span class="w-2.5 h-2.5 rounded-full bg-limeAccent"></span>Agent</span>
@@ -369,43 +377,43 @@ function renderOverviewShell() {
                             <select id="hoursYear" class="text-xs font-semibold text-gray-600 bg-gray-50 px-2.5 py-1 rounded-full border border-gray-100 focus:outline-none"></select>
                         </div>
                     </div>
-                    <div id="hours" class="h-40"></div>
+                    <div id="hours" class="h-36 lg:h-28 [@media(min-height:950px)]:lg:h-40"></div>
                 </div>
-                <div class="bg-white p-5 sm:p-6 rounded-3xl card-shadow border border-gray-100 flex flex-col min-h-0 min-w-0">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between shrink-0 mb-4 gap-3">
+                <div class="bg-white p-4 sm:p-5 rounded-3xl card-shadow border border-gray-100 flex flex-col min-w-0 lg:flex-1 lg:min-h-0">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between shrink-0 mb-2 gap-3">
                         <h3 class="font-extrabold text-gray-900 text-base sm:text-lg tracking-tight">Discrepancies</h3>
                         <div id="findingFilters"></div>
                     </div>
-                    <div class="flex flex-col min-h-0 overflow-x-auto">
-                        <div class="min-w-[640px]">
-                            <div class="grid grid-cols-12 px-3 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                                <div class="col-span-2">ID</div><div class="col-span-3">Platform</div><div class="col-span-2">Check</div>
-                                <div class="col-span-1 text-right">Expected</div><div class="col-span-1 text-right">Actual</div><div class="col-span-1 text-right">Gap</div><div class="col-span-2 text-right">Status</div>
+                    <div class="flex flex-col min-h-0 flex-1 overflow-x-auto">
+                        <div class="min-w-[640px] flex flex-col min-h-0 flex-1">
+                            <div class="grid grid-cols-[1.15fr_1.35fr_1.1fr_1fr_1fr_1fr_1fr] gap-x-3 px-3 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 shrink-0">
+                                <div>ID</div><div>Platform</div><div>Check</div>
+                                <div class="text-right">Expected</div><div class="text-right">Actual</div><div class="text-right">Gap</div><div class="text-right">Status</div>
                             </div>
-                            <div id="findingRows" class="overflow-y-auto custom-scroll pr-1 flex flex-col max-h-96 min-h-0 divide-y divide-gray-50"></div>
+                            <div id="findingRows" class="overflow-y-auto custom-scroll pr-1 flex flex-col max-h-96 lg:max-h-none min-h-0 flex-1 divide-y divide-gray-50"></div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="lg:col-span-4 bg-cardDark text-white p-4 sm:p-5 lg:p-6 rounded-3xl lg:rounded-4xl flex flex-col gap-5 shadow-xl min-h-0 min-w-0">
-                <div class="flex flex-col min-h-0">
-                    <div class="flex items-center justify-between mb-4 shrink-0">
-                        <div><h3 class="text-lg font-bold tracking-tight">Audit Log</h3><p id="logCount" class="text-xs text-gray-400 font-medium"></p></div>
+            <div class="lg:col-span-4 bg-cardDark text-white p-4 sm:p-5 rounded-3xl lg:rounded-4xl flex flex-col gap-4 shadow-xl min-w-0 lg:min-h-0">
+                <div class="flex flex-col min-h-0 flex-1">
+                    <div class="flex items-center justify-between mb-3 shrink-0">
+                        <h3 class="text-lg font-bold tracking-tight">Audit Log</h3><p id="logCount" class="text-xs text-gray-400 font-medium"></p>
                     </div>
-                    <div class="relative w-full shrink-0 bg-[#2B3048] border border-navy-2 rounded-3xl p-3 sm:p-4 shadow-xl">
-                        <div id="logList" class="flex flex-col gap-1.5 max-h-[26rem] overflow-y-auto pr-1 text-xs dark-scroll"></div>
+                    <div class="relative w-full flex-1 min-h-[14rem] bg-[#2B3048] border border-navy-2 rounded-3xl p-2 shadow-xl">
+                        <div id="logList" class="flex flex-col gap-0.5 max-h-[24rem] lg:max-h-none lg:absolute lg:inset-2 overflow-y-auto pr-1 text-xs dark-scroll"></div>
                     </div>
                 </div>
                 <div class="shrink-0">
-                    <div class="flex items-center justify-between mb-3">
-                        <div><h3 class="text-base font-bold">Agent Chain</h3><p id="agentCount" class="text-xs text-gray-400 font-medium"></p></div>
+                    <div class="flex items-center justify-between mb-2.5">
+                        <h3 class="text-base font-bold">Agent Chain</h3><p id="agentCount" class="text-xs text-gray-400 font-medium"></p>
                     </div>
-                    <div id="agentChain" class="flex flex-col gap-3"></div>
+                    <div id="agentChain"></div>
                 </div>
             </div>
         </div>`;
     state.cache.agentHtml = null;
-    renderApprovals(); renderMetrics(); renderHours(); renderFindings(); renderLog(); renderAgents();
+    renderMetrics(); renderHours(); renderFindings(); renderLog(); renderAgents();
 }
 
 /* ----- metric cards (GET /api/metrics, formula + inputs + labels behind "How we got this") ----- */
@@ -517,7 +525,10 @@ function showHow(id) {
         <div class="flex justify-between gap-3 py-1 border-b border-gray-50"><span class="text-gray-500">${esc(label(k))}</span>
         <span class="font-semibold text-gray-900 text-right">${v === 'ASSUMPTION' ? pill(LABEL_PILL.ASSUMPTION, displayLabel(v)) : esc(typeof v === 'number' ? num(v) : v)}</span></div>`).join('');
     const est = id === 'cost' && card.value?.usd == null ? tokenEstimate(card.inputs) : null;
-    openModal(noAssume(card.title), `
+    const missed = (state.score?.traps || []).filter((t) => !t.caught);
+    const toYou = missed.filter((t) => t.got === 'conflict').length;
+    const missNote = id === 'accuracy' && missed.length ? `<div class="rounded-2xl bg-lightCardBg p-3 text-sm text-gray-800 mb-4">${toYou ? `<b>${num(toYou)} sent to you instead of claimed.</b> The judges weren't sure enough, so a person decides; nothing was missed silently.` : ''}${missed.length - toYou ? ` ${num(missed.length - toYou)} not flagged.` : ''}</div>` : '';
+    openModal(noAssume(card.title), `${missNote}
         <p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Formula</p>
         <p class="text-sm text-gray-800 leading-relaxed mb-4">${esc(noAssume(card.formula))}</p>
         ${est ? `<p class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Estimate from tokens</p>
@@ -561,6 +572,13 @@ function renderCurve(id, tall = false) {
 // Hours per month: agent = measured run time; human = industry estimate per store-week × stores × weeks in the month
 let hoursYear = null;
 function hoursRows() {
+    const seen = new Map();
+    hoursRowsRaw().forEach((r) => seen.set(shortMonth(r.label), r));
+    const rows = [...seen.values()];
+    rows.forEach((r, i) => { r.last = i === rows.length - 1; });
+    return rows;
+}
+function hoursRowsRaw() {
     const bm = state.metrics?.money?.ytd?.by_month;
     const est = hoursFromRuns();
     if (Array.isArray(bm) && bm.length) {
@@ -606,7 +624,7 @@ function renderHours() {
     const rows = all.filter((r) => r.year === hoursYear).slice(-12);
     if (!rows.length) { el.innerHTML = empty('Hours fill in after the first run.', 'bar-chart-3'); return icons(); }
     const max = Math.max(1, ...rows.map((r) => Math.max(r.human || 0, r.agent || 0)));
-    const H = 110;
+    const H = Math.max(40, (el.clientHeight || 150) - 58);   // room for the tooltip above and the month below
     el.innerHTML = `<div class="h-full flex items-end justify-between px-1 gap-2 pt-7">${rows.map((r, i) => {
         const last = i === rows.length - 1;
         const ah = r.agent == null ? 0 : Math.max(6, Math.round(H * r.agent / max)), hh = Math.max(6, Math.round(H * (r.human || 0) / max));
@@ -664,8 +682,11 @@ function renderQueueCount() {
 }
 function renderBell() {
     const items = approvalItems();
-    $('bellPanel').innerHTML = `<div class="flex items-center justify-between px-1 pb-2"><p class="font-extrabold text-gray-900">Needs your approval <span class="text-purpleAccent">${items.length}</span></p>
+    const agreed = agreedClaims();
+    $('bellPanel').innerHTML = `<div class="flex items-center justify-between px-1 pb-2"><p class="font-extrabold text-gray-900">Claims waiting for your OK <span class="text-purpleAccent">${items.length}</span></p>
         <span class="text-[11px] text-gray-400 font-semibold">acting as ${esc(settings.actor)}</span></div>
+        ${agreed.length ? `<button data-bulk-approve class="w-full mb-2 rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm py-2 flex items-center justify-center gap-1.5"><i data-lucide="check-check" class="w-4 h-4"></i> Approve all ${agreed.length} the judges agreed on</button>` : ''}
+        ${policyLine(true)}
         <div class="flex flex-col gap-2 max-h-[60vh] overflow-y-auto custom-scroll">${items.map((it) => approvalRow(it)).join('') || '<p class="text-sm text-gray-400 text-center py-6">Nothing waiting. The agents settled everything else.</p>'}</div>`;
     icons();
 }
@@ -675,6 +696,80 @@ function toggleBell(force) {
     p.classList.toggle('hidden', !open);
     if (open) renderBell();
 }
+// Claims the panel called recoverable with every judge agreeing (final-round votes), from the approvals list
+function agreedClaims() {
+    const byId = new Map(state.findings.map((f) => [fidOf(f), f]));
+    return approvalItems().filter((it) => {
+        if ((it.kind && it.kind !== 'dispute') || it.outcome !== 'recoverable') return false;
+        const f = byId.get(it.finding_id);
+        const votes = f?.votes || [];
+        if (votes.length) {
+            const last = Math.max(...votes.map((v) => v.round || 1));
+            const fin = votes.filter((v) => (v.round || 1) === last);
+            return fin.length >= 3 && fin.every((v) => v.outcome === 'recoverable');
+        }
+        return /all 3 judges agree|unanimous/i.test(it.verdict || f?.reason || '');
+    });
+}
+function bulkApproveAsk() {
+    const list = agreedClaims();
+    if (!list.length) return;
+    const total = list.reduce((t, it) => t + (Number(it.gap) || 0), 0);
+    openModal('Approve the claims the judges agreed on?', `
+        <p class="text-sm text-gray-700 mb-3">${num(list.length)} claims · ${moneyCard(total)}. All three judges called each one recoverable. Clicky files them one by one; each approval is logged under your name.</p>
+        <div class="max-h-56 overflow-y-auto custom-scroll flex flex-col gap-1.5 mb-4">${list.map((it) => `<div class="flex items-center justify-between text-xs rounded-xl bg-lightCardBg px-3 py-2"><span class="flex items-center gap-2">${chanBadge(it.channel, 'w-5 h-5 text-[8px]')}${esc(label(it.check_type))}</span><b class="tabular-nums">${money(it.gap)}</b></div>`).join('')}</div>
+        <button data-bulk-confirm class="w-full rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm py-2.5">Approve ${num(list.length)} claims</button>`);
+}
+async function bulkApprove() {
+    const list = agreedClaims();
+    closeModal();
+    let ok = 0;
+    for (const it of list) {
+        try {
+            await post(`/api/findings/${encodeURIComponent(it.finding_id)}/approve`, { actor: settings.actor, reason: 'Approved in bulk: all three judges agreed', file_via: 'screen' });
+            ok++;
+            toast(`Approved ${ok} of ${list.length}…`, '');
+        } catch (e) { fail(e); break; }
+    }
+    state.cache.findings = state.cache.approvals = null;
+    toast(`Approved ${ok} claim${ok === 1 ? '' : 's'}. Clicky is filing them.`, 'ok');
+    if (ok && typeof openAgentScreen === 'function') openAgentScreen('');
+}
+
+// Owner approval policy (GET/POST /api/policy, when the API has it)
+function policyLine(light = false) {
+    const p = state.policy, a = state.approvals || {};
+    if (!p) return '';
+    const cap = p.max_usd ?? p.max_amount ?? p.cap_usd, conf = p.min_confidence ?? p.confidence;
+    const n = a.auto_approved_by_policy ?? p.auto_approved ?? 0;
+    const on = p.enabled !== false && cap != null;
+    return `<p class="text-xs ${light ? 'text-gray-600 px-1' : 'text-white/80'} mb-3 flex items-center gap-2 flex-wrap"><i data-lucide="badge-check" class="w-3.5 h-3.5"></i>
+        ${on ? `${num(n)} filed automatically under your policy (≤ ${moneyCard(cap)}${conf != null ? `, ≥ ${Math.round(conf * 100)}% sure` : ''})` : 'No auto-approval policy: every claim waits for you'}
+        <button data-policy-edit class="underline font-bold ${light ? 'text-purpleAccent' : 'text-white'}">Edit policy</button></p>`;
+}
+function policyEdit() {
+    const p = state.policy || {};
+    openModal('Your approval policy', `
+        <p class="text-sm text-gray-600 mb-4">Claims under this amount, where the judges are at least this sure, are approved and filed without waiting for you. Everything else still comes to you.</p>
+        <label class="block text-xs font-bold text-gray-700 mb-1">Up to (dollars)</label>
+        <input id="polMax" type="number" min="0" step="50" value="${esc(p.max_usd ?? p.max_amount ?? 500)}" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-3">
+        <label class="block text-xs font-bold text-gray-700 mb-1">Judges at least (% sure)</label>
+        <input id="polConf" type="number" min="50" max="100" step="5" value="${esc(Math.round((p.min_confidence ?? 0.85) * 100))}" class="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-sm mb-3">
+        <label class="flex items-center gap-2 text-sm text-gray-700 mb-4"><input id="polOn" type="checkbox" ${p.enabled !== false ? 'checked' : ''}> Auto-approve claims inside these limits</label>
+        <button data-policy-save class="w-full rounded-2xl bg-purpleAccent hover:bg-purpleAccentHover text-white font-bold text-sm py-2.5">Save policy</button>`);
+}
+async function policySave() {
+    const body = { max_usd: Number($('polMax').value), min_confidence: Number($('polConf').value) / 100, enabled: $('polOn').checked, actor: settings.actor };
+    try {
+        state.policy = await post('/api/policy', body) || body;
+        if (state.policy.policy) state.policy = state.policy.policy;
+        closeModal();
+        toast('Policy saved.', 'ok');
+        state.cache.approvalsHtml = null;
+        renderApprovals();
+    } catch (e) { fail(e); }
+}
+
 function renderApprovals() {
     const el = $('approvals');
     if (!el) return;
@@ -682,7 +777,9 @@ function renderApprovals() {
     const total = items.reduce((t, it) => t + (Number(it.gap ?? it.amount) || 0), 0);
     const html = items.length ? `<section data-test="approvals" class="bg-purpleAccent text-white rounded-3xl p-4 sm:p-5 shadow-md">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <h3 class="text-lg font-extrabold">Needs you (${items.length}) <span class="text-white/70 font-bold">· ${money(total)}</span></h3></div>
+            <h3 class="text-lg font-extrabold">Claims waiting for your OK (${items.length}) <span class="text-white/70 font-bold">· ${moneyCard(total)}</span></h3>
+            ${agreedClaims().length ? `<button data-bulk-approve class="rounded-2xl bg-white text-purpleAccent hover:bg-blue-50 font-bold text-sm px-4 py-2 flex items-center gap-1.5 shrink-0"><i data-lucide="check-check" class="w-4 h-4"></i> Approve all ${agreedClaims().length} the judges agreed on</button>` : ''}</div>
+        ${policyLine()}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">${items.slice(0, 4).map((it) => approvalRow(it, true)).join('')}</div>
         ${items.length > 4 ? `<button data-bell class="mt-2 text-xs font-bold text-limeAccent">+${items.length - 4} more</button>` : ''}</section>` : '';
     if (changed('approvalsHtml', html)) { el.innerHTML = html; icons(); }
@@ -702,14 +799,14 @@ function renderFindings() {
         : state.findingFilter === 'filed' ? f.state === 'FILED' : f.outcome === state.findingFilter);
     const headline = state.showtime?.headline?.finding_id;
     el.innerHTML = rows.length ? rows.map((f) => `
-        <div data-finding="${esc(fidOf(f))}" class="grid grid-cols-12 items-center px-3 py-3 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800 ${fidOf(f) === headline ? 'bg-purpleAccent/5' : ''}">
-            <div class="col-span-2 font-mono font-bold text-gray-900 text-xs truncate">${esc(fidOf(f))}</div>
-            <div class="col-span-3 flex items-center gap-2 font-normal text-gray-700 min-w-0">${chanBadge(f.channel)}<span class="truncate">${esc(chanName(f.channel))}</span></div>
-            <div class="col-span-2 font-normal text-gray-500 lowercase truncate" title="${esc(checkHelp(f.check_type))}">${esc(label(f.check_type))}</div>
-            <div class="col-span-1 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.expected).replace(/\.\d\d$/, '')}</div>
-            <div class="col-span-1 text-right font-mono font-normal text-gray-500 tabular-nums">${money(f.actual).replace(/\.\d\d$/, '')}</div>
-            <div class="col-span-1 text-right font-mono font-bold tabular-nums ${f.gap > 0 ? 'text-red-600' : 'text-gray-900'}">${money(f.gap)}</div>
-            <div class="col-span-2 text-right">${rowPill(f)}</div>
+        <div data-finding="${esc(fidOf(f))}" class="grid grid-cols-[1.15fr_1.35fr_1.1fr_1fr_1fr_1fr_1fr] gap-x-3 items-center px-3 py-3.5 hover:bg-gray-50/80 transition cursor-pointer text-xs sm:text-sm font-medium text-gray-800 ${fidOf(f) === headline ? 'bg-purpleAccent/5' : ''}">
+            <div class="min-w-0 font-mono font-bold text-gray-900 text-xs truncate">${esc(fidOf(f))}</div>
+            <div class="min-w-0 flex items-center gap-2 font-normal text-gray-700 min-w-0">${chanBadge(f.channel)}<span class="truncate">${esc(chanName(f.channel))}</span></div>
+            <div class="min-w-0 font-normal text-gray-500 lowercase truncate" title="${esc(checkHelp(f.check_type))}">${esc(label(f.check_type))}</div>
+            <div class="min-w-0 text-right font-mono font-normal text-gray-500 tabular-nums">${dollars(f.expected)}</div>
+            <div class="min-w-0 text-right font-mono font-normal text-gray-500 tabular-nums">${dollars(f.actual)}</div>
+            <div class="min-w-0 text-right font-mono font-bold tabular-nums ${f.gap > 0 ? 'text-red-600' : 'text-gray-900'}">${money(f.gap)}</div>
+            <div class="min-w-0 text-right">${rowPill(f)}</div>
         </div>`).join('')
         : `<div class="py-8 text-center text-gray-400 text-sm">No findings ${state.findingFilter === 'all' ? 'yet' : 'in this view'}.</div>`;
 }
@@ -746,32 +843,87 @@ function logRow(e, fresh) {
         </button>`;
 }
 
-function shortAction(e) {
-    const id = e.subject_id || '';
-    const verbs = { file: 'Filed claim', approve: 'Approved', reject: 'Rejected', judge: 'Judged', check: 'Checked', rank: 'Ranked',
-        draft: 'Drafted', send: 'Sent', follow_up: 'Followed up', learn: 'Learned rule', investigate: 'Investigated' };
-    const v = verbs[e.action] || label(e.action).replace(/^./, (c) => c.toUpperCase());
-    return e.allowed === false ? `Refused: ${label(e.action)} ${id}` : `${v} ${id}`;
+const ACTOR_NAME = {
+    collector: 'Collector', formatter: 'Formatter', matcher: 'Matcher', deal_keeper: 'Deal Keeper', checkers: 'Checkers',
+    anomaly: 'Anomaly Detector', panel: 'Judge Panel', investigator: 'Investigator', ranker: 'Ranker', dispute_writer: 'Dispute Writer',
+    follow_up: 'Follow-up Writer', gatekeeper: 'Gatekeeper', clicky: 'Clicky', journal: 'Journal', learner: 'Learner',
+    'demo-controller': 'Demo controller', policy: 'Your policy',
+};
+const actorName = (a) => ACTOR_NAME[a] || String(a || '').replace(/[_-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+const amt = (n) => (n == null || isNaN(n)) ? '' : Math.abs(n) >= 100 ? money(Math.round(n)).replace(/\.00$/, '') : money(n);
+const VERB = { check: 'Checked', judge: 'Judged', rank: 'Ranked', draft: 'Drafted', investigate: 'Opened a case file on', approve: 'Approved',
+    reject: 'Rejected', file: 'Filed', send: 'Sent a follow-up on', follow_up: 'Drafted a follow-up on' };
+function logKind(e) {
+    if (e.allowed === false) return 'refused';
+    if (e.role === 'policy' || e.actor === 'policy' || /policy/i.test(e.reason || '') && e.action === 'approve' && e.role !== 'human') return 'policy';
+    return e.role === 'human' ? 'human' : 'agent';
 }
-function logLine(e, fresh) {
-    const human = e.role === 'human', refused = e.allowed === false;
-    return `<button data-finding="${e.subject_type === 'finding' ? esc(e.subject_id) : ''}" class="w-full text-left flex items-center gap-2.5 px-3 py-2.5 rounded-2xl ${refused ? 'bg-red-500/15' : 'bg-navy-1/70 hover:bg-navy-1'} transition ${fresh ? 'flash' : ''}">
-        <span class="font-bold text-gray-100 text-xs truncate max-w-[34%]">${esc(e.actor)}</span>
-        <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 ${refused ? 'bg-red-500/30 text-red-200' : human ? 'bg-limeAccent/25 text-limeAccent' : 'bg-purpleAccent/40 text-blue-100'}">${refused ? 'refused' : human ? 'human' : 'agent'}</span>
-        <span class="text-[11px] text-gray-300 truncate flex-1 min-w-0">${esc(shortAction(e))}</span>
-        <span class="text-[10px] font-semibold text-gray-500 whitespace-nowrap shrink-0 tabular-nums">${esc(clock(e.at).replace(/:\d\d(\s|$)/, '$1'))}</span></button>`;
+function logText(e, f) {
+    const what = f ? `${amt(f.gap)} ${chanName(f.channel)}` : '';
+    if (e.allowed === false) return `Refused: an agent tried to ${label(e.action)}${what ? ` a ${what} claim` : ''}`;
+    if (e.subject_type === 'rule' || /rule/.test(e.action)) return `${e.action === 'approve_rule' || e.action === 'approve' ? 'Approved' : 'Learned'} rule ${e.subject_id || ''}`.trim();
+    if (e.action === 'file') return f?.portal_ref ? `Filed claim ${f.portal_ref}` : `Filed a ${what} claim`.replace('a  claim', 'a claim');
+    if (e.action === 'judge' && f?.outcome) return `Judged a ${what} claim: ${verdictText(f.outcome).toLowerCase()}`;
+    if (e.action === 'check' && f) return `Found a ${what} ${label(f.check_type)} gap`;
+    const v = VERB[e.action];
+    if (v && f) return `${v} ${['approve', 'reject'].includes(e.action) ? '' : 'a '}${what} claim`;
+    return `${v || label(e.action).replace(/^./, (c) => c.toUpperCase())}${e.subject_id && e.subject_type !== 'finding' ? ` ${e.subject_id}` : ''}`;
+}
+function logTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso), today = new Date().toDateString() === d.toDateString();
+    const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return today ? t : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${t}`;
+}
+function logIconFor(e) {
+    const k = logKind(e);
+    if (k === 'refused') return ['#DC2626', 'shield-alert'];
+    if (k === 'human') return ['#F59E0B', 'user'];
+    if (k === 'policy') return ['#10B981', 'badge-check'];
+    const g = groupOfActor(e.actor);
+    return g ? [g.color, g.icon] : ['#64748B', 'bot'];
+}
+const KIND_PILL = { agent: 'bg-white/10 text-[#CBD5E1]', human: 'bg-amber-400/20 text-amber-300', policy: 'bg-emerald-400/20 text-emerald-300', refused: 'bg-red-500/30 text-red-200' };
+function logRowHtml(e, f, { count = 1, sum = 0, key = '', fresh = false, child = false } = {}) {
+    const [color, icon] = logIconFor(e), kind = logKind(e);
+    const text = count > 1 ? `${VERB[e.action] && !/ on$/.test(VERB[e.action]) ? VERB[e.action] : label(e.action).replace(/^./, (c) => c.toUpperCase())} ${num(count)} claims${sum ? ` · ${amt(sum)}` : ''}` : logText(e, f);
+    const fid = e.subject_type === 'finding' ? e.subject_id : '';
+    return `<button ${count > 1 ? `data-log-group="${esc(key)}"` : `data-finding="${esc(fid)}"`} class="w-full text-left flex items-start gap-3 ${child ? 'pl-6 pr-2 py-1.5' : 'p-2.5'} rounded-2xl ${kind === 'refused' ? 'bg-red-500/15' : 'hover:bg-white/5'} transition ${fresh ? 'flash' : ''}">
+        <span style="background:${color}" class="${child ? 'w-6 h-6 rounded-lg' : 'w-9 h-9 rounded-xl'} shrink-0 flex items-center justify-center text-white shadow-sm"><i data-lucide="${icon}" class="${child ? 'w-3 h-3' : 'w-4 h-4'}"></i></span>
+        <span class="flex-1 min-w-0">
+            <span class="flex items-center gap-2 min-w-0">
+                <span class="font-bold text-white text-xs truncate">${esc(e.role === 'human' ? e.actor : actorName(e.actor))}</span>
+                <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 ${KIND_PILL[kind]}">${kind}</span>
+                ${count > 1 ? `<span class="text-[10px] font-extrabold rounded-full bg-white/15 text-white px-1.5 shrink-0">×${num(count)}</span>` : ''}
+                <span class="ml-auto text-[10px] font-semibold text-gray-400 whitespace-nowrap shrink-0 tabular-nums">${esc(logTime(e.at))}</span>
+            </span>
+            <span class="block text-[12px] text-[#CBD5E1] truncate mt-0.5">${esc(text)}${fid && count === 1 ? ` <span class="text-[10px] text-gray-500 font-mono">${esc(fid)}</span>` : ''}</span>
+        </span></button>`;
 }
 
+const logOpen = new Set();
 function renderLog() {
     const el = $('logList');
     if (!el) return;
-    const entries = state.log.slice(-200).reverse();
+    const byId = new Map(state.findings.map((f) => [fidOf(f), f]));
+    const entries = state.log.slice(-400).reverse();
     const fresh = state.seenLog ? state.log.length - state.seenLog : 0;
     state.seenLog = state.log.length;
-    const refused = state.log.filter((e) => e.allowed === false).length;
     $('logCount').textContent = `${num(state.log.length)} entries`;
-    el.innerHTML = entries.length ? entries.map((e, i) => logLine(e, i < fresh)).join('')
-        : '<p class="text-gray-500 text-sm text-center py-8">Nothing has happened yet.</p>';
+    // consecutive identical actions by the same actor collapse into one row
+    const groups = [];
+    entries.forEach((e, i) => {
+        const last = groups[groups.length - 1];
+        if (last && last.e.actor === e.actor && last.e.action === e.action && logKind(last.e) === logKind(e) && e.subject_type === 'finding') last.items.push(e);
+        else groups.push({ e, items: [e], i });
+    });
+    el.innerHTML = groups.length ? groups.slice(0, 80).map((g) => {
+        if (g.items.length === 1) return logRowHtml(g.e, byId.get(g.e.subject_id), { fresh: g.i < fresh });
+        const key = `${g.e.actor}|${g.e.action}|${g.e.at}`;
+        const sum = g.items.reduce((t, x) => t + (Number(byId.get(x.subject_id)?.gap) || 0), 0);
+        return logRowHtml(g.e, null, { count: g.items.length, sum, key, fresh: g.i < fresh })
+            + (logOpen.has(key) ? g.items.slice(0, 50).map((x) => logRowHtml(x, byId.get(x.subject_id), { child: true })).join('') : '');
+    }).join('') : '<p class="text-gray-500 text-sm text-center py-8">Nothing has happened yet.</p>';
     icons();
 }
 
@@ -809,15 +961,20 @@ function agentStatusText(ag, st) {
 
 // Eight agents people can follow; each groups the pipeline steps it runs (the drawer lists them)
 const AGENT_GROUPS = [
-    { key: 'intake', name: 'Intake', icon: 'download', members: ['collector', 'formatter'] },
-    { key: 'matcher', name: 'Matcher', icon: 'git-compare-arrows', members: ['matcher'] },
-    { key: 'deal_keeper', name: 'Deal Keeper', icon: 'file-text', members: ['deal_keeper'], model: true },
-    { key: 'checkers', name: 'Checkers', icon: 'calculator', members: ['checkers', 'anomaly'] },
-    { key: 'judges', name: 'Judges', icon: 'scale', members: ['panel', 'investigator', 'ranker'], model: true, note: 'spawns 3 judges per case' },
-    { key: 'writer', name: 'Writer', icon: 'pen-line', members: ['dispute_writer', 'follow_up'], model: true },
-    { key: 'clicky', name: 'Clicky', icon: 'mouse-pointer-click', members: ['clicky', 'gatekeeper'] },
-    { key: 'learner', name: 'Learner', icon: 'graduation-cap', members: ['learner', 'journal'] },
+    { key: 'collector', name: 'Collector', icon: 'inbox', color: '#EF4444', members: ['collector'] },
+    { key: 'formatter', name: 'Formatter', icon: 'table', color: '#F97316', members: ['formatter'] },
+    { key: 'matcher', name: 'Matcher', icon: 'git-merge', color: '#F59E0B', members: ['matcher'] },
+    { key: 'deal_keeper', name: 'Deal Keeper', icon: 'file-text', color: '#EAB308', members: ['deal_keeper'], model: true },
+    { key: 'checkers', name: 'Checkers', icon: 'calculator', color: '#22C55E', members: ['checkers', 'anomaly'] },
+    { key: 'judges', name: 'Judges', icon: 'scale', color: '#14B8A6', members: ['panel', 'investigator'], model: true, note: 'spawns 3 judges per case' },
+    { key: 'ranker', name: 'Ranker', icon: 'list-ordered', color: '#06B6D4', members: ['ranker'] },
+    { key: 'writer', name: 'Writer', icon: 'pen-line', color: '#3B82F6', members: ['dispute_writer', 'follow_up'], model: true },
+    { key: 'gatekeeper', name: 'Gatekeeper', icon: 'shield-check', color: '#6366F1', members: ['gatekeeper'] },
+    { key: 'clicky', name: 'Clicky', icon: 'mouse-pointer-click', color: '#8B5CF6', members: ['clicky'] },
+    { key: 'journal', name: 'Journal', icon: 'book-open', color: '#A855F7', members: ['journal'] },
+    { key: 'learner', name: 'Learner', icon: 'graduation-cap', color: '#EC4899', members: ['learner'] },
 ];
+const groupOfActor = (actor) => AGENT_GROUPS.find((g) => g.members.includes(actor));
 const PROVIDER_BADGE = { CREAO: 'bg-[#0084FF] text-white', GX10: 'bg-[#4A4FD8] text-white', code: 'bg-gray-500 text-white' };
 function providerOf(p) {
     const v = String(p || '').toLowerCase();
@@ -852,18 +1009,18 @@ function renderAgents() {
     const groups = AGENT_GROUPS.map((g) => ({ g, members: groupMembers(g) })).filter((x) => x.members.length);
     const working = groups.filter((x) => groupState(x.members) === 'working').length;
     $('agentCount').textContent = working ? `${working} working now` : `${groups.length} agents`;
-    const html = `<div class="grid grid-cols-4 gap-x-2 gap-y-4">${groups.map(({ g, members }) => {
+    const html = `<div class="grid grid-cols-6 gap-x-1.5 gap-y-3">${groups.map(({ g, members }) => {
         const st = groupState(members), prov = groupProvider(g, members);
         const text = members.map((a) => a.status_text).filter(Boolean)[0] || '';
-        return `<button data-agent-group="${g.key}" class="flex flex-col items-center gap-1.5 group min-w-0" title="${esc(g.name)}${g.note ? ` (${g.note})` : ''}: ${esc(text)}">
-            <div class="relative w-12 h-12 rounded-full ${st === 'idle' ? 'bg-navy-2' : 'bg-purpleAccent'} flex items-center justify-center text-white transition shadow-sm
-                ${st === 'working' ? 'ring-4 ring-limeAccent/70 animate-pulse' : st === 'done' ? 'ring-2 ring-limeAccent/60' : 'opacity-70'} group-hover:ring-4 group-hover:ring-limeAccent">
+        return `<button data-agent-group="${g.key}" class="flex flex-col items-center gap-1 group min-w-0" title="${esc(g.name)}${g.note ? ` (${g.note})` : ''}: ${esc(text)}">
+            <div style="background:${g.color}" class="relative w-11 h-11 xl:w-12 xl:h-12 rounded-full flex items-center justify-center text-white transition shadow-sm
+                ${st === 'working' ? 'ring-4 ring-white/80 animate-pulse' : st === 'done' ? 'ring-2 ring-white/40' : 'opacity-50'} group-hover:ring-4 group-hover:ring-white/70">
                 <i data-lucide="${g.icon}" class="w-5 h-5"></i>
                 ${st === 'done' ? '<span class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 text-cardDark flex items-center justify-center"><i data-lucide="check" class="w-3 h-3 stroke-[3]"></i></span>' : ''}
                 ${g.key === 'judges' ? '<span class="absolute -top-1 -left-1 text-[9px] font-extrabold bg-white text-cardDark rounded-full px-1">×3</span>' : ''}
             </div>
-            <span class="text-[11px] font-semibold text-gray-200 leading-tight text-center">${esc(g.name)}</span>
-            ${prov ? `<span class="text-[9px] font-extrabold uppercase tracking-wide rounded px-1.5 py-0.5 ${PROVIDER_BADGE[prov]}">${prov}</span>` : ''}
+            <span class="text-[10px] font-semibold text-gray-200 leading-tight text-center">${esc(g.name)}</span>
+            ${prov ? `<span class="text-[8px] font-extrabold uppercase tracking-wide rounded px-1 py-px ${PROVIDER_BADGE[prov]}">${prov}</span>` : ''}
         </button>`;
     }).join('')}</div>`;
     if (changed('agentHtml', html)) { el.innerHTML = html; icons(); }
@@ -1986,6 +2143,12 @@ document.addEventListener('click', (e) => {
     if (t.closest('[data-th-live]')) { theater.mode = 'live'; return; }
     if (t.closest('[data-token-cancel]')) return finishToken(null);
     if (t.closest('[data-close-screen]') || t.id === 'screenModal') return closeScreen();
+    if (t.closest('[data-bulk-approve]')) { toggleBell(false); return bulkApproveAsk(); }
+    if (t.closest('[data-bulk-confirm]')) return bulkApprove();
+    if (t.closest('[data-policy-edit]')) { toggleBell(false); return policyEdit(); }
+    if (t.closest('[data-policy-save]')) return policySave();
+    const lg = t.closest('[data-log-group]');
+    if (lg) { const k = lg.dataset.logGroup; logOpen.has(k) ? logOpen.delete(k) : logOpen.add(k); return renderLog(); }
     const ra = t.closest('[data-rule-approve]');
     if (ra) return approveRule(ra.dataset.ruleApprove);
     const evb = t.closest('[data-ev-ref]');
