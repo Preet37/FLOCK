@@ -98,6 +98,10 @@ try:
 except ImportError:  # pragma: no cover
     auth = None
 try:
+    from flock import evidence
+except ImportError:  # pragma: no cover
+    evidence = None
+try:
     from flock import slack_pull
 except ImportError:  # pragma: no cover
     slack_pull = None
@@ -821,6 +825,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, a.live_sheet())
             if parts == ["api", "approvals"]:
                 return self._send(200, a.approvals())
+            if parts == ["api", "evidence", "index"] and evidence is not None:
+                return self._send(200, evidence.index(a.store.all()))
+            if parts == ["api", "evidence"] and evidence is not None:
+                try:
+                    return self._send(200, evidence.resolve(_arg(q, "ref") or "", evidence.roots(a.dir)))
+                except evidence.EvidenceError as e:
+                    return self._send(400, {"error": str(e)})
             if parts == ["api", "benchmarks"]:
                 return self._send(200, a.benchmarks())
             if parts == ["api", "outbox"]:

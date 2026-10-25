@@ -281,6 +281,7 @@ def prepare(months: int = DEFAULT_MONTHS, seed: int = DEFAULT_SEED, stores: int 
         follow_up.draft(store, [carried["finding_id"]])
         carried = store.get(carried["finding_id"])
     shutil.copy(Path(demo["out"]) / "answer_key.csv", state_dir / pipeline.LIVE_KEY)
+    keep_raw(state_dir, Path(demo["out"]).parent / "raw")
     _say(quiet, f"  {demo['name']} (on stage): {demo['orders']:,} orders, {demo['findings']} findings, "
                 f"{demo['to_human']} sent to a human, caught {demo['caught']}/{demo['total']} "
                 f"({demo['seconds']}s{judging(demo)})")
@@ -324,6 +325,7 @@ def live(seed: int | None = None, stores: int | None = None, month: str | None =
     pipeline.update_last_run_row(runs_path, None, month=month, live=True)
     shutil.copy(Path(rec["out"]) / "answer_key.csv", state_dir / pipeline.LIVE_KEY)
     keep_contracts(state_dir, Path(rec["out"]).parent / "raw")
+    keep_raw(state_dir, Path(rec["out"]).parent / "raw")
     info = summarize(store, [], rec, pick_headline(store), None, seed, month, round(time.monotonic() - t0, 1),
                      rules_path)
     info["live"] = True
@@ -399,6 +401,24 @@ def keep_contracts(state_dir: Path, raw: Path) -> None:
         dest = Path(state_dir) / "contracts"
         shutil.rmtree(dest, ignore_errors=True)
         shutil.copytree(src, dest)
+
+
+def keep_raw(state_dir: Path, raw: Path) -> Path | None:
+    """The month on stage's raw files next to the state (a volume when hosted), at the same relative path the
+    findings' evidence names (data/showtime/<month>/raw/...), so the evidence viewer (flock/evidence.py, which looks
+    under the state dir too) opens the exact row on the hosted box. Only the newest month is kept."""
+    raw = Path(raw).resolve()
+    try:
+        rel = raw.relative_to(ROOT)
+    except ValueError:
+        return None
+    if not raw.is_dir():
+        return None
+    base = Path(state_dir) / "data"
+    shutil.rmtree(base, ignore_errors=True)
+    dest = Path(state_dir) / rel
+    shutil.copytree(raw, dest)
+    return dest
 
 
 def write_sheet(state_dir: Path, info: dict[str, Any]) -> None:

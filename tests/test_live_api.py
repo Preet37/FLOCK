@@ -143,3 +143,13 @@ def test_short_deposit_is_caught_by_the_deposit_check(live):
     _, a, _ = live
     dep = [f for f in a.store.all() if f["check_type"] == "deposit" and f["channel"] == "ubereats"]
     assert dep and max(abs(f["gap"]) for f in dep) > 10_000 and all(f["outcome"] == "recoverable" for f in dep)
+
+
+def test_evidence_hooks(server):  # noqa: F811
+    client, _ = server
+    if api.evidence is None:
+        pytest.skip("no flock.evidence")
+    code, out = client.get("/api/evidence/index")
+    assert code == 200
+    code, out = client.get("/api/evidence?ref=../../etc/passwd:1")
+    assert code == 400 and "error" in out
